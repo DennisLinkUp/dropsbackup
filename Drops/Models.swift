@@ -733,6 +733,8 @@ class AppStore: ObservableObject {
     /// Ground truth kommt von DropsStoreManager — wird beim Start und nach Kauf synchronisiert.
     @Published var isPlusUser: Bool = false
     @Published var showDropsPlusPaywall: Bool = false
+    /// Wird auf true gesetzt nach Kauf oder Admin-Freischaltung → MainTabView zeigt Success-Popup
+    @Published var showDropsPlusSuccess: Bool = false
 
     /// Immer aktueller Plus-Status (direkt aus StoreKit — kein Caching-Lag).
     var isDropsPlusActive: Bool {
@@ -781,12 +783,17 @@ class AppStore: ObservableObject {
             if let uid = FirebaseAuth.Auth.auth().currentUser?.uid {
                 UserDefaults.standard.set(uid, forKey: UDKey.firebaseUID)
 
-                // Im Discovery-Index registrieren (phoneIndex + emailIndex) damit andere uns finden
-                let idxPhone = FirebaseAuth.Auth.auth().currentUser?.phoneNumber
-                let idxEmail = FirebaseAuth.Auth.auth().currentUser?.email
-                let idxName  = self.currentUser.name
+                // Im Discovery-Index registrieren (phoneIndex + emailIndex) damit andere uns finden.
+                // Bei Apple Sign-In ist FirebaseAuth.phoneNumber = nil — daher Fallback auf die
+                // optional hinterlegte Nummer aus UserDefaults (wird beim Onboarding/Settings gespeichert).
+                let authPhone  = FirebaseAuth.Auth.auth().currentUser?.phoneNumber
+                let savedPhone = UserDefaults.standard.string(forKey: UDKey.userPhone)
+                let idxPhone   = (authPhone?.isEmpty == false) ? authPhone : savedPhone
+                let idxEmail   = FirebaseAuth.Auth.auth().currentUser?.email
+                let savedName  = UserDefaults.standard.string(forKey: UDKey.userName) ?? ""
+                let idxName    = savedName.isEmpty ? "Drops-Nutzer" : savedName
                 RealtimeDBManager.shared.registerInDiscoveryIndex(
-                    uid: uid, name: idxName.isEmpty ? "Drops-Nutzer" : idxName,
+                    uid: uid, name: idxName,
                     phone: idxPhone, email: idxEmail
                 )
             }
@@ -1181,15 +1188,27 @@ class AppStore: ObservableObject {
             }
     }
 
-    /// Speichert die optionale Handynummer in Firestore (für Kontakt-Suche).
+    /// Speichert die optionale Handynummer in Firestore (Persistenz) UND aktualisiert
+    /// den phoneIndex in Realtime DB (für Kontakt-Matching durch andere User).
+    /// Bei leerer Nummer wird der Index-Eintrag entfernt.
     func saveUserPhone(_ phone: String) {
+        let oldPhone = userPhone
         userPhone = phone
         UserDefaults.standard.set(phone, forKey: UDKey.userPhone)
+
         guard let uid = Auth.auth().currentUser?.uid else { return }
+
+        // Firestore: Persistenz fürs Profil
         let value: Any = phone.isEmpty ? NSNull() : phone
         Firestore.firestore()
             .collection("users").document(uid)
             .setData(["phoneNumber": value], merge: true)
+
+        // Realtime DB: phoneIndex für Discovery — alte Nummer räumen, neue eintragen
+        let indexName = currentUser.name.isEmpty ? "Drops-Nutzer" : currentUser.name
+        RealtimeDBManager.shared.updatePhoneDiscoveryIndex(
+            uid: uid, name: indexName, oldPhone: oldPhone, newPhone: phone
+        )
     }
 
     private func loadAll() {

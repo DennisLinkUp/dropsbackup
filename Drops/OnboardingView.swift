@@ -1098,7 +1098,10 @@ struct OnboardingView: View {
                 store.currentUser.name = name.isEmpty ? "Du" : name
                 store.userBirthdate    = birthdate
                 store.userGender       = gender.lowercased()   // immer lowercase speichern
-                if !phone.isEmpty { store.userPhone = phone }
+                if !phone.isEmpty {
+                    // saveUserPhone schreibt in Firestore + phoneIndex (damit Kontakte uns finden)
+                    store.saveUserPhone(phone)
+                }
                 store.saveAll()
                 withAnimation(.spring(response: 0.4)) { step = .interests }
             },

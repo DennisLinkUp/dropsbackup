@@ -103,6 +103,24 @@ class RealtimeDBManager: ObservableObject {
         }
     }
 
+    /// Aktualisiert die Telefonnummer im phoneIndex. Entfernt die alte Nummer
+    /// (wenn unterschiedlich) und legt die neue an. Bei leerer neuer Nummer wird
+    /// nur die alte entfernt (User hat seine Nummer gelöscht → soll nicht mehr findbar sein).
+    func updatePhoneDiscoveryIndex(uid: String, name: String, oldPhone: String?, newPhone: String?) {
+        let oldNorm = (oldPhone?.isEmpty == false) ? Self.normalizePhone(oldPhone!) : ""
+        let newNorm = (newPhone?.isEmpty == false) ? Self.normalizePhone(newPhone!) : ""
+
+        // Alte Nummer entfernen, wenn sie sich geändert hat oder gelöscht wurde
+        if !oldNorm.isEmpty && oldNorm != newNorm {
+            db.child("phoneIndex").child(oldNorm).removeValue()
+        }
+        // Neue Nummer eintragen (setValue überschreibt — idempotent)
+        if !newNorm.isEmpty {
+            let payload: [String: Any] = ["uid": uid, "name": name]
+            db.child("phoneIndex").child(newNorm).setValue(payload)
+        }
+    }
+
     /// Sucht Kontakte in phoneIndex UND emailIndex und gibt alle Treffer zurück.
     func lookupContactsOnDrops(
         phones: [String],
