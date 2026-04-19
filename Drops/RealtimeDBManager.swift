@@ -404,6 +404,73 @@ class RealtimeDBManager: ObservableObject {
         db.child("drops").removeObserver(withHandle: handle)
     }
 
+    // MARK: - Eigene Drops beim App-Start rehydrieren
+
+    /// Snapshot eines eigenen Drops in Firebase — für Rehydration nach App-Neustart.
+    struct MyActiveDropSnapshot {
+        let dropID: String
+        let activityName: String
+        let emoji: String
+        let coordinate: CLLocationCoordinate2D
+        let scheduledTime: String
+        let maxParticipants: Int
+        let isBoosted: Bool
+        let createdAt: Date
+        let expiresAt: Date
+    }
+
+    /// Lädt alle eigenen, noch nicht abgelaufenen Drops des Users aus Firebase.
+    /// Wird beim App-Start aufgerufen, damit ein Drop im „Aktiv"-Tab sichtbar bleibt
+    /// auch wenn die App komplett geschlossen und neu gestartet wurde.
+    func loadMyActiveDrops(ownerUID: String) async -> [MyActiveDropSnapshot] {
+        guard let snapshot = try? await db.child("drops").getData() else { return [] }
+        let now = Date()
+        var results: [MyActiveDropSnapshot] = []
+        for child in snapshot.children {
+            guard let snap = child as? DataSnapshot,
+                  let dict = snap.value as? [String: Any],
+                  (dict["userID"] as? String) == ownerUID,
+                  (dict["active"] as? Bool) ?? false,
+                  let lat = dict["lat"] as? Double,
+                  let lng = dict["lng"] as? Double,
+                  let activityName = dict["activityName"] as? String,
+                  let emoji = dict["emoji"] as? String
+            else { continue }
+
+            // CreatedAt aus Unix-Timestamp (ms) rekonstruieren
+            let createdAt: Date
+            if let tsMs = dict["timestamp"] as? Double {
+                createdAt = Date(timeIntervalSince1970: tsMs / 1000)
+            } else {
+                createdAt = now.addingTimeInterval(-60)  // Fallback: 1 Min. vor jetzt
+            }
+
+            // ExpiresAt: explizites Feld oder 12h-Fallback
+            let expiresAt: Date
+            if let exp = dict["expiresAt"] as? Double {
+                expiresAt = Date(timeIntervalSince1970: exp)
+            } else {
+                expiresAt = createdAt.addingTimeInterval(12 * 3600)
+            }
+
+            // Abgelaufene Drops ignorieren — cleanupOrphanedDrops räumt sie nebenbei auf
+            if now > expiresAt { continue }
+
+            results.append(MyActiveDropSnapshot(
+                dropID: snap.key,
+                activityName: activityName,
+                emoji: emoji,
+                coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lng),
+                scheduledTime: dict["scheduledTime"] as? String ?? "Jetzt",
+                maxParticipants: dict["maxParticipants"] as? Int ?? 10,
+                isBoosted: dict["isBoosted"] as? Bool ?? false,
+                createdAt: createdAt,
+                expiresAt: expiresAt
+            ))
+        }
+        return results
+    }
+
     // MARK: - Verwaiste Drops aufräumen
 
     /// Löscht beim App-Start alle Drops in Firebase die dem aktuellen User gehören aber

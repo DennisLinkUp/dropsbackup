@@ -840,11 +840,46 @@ class AppStore: ObservableObject {
 
         loadAll()
 
+        // ── Eigene aktive Drops aus Firebase rehydrieren ─────────────────
+        // activeDrops und joinRequests werden lokal nicht persistiert, aber nach
+        // App-Neustart soll ein noch laufender Drop weiter im „Aktiv"-Tab erscheinen.
+        // → Firebase ist die Single Source of Truth, wir laden die eigenen
+        // aktiven Drops des Users einmalig zurück in den In-Memory-State.
+        if let uid = FirebaseAuth.Auth.auth().currentUser?.uid {
+            Task { @MainActor in
+                let snapshots = await RealtimeDBManager.shared.loadMyActiveDrops(ownerUID: uid)
+                for snap in snapshots where !self.activeDrops.contains(where: { $0.id.uuidString == snap.dropID }) {
+                    guard let dropUUID = UUID(uuidString: snap.dropID) else { continue }
+                    let activity = Activity(id: UUID(), name: snap.activityName, emoji: snap.emoji)
+                    let location = DropLocation(
+                        title: "Dein aktiver Drop",
+                        subtitle: "",
+                        coordinate: snap.coordinate,
+                        type: .current
+                    )
+                    let duration = max(0, Int(snap.expiresAt.timeIntervalSince(snap.createdAt) / 60))
+                    var drop = DropEvent(
+                        id: dropUUID, host: self.currentUser,
+                        activity: activity, location: location,
+                        participants: [self.currentUser],
+                        createdAt: snap.createdAt,
+                        dropDescription: "",
+                        scheduledTime: snap.scheduledTime,
+                        maxParticipants: snap.maxParticipants,
+                        durationMinutes: duration
+                    )
+                    drop.isBoosted = snap.isBoosted
+                    self.activeDrops.append(drop)
+                    DropNotificationManager.scheduleExpiryReminders(for: drop)
+                    self.startObservingDropIns(forDropID: snap.dropID)
+                    self.startObservingJoinRequests(forDropID: snap.dropID)
+                }
+            }
+        }
+
         // ── Veraltete Drop-Benachrichtigungen aus vorherigen Sessions löschen ─
-        // activeDrops und joinRequests werden nicht persistiert → nach App-Neustart
-        // gibt es keine aktiven Drops, aber alte UNCalendarNotificationTrigger
-        // würden sonst trotzdem feuern. Beim Start alle löschen, neue werden beim
-        // createDrop/joinDrop neu eingeplant.
+        // Alte UNCalendarNotificationTrigger würden sonst feuern; neue werden nach
+        // der Rehydration oben bzw. bei createDrop/joinDrop neu eingeplant.
         UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
 
         // ── Verwaiste Dynamic Island Live Activities aus früheren Sessions beenden ─
