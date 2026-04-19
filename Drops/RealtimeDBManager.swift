@@ -2,7 +2,12 @@ import Foundation
 import FirebaseDatabase
 import FirebaseAuth
 import FirebaseFirestore
+import FirebaseStorage
 import CoreLocation
+
+extension Notification.Name {
+    static let dropsPlusStatusChanged = Notification.Name("DropsPlusStatusChanged")
+}
 
 // MARK: - Realtime Database Manager
 // Verwaltet Live-Daten: SOS-Standorte, aktive Drops von Fremden, Begegnungen
@@ -191,73 +196,89 @@ class RealtimeDBManager: ObservableObject {
         }
     }
 
-    /// Löscht alle Nutzerdaten aus der Realtime DB und den Firebase Auth-Account.
-    /// Completion wird mit `true` aufgerufen wenn alles erfolgreich war.
-    func deleteCurrentUserAccount(completion: @escaping (Bool, Error?) -> Void) {
-        guard let user = Auth.auth().currentUser else {
-            completion(false, nil); return
+    /// Löscht alle Nutzerdaten aus Realtime DB, Firestore und Storage.
+    /// MUSS aufgerufen werden BEVOR der Auth-Account gelöscht wird — danach blockieren
+    /// die Security Rules jeglichen Zugriff. Der Caller muss awaiten.
+    func deleteUserData(uid: String) async {
+        // 1. Eigene Drops (gespeichert unter UUID, nicht uid → scan nötig)
+        //    Mit-Löschung der verknüpften dropins und joinRequests für eigene Drops.
+        if let dropsSnap = try? await db.child("drops").getData() {
+            for child in dropsSnap.children {
+                guard let snap = child as? DataSnapshot,
+                      let dict = snap.value as? [String: Any],
+                      (dict["userID"] as? String) == uid else { continue }
+                try? await db.child("drops").child(snap.key).removeValue()
+                try? await db.child("dropins").child(snap.key).removeValue()
+                try? await db.child("joinRequests").child(snap.key).removeValue()
+            }
         }
-        let uid = user.uid
-        // 1. Daten in Realtime DB löschen
-        db.child("users").child(uid).removeValue { dbError, _ in
-            if let dbError = dbError {
-                completion(false, dbError); return
+
+        // 2. Eigene Beitritte/Anfragen zu fremden Drops
+        if let dropinsSnap = try? await db.child("dropins").getData() {
+            for child in dropinsSnap.children {
+                guard let dropSnap = child as? DataSnapshot else { continue }
+                try? await db.child("dropins").child(dropSnap.key).child(uid).removeValue()
             }
-            // 2. Aktive Drops des Users löschen
-            self.db.child("drops").child(uid).removeValue()
-            // 3. Firebase Auth-Account löschen
-            user.delete { authError in
-                if let authError = authError {
-                    completion(false, authError)
-                } else {
-                    completion(true, nil)
-                }
+        }
+        if let reqSnap = try? await db.child("joinRequests").getData() {
+            for child in reqSnap.children {
+                guard let dropSnap = child as? DataSnapshot else { continue }
+                try? await db.child("joinRequests").child(dropSnap.key).child(uid).removeValue()
             }
+        }
+
+        // 3. Begegnungen (scan nach partnerA/partnerB)
+        if let encSnap = try? await db.child("encounters").getData() {
+            for child in encSnap.children {
+                guard let snap = child as? DataSnapshot,
+                      let dict = snap.value as? [String: Any],
+                      (dict["partnerA"] as? String) == uid || (dict["partnerB"] as? String) == uid
+                else { continue }
+                try? await db.child("encounters").child(snap.key).removeValue()
+            }
+        }
+
+        // 4. Discovery-Indizes (phoneIndex + emailIndex)
+        if let phoneSnap = try? await db.child("phoneIndex").getData() {
+            for child in phoneSnap.children {
+                guard let s = child as? DataSnapshot,
+                      let dict = s.value as? [String: Any],
+                      (dict["uid"] as? String) == uid else { continue }
+                try? await db.child("phoneIndex").child(s.key).removeValue()
+            }
+        }
+        if let emailSnap = try? await db.child("emailIndex").getData() {
+            for child in emailSnap.children {
+                guard let s = child as? DataSnapshot,
+                      let dict = s.value as? [String: Any],
+                      (dict["uid"] as? String) == uid else { continue }
+                try? await db.child("emailIndex").child(s.key).removeValue()
+            }
+        }
+
+        // 5. Freundesliste und Profil
+        try? await db.child("friends").child(uid).removeValue()
+        try? await db.child("users").child(uid).removeValue()
+
+        // 6. Firestore-Profil (Reliability-Score, profileImageURL)
+        try? await Firestore.firestore().collection("users").document(uid).delete()
+
+        // 7. Firebase Storage (Profilbild)
+        try? await Storage.storage().reference().child("profileImages/\(uid).jpg").delete()
+
+        // 8. Soft-Delete-Fallback falls Profil-Löschung fehlschlug (z.B. Rules-Edge-Case)
+        if let snap = try? await db.child("users").child(uid).getData(), snap.exists() {
+            try? await db.child("users").child(uid).updateChildValues([
+                "isDeleted": true, "name": "[Gelöscht]", "email": ""
+            ])
         }
     }
 
-    /// Löscht alle Nutzerdaten aus Realtime DB + Firestore.
-    /// Muss aufgerufen werden BEVOR der Auth-Account gelöscht wird (sonst blockieren Rules).
-    func deleteUserData(uid: String, completion: (() -> Void)? = nil) {
-        // 1. Realtime DB: Nutzer-Profil löschen oder als gelöscht markieren
-        db.child("users").child(uid).removeValue { error, _ in
-            if error != nil {
-                // Fallback: Soft-Delete damit der Eintrag im Admin gefiltert wird
-                self.db.child("users").child(uid).updateChildValues([
-                    "isDeleted": true, "name": "[Gelöscht]", "email": ""
-                ])
-            }
-        }
-        db.child("friends").child(uid).removeValue()
-
-        // 2. Eigene Drops löschen (gespeichert unter UUID, nicht uid → scan nötig)
-        db.child("drops").observeSingleEvent(of: .value) { [weak self] snapshot in
-            guard let self = self else { completion?(); return }
-            for child in snapshot.children {
-                guard let snap = child as? DataSnapshot,
-                      let dict = snap.value as? [String: Any],
-                      let ownerID = dict["userID"] as? String,
-                      ownerID == uid
-                else { continue }
-                self.db.child("drops").child(snap.key).removeValue()
-            }
-
-            // 3. Phone-Index bereinigen
-            self.db.child("phoneIndex").observeSingleEvent(of: .value) { snap in
-                for child in snap.children {
-                    guard let s = child as? DataSnapshot,
-                          let dict = s.value as? [String: Any],
-                          dict["uid"] as? String == uid
-                    else { continue }
-                    self.db.child("phoneIndex").child(s.key).removeValue()
-                }
-
-                // 4. Firestore-Profil löschen (profileImageURL, reliabilityScore etc.)
-                Firestore.firestore()
-                    .collection("users").document(uid)
-                    .delete { _ in completion?() }
-            }
-        }
+    /// Schreibt den Drops+ Status des aktuell eingeloggten Users nach Firebase.
+    /// Wird nach erfolgreichem IAP-Kauf oder Entitlement-Refresh aufgerufen.
+    func setMyPlusStatus(_ isPlus: Bool) {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        db.child("users").child(uid).updateChildValues(["isPlusUser": isPlus])
     }
 
     // MARK: - Aktive Drops (Fremde)

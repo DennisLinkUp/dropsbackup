@@ -190,7 +190,7 @@
   <div class="page-header">
     <div class="page-icon">🛡️</div>
     <h1 class="page-title">Rechtliches</h1>
-    <p class="page-subtitle">Datenschutzerklärung &amp; Nutzungsbedingungen · Zuletzt aktualisiert: Mai 2026</p>
+    <p class="page-subtitle">Datenschutzerklärung &amp; Nutzungsbedingungen · Zuletzt aktualisiert: April 2026</p>
   </div>
 
   <!-- TABS -->
@@ -216,79 +216,230 @@ Bei Fragen zum Datenschutz kannst du uns jederzeit per E-Mail kontaktieren.</div
 
     <div class="section-block">
       <div class="section-title">2. Welche Daten wir erheben</div>
-      <div class="section-text">• Telefonnummer (zur Authentifizierung via Firebase)
-• Standortdaten (GPS, nur während der App-Nutzung)
-• Profilbild (optional; als Selfie lokal gespeichert und – sofern du es hochlädst – auf Firebase Storage)
-• Vorname (bei Reisepass-Verifizierung aus MRZ gelesen)
-• Geburtsdatum (bei Reisepass-Verifizierung, nur für Altersberechnung)
-• Verifizierungsstatus (ob Reisepass erfolgreich verifiziert wurde)
-• Aktivitätsdaten (erstellte Drops, Begegnungen)
-• Notfallkontakt (nur lokal auf deinem Gerät)
-• FCM-Token (für Push-Benachrichtigungen)
-• Live-Activity-Daten (Teilnehmeranzahl, Emoji, Vorname – für Dynamic Island / Sperrbildschirm-Banner)
-• Technische Daten (Geräte-ID, Betriebssystem, App-Version)</div>
-      <div class="highlight-box">NICHT gespeichert: Das Foto deines Reisepasses, die Passnummer und biometrische Rohdaten jeglicher Art. Alle Verarbeitung findet ausschließlich auf deinem Gerät statt.</div>
+      <div class="section-text">Je nach Nutzung verarbeiten wir folgende Daten:
+
+<strong style="color:var(--text)">Konto &amp; Authentifizierung</strong>
+• Telefonnummer (zur Verifizierung via Firebase Authentication)
+• Alternativ: Sign in with Apple – Apple User ID, Nonce (SHA256-Hash), optional E-Mail, Authorization Code (zur späteren Token-Widerrufung bei Kontolöschung)
+
+<strong style="color:var(--text)">Profil</strong>
+• Vorname und Geburtsdatum (aus Ausweis-MRZ, siehe Abschnitt 4)
+• Geschlecht (optional)
+• E-Mail (nur bei Sign in with Apple, falls freigegeben)
+• Profilbild (optional, auf Firebase Storage)
+• Verifizierungsstatus (Ja/Nein)
+• Zuverlässigkeits-Score (Anzahl bestätigter / nicht eingehaltener Treffen)
+
+<strong style="color:var(--text)">Nutzung der App</strong>
+• Standortdaten (GPS, nur bei aktivem Drop oder SOS – siehe Abschnitt 5)
+• Erstellte Drops (Koordinaten, Emoji, Aktivitätsname, Ablaufzeit)
+• Beitritte, Beitrittsanfragen, aufgezeichnete Begegnungen
+• Freundschaftsbeziehungen (reine Verknüpfung, keine Inhalte)
+
+<strong style="color:var(--text)">Discovery-Indizes</strong>
+• Normalisierte Telefonnummer (E.164-Format) und E-Mail (normalisiert) als Suchindex, damit Freunde dich finden können
+
+<strong style="color:var(--text)">Technik &amp; Kommunikation</strong>
+• FCM-Token (für Push-Benachrichtigungen, nur lokal gespeichert)
+• Bluetooth-Proximity-Token (anonyme 8-Zeichen-Kennung, siehe Abschnitt 6)
+• Live-Activity-Daten (Vorname, Emoji, Profilbild, Teilnehmeranzahl – siehe Abschnitt 9)
+• Drops+ Kauf-Status (siehe Abschnitt 11)
+• Gerätetyp, Betriebssystem, App-Version
+
+<strong style="color:var(--text)">Lokal (verlässt dein Gerät nicht)</strong>
+• Notfallkontakt (Name, Telefonnummer)
+• BLE-Bestätigungshistorie (zur Missbrauchs-Vermeidung)
+• Push-Benachrichtigungs-Zeitstempel (zur Rate-Limitierung)</div>
+      <div class="highlight-box">NICHT gespeichert: Das Foto deines Ausweises, die Dokumentennummer, biometrische Rohdaten und dein Adressbuch. Reine Geräte-Verarbeitung bei MRZ und Kontakt-Abgleich.</div>
     </div>
 
     <div class="section-block">
-      <div class="section-title">2a. Reisepass-Verifizierung</div>
-      <div class="section-text">Drops führt eine einmalige Identitätsverifizierung durch, um echte Begegnungen unter verifizierten Personen zu gewährleisten.
+      <div class="section-title">3. Zweck &amp; Rechtsgrundlage</div>
+      <div class="section-text">Wir verarbeiten deine Daten für folgende Zwecke:
 
-<strong style="color:var(--text)">Was passiert:</strong> Beim Reisepass-Scan wird die maschinenlesbare Zone (MRZ) per OCR ausgelesen, um deinen Vornamen und dein Geburtsdatum zu erfassen.
+• <strong style="color:var(--text)">Vertragserfüllung (Art. 6 Abs. 1 lit. b DSGVO):</strong> Authentifizierung, Kontoverwaltung, Drop-Erstellung, Karte, Begegnungen, Bluetooth-Proximity, Push-Benachrichtigungen, Drops+
+• <strong style="color:var(--text)">Einwilligung (Art. 6 Abs. 1 lit. a DSGVO):</strong> Ausweis-Verifizierung, Kontakt-Abgleich, Profilbild-Upload
+• <strong style="color:var(--text)">Berechtigtes Interesse (Art. 6 Abs. 1 lit. f DSGVO):</strong> Moderation &amp; Missbrauchs-Vermeidung (Admin-Panel, Sperren, Zuverlässigkeits-Score), Sicherheit der Plattform
+• <strong style="color:var(--text)">Lebenswichtige Interessen (Art. 6 Abs. 1 lit. d DSGVO):</strong> SOS-Notfallfunktion
 
-<strong style="color:var(--text)">Was gespeichert wird:</strong> Nur Vorname, Geburtsdatum und ob die Verifizierung erfolgreich war (Ja/Nein). Das Passfoto, die Passnummer und alle weiteren Passdaten werden weder gespeichert noch übertragen.
-
-<strong style="color:var(--text)">Verarbeitung nur auf deinem Gerät:</strong> Der gesamte OCR-Prozess findet ausschließlich auf deinem iPhone statt. Keine Bilddaten und keine Passinformationen verlassen dein Gerät.
-
-<strong style="color:var(--text)">Rechtsgrundlage:</strong> Die Verarbeitung erfolgt auf Basis deiner ausdrücklichen Einwilligung (Art. 6 Abs. 1 lit. a DSGVO). Du kannst diese Einwilligung jederzeit durch Kontolöschung widerrufen.</div>
+Einwilligungen kannst du jederzeit über die App-Einstellungen oder durch Kontolöschung widerrufen.</div>
     </div>
 
     <div class="section-block">
-      <div class="section-title">3. Zweck der Datenverarbeitung</div>
-      <div class="section-text">Wir verarbeiten deine Daten ausschließlich für folgende Zwecke:
+      <div class="section-title">4. Ausweis-Verifizierung (MRZ)</div>
+      <div class="section-text">Drops führt eine einmalige Identitätsverifizierung durch, um echte Begegnungen unter verifizierten Personen zu gewährleisten und Minderjährige auszuschließen.
 
-• Authentifizierung und Kontoverwaltung (Art. 6 Abs. 1 lit. b DSGVO)
-• Bereitstellung der Kernfunktionen (Drops erstellen, Karte, Begegnungen)
-• Echtzeit-Standortfreigabe im Umgebungsbereich (nur bei aktiviertem Drop)
-• SOS-Notfallfunktion (Standortübermittlung an Notfallkontakt)
-• Push-Benachrichtigungen: Hinweise auf Drops in deiner Nähe sowie Re-Engagement-Hinweise bei Inaktivität
-• Darstellung deines Profilbilds und Vornamens im Live-Activity-Banner (Dynamic Island / Sperrbildschirm) für Teilnehmer desselben Drops
-• Verbesserung der App (nur mit deiner Zustimmung)</div>
+<strong style="color:var(--text)">Was passiert technisch:</strong> Die Kamera deines iPhones erfasst den Ausweis (Personalausweis oder Reisepass). Apples Vision-Framework erkennt lokal die maschinenlesbare Zone (MRZ) und extrahiert per OCR deinen Vornamen und dein Geburtsdatum.
+
+<strong style="color:var(--text)">Was gespeichert wird:</strong> Nur Vorname, Geburtsdatum und der Verifizierungs-Status (bestanden/nicht bestanden). Alles Weitere – Ausweisfoto, Dokumentennummer, Nationalität, Ausstellerland, Adresse – wird weder gespeichert noch übertragen.
+
+<strong style="color:var(--text)">Reine Geräte-Verarbeitung:</strong> Der komplette OCR-Prozess läuft ausschließlich auf deinem iPhone. Es werden keine Ausweisbilder, Rohdaten oder Zwischenergebnisse an einen Server übertragen.
+
+<strong style="color:var(--text)">Rechtsgrundlage:</strong> Ausdrückliche Einwilligung (Art. 6 Abs. 1 lit. a DSGVO). Widerruf jederzeit durch Kontolöschung.</div>
     </div>
 
     <div class="section-block">
-      <div class="section-title">4. Standortdaten</div>
-      <div class="section-text">Drops erhebt deinen Standort nur, wenn du die App aktiv verwendest ("Nur während der Nutzung"). Dein Standort wird temporär an Firebase Realtime Database übertragen, solange du einen aktiven Drop hast oder die SOS-Funktion aktiviert ist. Nach Deaktivierung werden Standortdaten sofort gelöscht. Wir speichern keine historischen Bewegungsprofile.</div>
+      <div class="section-title">5. Standortdaten</div>
+      <div class="section-text">Drops erhebt deinen Standort <strong style="color:var(--text)">nur</strong>, wenn mindestens eine dieser Bedingungen erfüllt ist:
+• Du hast einen aktiven Drop erstellt
+• Du bist einem Drop beigetreten
+• Du hast die SOS-Funktion ausgelöst
+
+<strong style="color:var(--text)">Genauigkeit:</strong> GPS mit bester Auflösung (kCLLocationAccuracyBest). Auf der Karte für andere Nutzer wird der Standort durch den Drop-Radius maskiert.
+
+<strong style="color:var(--text)">Hintergrund-Modus:</strong> Damit Drops auch im Hintergrund aktualisiert werden, läuft Location-Tracking weiter, solange ein Drop aktiv ist. Ohne aktiven Drop und ohne SOS werden sofort keine Standortdaten mehr erhoben oder übertragen.
+
+<strong style="color:var(--text)">Speicherung:</strong> Der aktuelle Standort wird live an die Firebase Realtime Database (EU-Region, Frankfurt) übertragen und bei Drop-Beendigung sofort gelöscht. SOS-Einträge werden nach maximal 30 Minuten automatisch entfernt. Wir speichern <strong style="color:var(--text)">keine historischen Bewegungsprofile</strong>.</div>
     </div>
 
     <div class="section-block">
-      <div class="section-title">5. Drittanbieter &amp; Auftragsverarbeiter</div>
-      <div class="section-text">Wir nutzen folgende Dienste von Google LLC (USA):
+      <div class="section-title">6. Bluetooth &amp; automatische Treffen-Bestätigung</div>
+      <div class="section-text">Drops nutzt Bluetooth Low Energy (BLE), um tatsächliche Treffen zwischen Drop-Teilnehmern automatisch zu erkennen – ohne dass du manuell bestätigen musst.
 
-• Firebase Authentication – Telefonnummer-Verifizierung
-• Firebase Realtime Database – Live-Daten (Drops, SOS)
-• Firebase Storage – optionale Speicherung von Profilbildern
-• Firebase Firestore – Nutzerprofildaten (Name, Verifizierungsstatus)
-• Firebase Cloud Messaging – Push-Benachrichtigungen
+<strong style="color:var(--text)">Was über Bluetooth übertragen wird:</strong>
+• Eine anonyme 8-Zeichen-Kennung (abgeleitet aus deiner internen Nutzer-ID, <em>nicht</em> deine Telefonnummer oder E-Mail)
+• Eine drop-spezifische Service-UUID
+• Keine Namen, keine Profilbilder, keine Standortdaten, keine MAC-Adressen
 
-Google LLC ist unter dem EU-US Data Privacy Framework zertifiziert. Eine Auftragsverarbeitungsvereinbarung (AVV) ist abgeschlossen. Weitere Informationen: policies.google.com/privacy</div>
+<strong style="color:var(--text)">Missbrauchs-Vermeidung (drei Schutzebenen):</strong>
+1. <strong style="color:var(--text)">Mindestdauer:</strong> Frühestens 5 Minuten nach Drop-Beitritt kann eine Begegnung registriert werden
+2. <strong style="color:var(--text)">Partner-Cooldown:</strong> Dieselbe Person wird maximal alle 6 Stunden bestätigt
+3. <strong style="color:var(--text)">Tages-Limit:</strong> Maximal 4 Bluetooth-Bestätigungen pro Tag
+
+<strong style="color:var(--text)">Entfernung:</strong> Eine Begegnung wird nur registriert, wenn das Signal stärker als –72 dBm ist (ca. 5–10 Meter).
+
+<strong style="color:var(--text)">Hintergrund-Modus:</strong> BLE läuft im Hintergrund, solange ein Drop aktiv ist. Ohne aktiven Drop wird Bluetooth nicht genutzt.
+
+<strong style="color:var(--text)">Speicherung:</strong> Die BLE-Bestätigungshistorie (wann, wen) wird <strong style="color:var(--text)">ausschließlich lokal auf deinem Gerät</strong> in den App-Einstellungen gespeichert und verlässt dein iPhone nicht. Nur das Ergebnis – die eigentliche Begegnung – wird in der Firebase Realtime Database als Verknüpfung zwischen den beiden Nutzer-IDs gespeichert.
+
+<strong style="color:var(--text)">Rechtsgrundlage:</strong> Art. 6 Abs. 1 lit. b DSGVO (Kernfunktion von Drops).</div>
     </div>
 
     <div class="section-block">
-      <div class="section-title">6. Speicherdauer</div>
-      <div class="section-text">Kontodaten werden gelöscht, sobald du dein Konto löschst. Aktive Drops werden nach ihrer Beendigung automatisch aus der Datenbank entfernt. SOS-Einträge werden nach maximal 30 Minuten automatisch gelöscht. Hochgeladene Profilbilder werden zusammen mit dem Konto gelöscht. Logs werden nach 90 Tagen automatisch bereinigt.</div>
+      <div class="section-title">7. Kontakt-Abgleich (optional)</div>
+      <div class="section-text">Wenn du die Funktion „Freunde finden" aktivierst, kannst du Drops dein Adressbuch durchsuchen lassen, um Kontakte zu entdecken, die ebenfalls Drops nutzen.
+
+<strong style="color:var(--text)">Ablauf:</strong>
+• Telefonnummern werden zu E.164-Format normalisiert, E-Mails werden Kleinbuchstaben-normalisiert
+• Jede normalisierte Adresse wird mit dem Firebase-Discovery-Index verglichen
+• Bei Treffer wird dir der entsprechende Drops-Nutzer zur Freundschaftsanfrage angeboten
+
+<strong style="color:var(--text)">Was NICHT gespeichert wird:</strong> Dein Adressbuch wird weder an unsere Server übertragen noch lokal dauerhaft kopiert. Nur die Übereinstimmungen, die du aktiv als Freund hinzufügst, werden gespeichert.
+
+<strong style="color:var(--text)">Rechtsgrundlage:</strong> Ausdrückliche Einwilligung (Art. 6 Abs. 1 lit. a DSGVO). Widerruf über iOS-Systemeinstellungen (Einstellungen → Drops → Kontakte).</div>
     </div>
 
     <div class="section-block">
-      <div class="section-title">7. Deine Rechte</div>
+      <div class="section-title">8. Push-Benachrichtigungen</div>
+      <div class="section-text">Mit deiner Zustimmung senden wir Push-Benachrichtigungen über Apple Push Notification Service (APNs) und Firebase Cloud Messaging (FCM).
+
+<strong style="color:var(--text)">Arten:</strong>
+• Drops in deiner Nähe (maximal 1× alle 30 Minuten)
+• Warnung bei Drops in deiner Heimzone (maximal 1× alle 60 Minuten)
+• Beitrittsanfragen zu deinem Drop
+• Automatische Bestätigung abgelaufener Beitrittsanfragen
+• Jemand ist deinem Drop beigetreten
+• Neue aufgezeichnete Begegnungen
+• Freund startet Drop in deiner Nähe
+• Re-Engagement-Hinweise bei längerer Inaktivität
+
+<strong style="color:var(--text)">FCM-Token:</strong> Das Gerät-Token wird nur lokal in den App-Einstellungen gespeichert, nicht in der Datenbank. Du kannst Push jederzeit über iOS-Systemeinstellungen deaktivieren.</div>
+    </div>
+
+    <div class="section-block">
+      <div class="section-title">9. Live Activity (Dynamic Island &amp; Sperrbildschirm)</div>
+      <div class="section-text">Sobald du einem Drop beitrittst oder einen startest, zeigt iOS im Dynamic Island und auf dem Sperrbildschirm eine Live-Übersicht.
+
+<strong style="color:var(--text)">Angezeigte Daten:</strong> Drop-Name, Emoji, Teilnehmerzahl, Ablaufzeit, Vornamen und Profilbilder der Teilnehmer sowie deren voraussichtliche Ankunftszeit.
+
+<strong style="color:var(--text)">Technisch:</strong> Die Live-Activity läuft über Apples ActivityKit <strong style="color:var(--text)">lokal auf deinem Gerät</strong>. APNs wird nur als Trigger-Kanal für Aktualisierungen genutzt – keine Nutzerdaten werden an Apple übertragen.</div>
+    </div>
+
+    <div class="section-block">
+      <div class="section-title">10. SOS-Notfallfunktion</div>
+      <div class="section-text">Bei Auslösung der SOS-Funktion werden mehrere Aktionen gleichzeitig ausgeführt:
+• Automatischer Anruf an den Notruf 112
+• Benachrichtigung deines auf dem Gerät hinterlegten Notfallkontakts
+• Übermittlung deines aktuellen Standorts an Drops-Nutzer in unmittelbarer Nähe
+
+<strong style="color:var(--text)">Speicherdauer:</strong> SOS-Einträge werden <strong style="color:var(--text)">nach maximal 30 Minuten</strong> automatisch aus der Datenbank gelöscht.
+
+<strong style="color:var(--text)">Rechtsgrundlage:</strong> Schutz lebenswichtiger Interessen (Art. 6 Abs. 1 lit. d DSGVO).</div>
+    </div>
+
+    <div class="section-block">
+      <div class="section-title">11. Drops+ (In-App-Kauf)</div>
+      <div class="section-text">Drops+ ist ein optionales kostenpflichtiges Zusatz-Feature (z.&nbsp;B. Drop-Hervorhebung auf der Karte).
+
+<strong style="color:var(--text)">Zahlungsabwicklung:</strong> Der Kauf läuft ausschließlich über Apples App Store mit deiner Apple-ID. Wir erhalten keine Zahlungsdaten, keine Apple-ID und keine Kreditkarteninformationen.
+
+<strong style="color:var(--text)">Was Drops speichert:</strong> Nur die Information, dass du Drops+ freigeschaltet hast (Flag <em>isPlusUser: true</em> in deinem Nutzerprofil). Dies ist nötig, um dir die Funktionen freizuschalten.
+
+<strong style="color:var(--text)">Speicherdauer:</strong> Bis zur Kontolöschung. Rückerstattung über Apple.</div>
+    </div>
+
+    <div class="section-block">
+      <div class="section-title">12. Moderation &amp; Admin-Funktionen</div>
+      <div class="section-text">Zur Sicherung der Plattform gegen Missbrauch existiert ein Admin-Bereich mit eingeschränktem Zugriff.
+
+<strong style="color:var(--text)">Wer hat Zugriff:</strong> Ausschließlich der Betreiber (Dennis Gundermann) sowie ggf. manuell benannte Moderatoren.
+
+<strong style="color:var(--text)">Was Admins einsehen können:</strong>
+• Nutzerliste mit Name, E-Mail, Registrierungsdatum, Sperr- und Drops+-Status
+• Aktive Drops (Aktivitätsname, Emoji)
+• Aggregierte Statistiken (Anzahl Nutzer, aktive Drops, Sperrungen)
+
+<strong style="color:var(--text)">Was Admins tun können:</strong> Nutzer sperren/entsperren, Drops vorzeitig beenden, Accounts löschen (bei Verstößen), Drops+-Status manuell setzen.
+
+<strong style="color:var(--text)">Rechtsgrundlage:</strong> Berechtigtes Interesse an einer sicheren Plattform (Art. 6 Abs. 1 lit. f DSGVO). Dein Anspruch auf Auskunft über konkrete Admin-Zugriffe auf dein Konto bleibt bestehen – Anfrage an contact@drops-app.de.</div>
+    </div>
+
+    <div class="section-block">
+      <div class="section-title">13. Drittanbieter &amp; Auftragsverarbeiter</div>
+      <div class="section-text"><strong style="color:var(--text)">Google LLC / Google Ireland Ltd.</strong>
+• Firebase Authentication – Telefonnummer-/Apple-Sign-In-Verifizierung
+• Firebase Realtime Database (Region <em>europe-west1</em>, Frankfurt) – Live-Daten (Drops, Standort, Begegnungen)
+• Firebase Storage – Profilbilder
+• Firebase Firestore – Profilergänzungen (Zuverlässigkeits-Score, Profilbild-URL)
+• Firebase Cloud Messaging – Push-Zustellung
+
+Google LLC ist unter dem EU-US Data Privacy Framework zertifiziert. Eine Auftragsverarbeitungsvereinbarung (AVV) nach Art. 28 DSGVO ist abgeschlossen. Details: policies.google.com/privacy
+
+<strong style="color:var(--text)">Apple Inc.</strong>
+• Sign in with Apple (optional, wenn du diese Anmeldemethode wählst)
+• Apple Push Notification Service (APNs) – Push-Zustellung
+• App Store / StoreKit – Drops+ Kaufabwicklung
+
+Details: apple.com/legal/privacy
+
+<strong style="color:var(--text)">Keine weiteren Drittanbieter.</strong> Drops nutzt keine Werbe-SDKs, keine externen Analyse-Tools (z.&nbsp;B. Google Analytics, Firebase Analytics, Mixpanel, Facebook SDK) und kein Tracking für Marketingzwecke. In der iOS-Privacy-Erklärung ist <em>Tracking: false</em> deklariert.</div>
+    </div>
+
+    <div class="section-block">
+      <div class="section-title">14. Speicherdauer</div>
+      <div class="section-text">• <strong style="color:var(--text)">Kontodaten:</strong> Bis zur Kontolöschung
+• <strong style="color:var(--text)">Profilbild:</strong> Bis zur Kontolöschung oder manuellem Entfernen
+• <strong style="color:var(--text)">Drops:</strong> Bis zur Beendigung durch dich oder automatischem Ablauf
+• <strong style="color:var(--text)">Beitritte/Anfragen:</strong> Automatisch mit Drop-Ende gelöscht
+• <strong style="color:var(--text)">Standort:</strong> Live, sofortige Löschung nach Drop-Ende
+• <strong style="color:var(--text)">SOS-Einträge:</strong> Maximal 30 Minuten
+• <strong style="color:var(--text)">Aufgezeichnete Begegnungen:</strong> Bis zur Kontolöschung (von dir oder deinem Partner)
+• <strong style="color:var(--text)">Discovery-Indizes (Telefon/E-Mail):</strong> Bis zur Kontolöschung
+• <strong style="color:var(--text)">BLE-Bestätigungshistorie (lokal):</strong> Tägliche Liste zurückgesetzt um Mitternacht; Partner-Cooldown bis App-Deinstallation
+• <strong style="color:var(--text)">FCM-Token (lokal):</strong> Bis App-Deinstallation</div>
+    </div>
+
+    <div class="section-block">
+      <div class="section-title">15. Deine Rechte</div>
       <div class="section-text">Du hast das Recht auf:
 
 • Auskunft über gespeicherte Daten (Art. 15 DSGVO)
 • Berichtigung unrichtiger Daten (Art. 16 DSGVO)
-• Löschung deiner Daten (Art. 17 DSGVO)
+• Löschung deiner Daten (Art. 17 DSGVO) – direkt in der App möglich
 • Einschränkung der Verarbeitung (Art. 18 DSGVO)
 • Datenübertragbarkeit (Art. 20 DSGVO)
 • Widerspruch gegen die Verarbeitung (Art. 21 DSGVO)
+• Widerruf erteilter Einwilligungen (Art. 7 Abs. 3 DSGVO)
 • Beschwerde bei einer Aufsichtsbehörde (Art. 77 DSGVO)
 
 Zur Ausübung deiner Rechte: contact@drops-app.de
@@ -297,18 +448,22 @@ Zuständige Aufsichtsbehörde: Bayerisches Landesamt für Datenschutzaufsicht (B
     </div>
 
     <div class="section-block">
-      <div class="section-title">8. Datensicherheit</div>
-      <div class="section-text">Alle Daten werden verschlüsselt übertragen (TLS 1.3). Firebase-Sicherheitsregeln stellen sicher, dass Nutzer nur auf ihre eigenen Daten zugreifen können. Telefonnummern werden von Firebase gehasht gespeichert und nicht im Klartext übertragen.</div>
+      <div class="section-title">16. Datensicherheit</div>
+      <div class="section-text">• Alle Übertragungen erfolgen TLS-verschlüsselt
+• Firebase-Sicherheitsregeln stellen sicher, dass jeder Nutzer nur auf seine eigenen Daten schreibend zugreifen kann
+• Telefonnummern werden von Firebase gehasht gespeichert
+• Drop-Standorte sind nur über den vom Host definierten Sichtbarkeits-Radius zugänglich
+• Der Zuverlässigkeits-Score ist für andere Nutzer nicht sichtbar</div>
     </div>
 
     <div class="section-block">
-      <div class="section-title">9. Minderjährige</div>
-      <div class="section-text">Drops ist nicht für Personen unter 16 Jahren bestimmt. Wir erheben wissentlich keine Daten von Minderjährigen. Falls du Kenntnis davon hast, dass ein Kind unter 16 Jahren Drops nutzt, wende dich bitte an contact@drops-app.de.</div>
+      <div class="section-title">17. Minderjährige</div>
+      <div class="section-text">Drops ist nicht für Personen unter 16 Jahren bestimmt. Die Ausweis-Verifizierung (siehe Abschnitt 4) schließt Minderjährige systematisch aus. Falls du Kenntnis davon hast, dass ein Kind unter 16 Jahren Drops nutzt, wende dich bitte an contact@drops-app.de.</div>
     </div>
 
     <div class="section-block">
-      <div class="section-title">10. Änderungen</div>
-      <div class="section-text">Wir behalten uns vor, diese Datenschutzerklärung anzupassen. Über wesentliche Änderungen wirst du per Push-Benachrichtigung oder beim nächsten App-Start informiert. Das Datum der letzten Aktualisierung ist oben angegeben.</div>
+      <div class="section-title">18. Änderungen dieser Erklärung</div>
+      <div class="section-text">Wir behalten uns vor, diese Datenschutzerklärung anzupassen, um rechtliche oder technische Änderungen abzubilden. Bei wesentlichen Änderungen informieren wir dich per Push-Benachrichtigung oder beim nächsten App-Start. Maßgebend ist die jeweils aktuelle Version, die auf drops-app.de/datenschutz abrufbar ist. Das Datum der letzten Aktualisierung findest du oben.</div>
     </div>
 
   </div><!-- /tab-privacy -->
@@ -360,37 +515,42 @@ Zuständige Aufsichtsbehörde: Bayerisches Landesamt für Datenschutzaufsicht (B
     </div>
 
     <div class="section-block">
-      <div class="section-title">7. Geistiges Eigentum</div>
+      <div class="section-title">7. Drops+ (In-App-Kauf)</div>
+      <div class="section-text">Drops+ ist ein optionales kostenpflichtiges Zusatz-Feature. Der Kauf wird über den Apple App Store abgewickelt. Für Widerruf, Rückerstattung und Laufzeit gelten die Bedingungen von Apple. Drops+ schaltet ausschließlich Zusatzfunktionen frei und ändert nichts an den grundlegenden Pflichten aus diesen Nutzungsbedingungen.</div>
+    </div>
+
+    <div class="section-block">
+      <div class="section-title">8. Geistiges Eigentum</div>
       <div class="section-text">Alle Rechte an der App, dem Design, dem Logo und dem Code liegen beim Anbieter. Du erhältst eine nicht übertragbare, nicht-exklusive Lizenz zur persönlichen Nutzung der App. Du darfst die App weder kopieren, modifizieren, dekompilieren noch für andere Zwecke verwenden.</div>
     </div>
 
     <div class="section-block">
-      <div class="section-title">8. Haftungsbeschränkung</div>
+      <div class="section-title">9. Haftungsbeschränkung</div>
       <div class="section-text">Drops vermittelt lediglich die Möglichkeit zur Begegnung zwischen Nutzern und ist nicht verantwortlich für das Verhalten der Nutzer. Wir haften nicht für Schäden, die aus der Nutzung der App entstehen, sofern diese nicht auf grober Fahrlässigkeit oder Vorsatz beruhen. Die Nutzung der SOS-Funktion ersetzt nicht den Notruf bei Behörden.</div>
     </div>
 
     <div class="section-block">
-      <div class="section-title">9. Verfügbarkeit</div>
+      <div class="section-title">10. Verfügbarkeit</div>
       <div class="section-text">Wir bemühen uns um eine hohe Verfügbarkeit der App, können diese aber nicht garantieren. Wartungsarbeiten, technische Störungen oder höhere Gewalt können zu vorübergehenden Ausfällen führen. Wir behalten uns das Recht vor, Funktionen jederzeit zu ändern oder einzustellen.</div>
     </div>
 
     <div class="section-block">
-      <div class="section-title">10. Account-Sperrung</div>
+      <div class="section-title">11. Account-Sperrung</div>
       <div class="section-text">Wir behalten uns vor, Accounts bei Verstößen gegen diese Bedingungen zu sperren oder zu löschen. Bei schwerwiegenden Verstößen erfolgt eine Sperrung ohne Vorankündigung. Du kannst dein Konto jederzeit selbst in den Einstellungen löschen.</div>
     </div>
 
     <div class="section-block">
-      <div class="section-title">11. Änderungen</div>
+      <div class="section-title">12. Änderungen</div>
       <div class="section-text">Wir können diese Nutzungsbedingungen jederzeit anpassen. Über wesentliche Änderungen wirst du vorab informiert. Die weitere Nutzung der App nach Inkrafttreten der Änderungen gilt als Zustimmung.</div>
     </div>
 
     <div class="section-block">
-      <div class="section-title">12. Anwendbares Recht</div>
+      <div class="section-title">13. Anwendbares Recht</div>
       <div class="section-text">Es gilt das Recht der Bundesrepublik Deutschland. Gerichtsstand ist, soweit gesetzlich zulässig, der Sitz des Anbieters. Bei Streitigkeiten steht dir auch der Weg zur Online-Streitbeilegung der EU-Kommission offen: ec.europa.eu/consumers/odr</div>
     </div>
 
     <div class="section-block">
-      <div class="section-title">13. Kontakt</div>
+      <div class="section-title">14. Kontakt</div>
       <div class="section-text">Bei Fragen wende dich an:
 
 contact@drops-app.de · drops-app.de

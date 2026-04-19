@@ -858,6 +858,18 @@ class AppStore: ObservableObject {
             self.isPlusUser = DropsStoreManager.shared.isPlusUser
         }
 
+        // ── Drops+ Status live synchronisieren (nach Kauf / Widerruf / Restore) ──
+        NotificationCenter.default.addObserver(
+            forName: .dropsPlusStatusChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self = self,
+                  let isPlus = notification.userInfo?["isPlus"] as? Bool
+            else { return }
+            self.isPlusUser = isPlus
+        }
+
         // Benachrichtigungs-Berechtigung wird NICHT sofort angefragt —
         // das passiert beim ersten Drop-Erstellen (createDrop) oder wenn der Nutzer
         // Benachrichtigungen in den Einstellungen aktiviert.
@@ -942,9 +954,16 @@ class AppStore: ObservableObject {
             .appendingPathComponent("drops_selfie.jpg")
     }
 
-    /// Löscht alles lokal sofort und triggert Firebase-Löschung im Hintergrund.
-    /// Löscht das Konto vollständig.
+    /// Löscht das Konto vollständig: Firebase-Daten, Auth-Account, lokale Daten.
     /// - Parameter completion: `nil` = Erfolg, sonst Fehlermeldung
+    ///
+    /// Ablauf (strikt sequenziell — Reihenfolge ist wichtig):
+    /// 1. Firebase-Daten löschen (RTDB, Firestore, Storage) — MUSS vor Auth-Löschung passieren,
+    ///    sonst blockieren die Security Rules jeglichen Zugriff.
+    /// 2. Apple-Sign-In Token widerrufen (falls vorhanden).
+    /// 3. Firebase Auth-Account löschen.
+    /// 4. Lokale Daten IMMER löschen (auch bei Fehler) — sonst bleibt der User
+    ///    mit halb-gelöschtem Zustand eingeloggt.
     func deleteAccount(completion: @escaping (String?) -> Void = { _ in }) {
         guard let user = FirebaseAuth.Auth.auth().currentUser else {
             clearLocalData()
@@ -954,43 +973,48 @@ class AppStore: ObservableObject {
 
         let uid = user.uid
 
-        let finishDeletion: (Error?) -> Void = { [weak self] authError in
-            DispatchQueue.main.async {
-                if let authError = authError {
-                    completion("Konto konnte nicht gelöscht werden: \(authError.localizedDescription)")
-                    return
-                }
-                if let code = AppleSignInManager.shared.lastAuthorizationCode {
-                    Task { try? await FirebaseAuth.Auth.auth().revokeToken(withAuthorizationCode: code) }
-                }
-                UserDefaults.standard.removeObject(forKey: "hasOnboarded")
-                self?.clearLocalData()
-                completion(nil)
-            }
-        }
+        Task { @MainActor in
+            // 1. Firebase-Daten löschen und auf Abschluss warten
+            await RealtimeDBManager.shared.deleteUserData(uid: uid)
 
-        let deleteAuthAccount: () -> Void = {
-            user.delete { authError in
-                guard let authError = authError else { finishDeletion(nil); return }
-                let code = AuthErrorCode(rawValue: (authError as NSError).code)
-                guard code == .requiresRecentLogin else { finishDeletion(authError); return }
-                AppleSignInManager.shared.reauthenticate { success in
-                    guard success else {
-                        DispatchQueue.main.async { completion("Bitte neu anmelden und nochmal versuchen.") }
+            // 2. Apple-Sign-In Token widerrufen (silently — Fehler sind nicht blockierend)
+            if let code = AppleSignInManager.shared.lastAuthorizationCode {
+                try? await FirebaseAuth.Auth.auth().revokeToken(withAuthorizationCode: code)
+            }
+
+            // 3. Auth-Account löschen (mit Reauth-Fallback für Apple Sign In)
+            let authErrorMessage: String? = await withCheckedContinuation { cont in
+                user.delete { authError in
+                    guard let authError = authError else { cont.resume(returning: nil); return }
+                    let code = AuthErrorCode(rawValue: (authError as NSError).code)
+                    guard code == .requiresRecentLogin else {
+                        cont.resume(returning: "Konto konnte nicht gelöscht werden: \(authError.localizedDescription)")
                         return
                     }
-                    guard let freshUser = FirebaseAuth.Auth.auth().currentUser else { finishDeletion(nil); return }
-                    freshUser.delete { retryError in finishDeletion(retryError) }
+                    // Reauth-Pfad
+                    AppleSignInManager.shared.reauthenticate { success in
+                        guard success, let freshUser = FirebaseAuth.Auth.auth().currentUser else {
+                            cont.resume(returning: "Bitte neu anmelden und nochmal versuchen.")
+                            return
+                        }
+                        freshUser.delete { retryError in
+                            if let retryError = retryError {
+                                cont.resume(returning: "Konto konnte nicht gelöscht werden: \(retryError.localizedDescription)")
+                            } else {
+                                cont.resume(returning: nil)
+                            }
+                        }
+                    }
                 }
             }
+
+            // 4. Lokale Daten IMMER löschen — auch wenn Auth-Löschung fehlschlug.
+            // Der User ist dann lokal ausgeloggt, die Firebase-Daten sind schon weg.
+            UserDefaults.standard.removeObject(forKey: "hasOnboarded")
+            self.clearLocalData()
+
+            completion(authErrorMessage)
         }
-
-        // Firebase-Cleanup starten (best-effort, kein Warten nötig)
-        RealtimeDBManager.shared.deleteUserData(uid: uid, completion: nil)
-
-        // Auth-Account sofort löschen — nicht auf Firebase-Cleanup warten
-        // (verhindert dass die App einfriert wenn Firebase offline/langsam ist)
-        deleteAuthAccount()
     }
 
     /// Meldet den User ab und löscht alle lokalen Daten.
