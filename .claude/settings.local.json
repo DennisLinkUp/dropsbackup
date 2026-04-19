@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(awk 'length < 500' drops-website/index.html)",
+      "Read(//tmp/**)",
+      "Bash(awk 'NR==1 || /^<!--/ || \\(length < 500 && !/^[A-Za-z0-9+\\\\/=]{50,}$/\\)' drops-website/index.html)",
+      "Read(//private/tmp/**)",
+      "Bash(awk 'length < 500 && !/^[A-Za-z0-9+\\\\/=]{50,}/' drops-website/index.html)",
+      "Bash(awk 'length < 400 && !/^[A-Za-z0-9+\\\\/=]{50,}/' drops-website/index.html)"
+    ]
+  }
+}
