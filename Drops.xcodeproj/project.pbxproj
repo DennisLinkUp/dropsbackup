@@ -1,0 +1,696 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		13B2973FA52749D888CC45A1 /* FeedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0F5F8C8062A41CBB0CD013D /* FeedView.swift */; };
+		13CF507DAAB3456EB4F37CCF /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AC45B58BF74488B93149C4 /* OnboardingView.swift */; };
+		1F8FA44A225D4E1BA5BECEBE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6EE6CAE16DF44814A86D7973 /* Assets.xcassets */; };
+		89042F9CF58F49A7AAC76CBA /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 327F542C69C2450EB363BF7F /* Preview Assets.xcassets */; };
+		945C33D97EC74398844A2F5C /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A070BC7CF7824527992379F9 /* MainTabView.swift */; };
+		98D1213810614C4BA718BC7A /* ProfileAndAlertsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C6AE0EAF293496FAAB1180D /* ProfileAndAlertsView.swift */; };
+		AB5D31427FAF496F81E12038 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 872B2889154249B48B39C338 /* DesignSystem.swift */; };
+		B3BB3982DE3946A7B973E3C5 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ABB1429B0CC45F69697DFFE /* Models.swift */; };
+		B88A3AA80FF24A3E972ED64F /* LiveMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F2B6D895C04241A50D2A18 /* LiveMapView.swift */; };
+		BB3BC38B666E419AAC69B477 /* LinkUpApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 157A9023A3B644239FDAF68F /* LinkUpApp.swift */; };
+		DA00100B00000000000100B /* DropLiveActivity.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = DA001001000000000001001 /* DropLiveActivity.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		DA002002000000000002002 /* DropLiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA002001000000000002001 /* DropLiveActivityWidget.swift */; };
+		DA002004000000000002004 /* DropLiveActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA002003000000000002003 /* DropLiveActivityAttributes.swift */; };
+		DA002005000000000002005 /* DropLiveActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA002003000000000002003 /* DropLiveActivityAttributes.swift */; };
+		DA002007000000000002007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = DA002006000000000002006 /* Assets.xcassets */; };
+		E4155E9E2F810ED9006A5368 /* CreateDropView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4155E9D2F810EC3006A5368 /* CreateDropView.swift */; };
+		E4315F842F814CE100E60F54 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = E4315F832F814CE100E60F54 /* FirebaseAuth */; };
+		E4315F862F814CE100E60F54 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = E4315F852F814CE100E60F54 /* FirebaseCore */; };
+		E4315F882F814CEA00E60F54 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = E4315F872F814CEA00E60F54 /* GoogleService-Info.plist */; };
+		E4FFB32A2F94EDAD004E687A /* SessionLockView 2.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4FFB3292F94EDAD004E687A /* SessionLockView 2.swift */; };
+		E4FFB3302F95298B004E687A /* DropsStoreManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4FFB32F2F95298B004E687A /* DropsStoreManager.swift */; };
+		E4FFB3322F952A3E004E687A /* DropsPlusView 2.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4FFB3312F952A3E004E687A /* DropsPlusView 2.swift */; };
+		FA001AA12F900000001AA121 /* FirebaseAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA001AA02F900000001AA120 /* FirebaseAuthManager.swift */; };
+		FA002BB12F900000002BB121 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA002BB02F900000002BB120 /* AppDelegate.swift */; };
+		FA004DD12F900000004DD121 /* FirebaseDatabase in Frameworks */ = {isa = PBXBuildFile; productRef = FA004DD02F900000004DD120 /* FirebaseDatabase */; };
+		FA005EE12F900000005EE121 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = FA005EE02F900000005EE120 /* FirebaseMessaging */; };
+		FA006FF12F900000006FF121 /* RealtimeDBManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA006FF02F900000006FF120 /* RealtimeDBManager.swift */; };
+		FA007GG12F900000007GG121 /* PushNotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA007GG02F900000007GG120 /* PushNotificationManager.swift */; };
+		FA008HH12F900000008HH121 /* LegalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA008HH02F900000008HH120 /* LegalView.swift */; };
+		FA009II12F900000009II121 /* NetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA009II02F900000009II120 /* NetworkMonitor.swift */; };
+		FA00C3E12F900000C3E10121 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = FA00C3E12F900000C3E10120 /* FirebaseStorage */; };
+		FA00F5012F900000F5010121 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = FA00F5012F900000F5010120 /* FirebaseFirestore */; };
+		FA010JJ12F90000000AJJ121 /* SharedComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA010JJ02F90000000AJJ120 /* SharedComponents.swift */; };
+		FA011KK12F90000000BKK121 /* CityGateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA011KK02F90000000BKK120 /* CityGateView.swift */; };
+		FA012LL12F90000000CLL121 /* BluetoothMeetupManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA012LL02F90000000CLL120 /* BluetoothMeetupManager.swift */; };
+		FA013MM12F90000000DMM121 /* Localization.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA013MM02F90000000DMM120 /* Localization.swift */; };
+		FA014NN12F90000000ENN121 /* AdminPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA014NN02F90000000ENN120 /* AdminPanelView.swift */; };
+		FA015OO12F90000000FOO121 /* ImagePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA015OO02F90000000FOO120 /* ImagePickerView.swift */; };
+		FAPRIVACY1000000010000001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = FAPRIVACY0000000010000000 /* PrivacyInfo.xcprivacy */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		DA00100C00000000000100C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA000001000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = DA001002000000000001002;
+			remoteInfo = DropLiveActivity;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		DA00100A00000000000100A /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				DA00100B00000000000100B /* DropLiveActivity.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		1206E5CD6A2641AF8F3B9AFE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		157A9023A3B644239FDAF68F /* LinkUpApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkUpApp.swift; sourceTree = "<group>"; };
+		327F542C69C2450EB363BF7F /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		49AC45B58BF74488B93149C4 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		5ABB1429B0CC45F69697DFFE /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		60F2B6D895C04241A50D2A18 /* LiveMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveMapView.swift; sourceTree = "<group>"; };
+		6EE6CAE16DF44814A86D7973 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		872B2889154249B48B39C338 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
+		9C6AE0EAF293496FAAB1180D /* ProfileAndAlertsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileAndAlertsView.swift; sourceTree = "<group>"; };
+		A070BC7CF7824527992379F9 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
+		AA000008000000000000008 /* Drops.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Drops.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C0F5F8C8062A41CBB0CD013D /* FeedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedView.swift; sourceTree = "<group>"; };
+		DA001001000000000001001 /* DropLiveActivity.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = DropLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		DA002001000000000002001 /* DropLiveActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropLiveActivityWidget.swift; sourceTree = "<group>"; };
+		DA002003000000000002003 /* DropLiveActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropLiveActivityAttributes.swift; sourceTree = "<group>"; };
+		DA002006000000000002006 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		E4155E9D2F810EC3006A5368 /* CreateDropView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateDropView.swift; sourceTree = "<group>"; };
+		E4315F872F814CEA00E60F54 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
+		E44368892F917632009530A5 /* DropLiveActivity.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DropLiveActivity.entitlements; sourceTree = "<group>"; };
+		E4FFB3292F94EDAD004E687A /* SessionLockView 2.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SessionLockView 2.swift"; sourceTree = "<group>"; };
+		E4FFB32F2F95298B004E687A /* DropsStoreManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropsStoreManager.swift; sourceTree = "<group>"; };
+		E4FFB3312F952A3E004E687A /* DropsPlusView 2.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DropsPlusView 2.swift"; sourceTree = "<group>"; };
+		FA001AA02F900000001AA120 /* FirebaseAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirebaseAuthManager.swift; sourceTree = "<group>"; };
+		FA002BB02F900000002BB120 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		FA003CC02F900000003CC120 /* Drops.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Drops.entitlements; sourceTree = "<group>"; };
+		FA006FF02F900000006FF120 /* RealtimeDBManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeDBManager.swift; sourceTree = "<group>"; };
+		FA007GG02F900000007GG120 /* PushNotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotificationManager.swift; sourceTree = "<group>"; };
+		FA008HH02F900000008HH120 /* LegalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LegalView.swift; sourceTree = "<group>"; };
+		FA009II02F900000009II120 /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
+		FA010JJ02F90000000AJJ120 /* SharedComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedComponents.swift; sourceTree = "<group>"; };
+		FA011KK02F90000000BKK120 /* CityGateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CityGateView.swift; sourceTree = "<group>"; };
+		FA012LL02F90000000CLL120 /* BluetoothMeetupManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BluetoothMeetupManager.swift; sourceTree = "<group>"; };
+		FA013MM02F90000000DMM120 /* Localization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Localization.swift; sourceTree = "<group>"; };
+		FA014NN02F90000000ENN120 /* AdminPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminPanelView.swift; sourceTree = "<group>"; };
+		FA015OO02F90000000FOO120 /* ImagePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePickerView.swift; sourceTree = "<group>"; };
+		FAPRIVACY0000000010000000 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AA000007000000000000007 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E4315F862F814CE100E60F54 /* FirebaseCore in Frameworks */,
+				E4315F842F814CE100E60F54 /* FirebaseAuth in Frameworks */,
+				FA004DD12F900000004DD121 /* FirebaseDatabase in Frameworks */,
+				FA005EE12F900000005EE121 /* FirebaseMessaging in Frameworks */,
+				FA00C3E12F900000C3E10121 /* FirebaseStorage in Frameworks */,
+				FA00F5012F900000F5010121 /* FirebaseFirestore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DA001004000000000001004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		AA000003000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AA000008000000000000008 /* Drops.app */,
+				DA001001000000000001001 /* DropLiveActivity.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		AA000004000000000000004 = {
+			isa = PBXGroup;
+			children = (
+				AA000015000000000000015 /* Drops */,
+				DA001006000000000001006 /* DropLiveActivity */,
+				AA000003000000000000003 /* Products */,
+				E4FFB3282F94DC5A004E687A /* Recovered References */,
+			);
+			sourceTree = "<group>";
+		};
+		AA000015000000000000015 /* Drops */ = {
+			isa = PBXGroup;
+			children = (
+				E4FFB3292F94EDAD004E687A /* SessionLockView 2.swift */,
+				E4FFB32F2F95298B004E687A /* DropsStoreManager.swift */,
+				157A9023A3B644239FDAF68F /* LinkUpApp.swift */,
+				5ABB1429B0CC45F69697DFFE /* Models.swift */,
+				DA002003000000000002003 /* DropLiveActivityAttributes.swift */,
+				872B2889154249B48B39C338 /* DesignSystem.swift */,
+				49AC45B58BF74488B93149C4 /* OnboardingView.swift */,
+				A070BC7CF7824527992379F9 /* MainTabView.swift */,
+				60F2B6D895C04241A50D2A18 /* LiveMapView.swift */,
+				C0F5F8C8062A41CBB0CD013D /* FeedView.swift */,
+				9C6AE0EAF293496FAAB1180D /* ProfileAndAlertsView.swift */,
+				E4155E9D2F810EC3006A5368 /* CreateDropView.swift */,
+				6EE6CAE16DF44814A86D7973 /* Assets.xcassets */,
+				1206E5CD6A2641AF8F3B9AFE /* Info.plist */,
+				E4315F872F814CEA00E60F54 /* GoogleService-Info.plist */,
+				FA001AA02F900000001AA120 /* FirebaseAuthManager.swift */,
+				FA002BB02F900000002BB120 /* AppDelegate.swift */,
+				FAPRIVACY0000000010000000 /* PrivacyInfo.xcprivacy */,
+				FA003CC02F900000003CC120 /* Drops.entitlements */,
+				FA006FF02F900000006FF120 /* RealtimeDBManager.swift */,
+				FA007GG02F900000007GG120 /* PushNotificationManager.swift */,
+				FA008HH02F900000008HH120 /* LegalView.swift */,
+				FA009II02F900000009II120 /* NetworkMonitor.swift */,
+				FA010JJ02F90000000AJJ120 /* SharedComponents.swift */,
+				FA011KK02F90000000BKK120 /* CityGateView.swift */,
+				FA012LL02F90000000CLL120 /* BluetoothMeetupManager.swift */,
+				FA013MM02F90000000DMM120 /* Localization.swift */,
+				FA014NN02F90000000ENN120 /* AdminPanelView.swift */,
+				AA000016000000000000016 /* Preview Content */,
+				E4FFB3312F952A3E004E687A /* DropsPlusView 2.swift */,
+			);
+			name = Drops;
+			path = "/Users/sophie/Downloads/LinkUp 2/Drops";
+			sourceTree = "<absolute>";
+		};
+		AA000016000000000000016 /* Preview Content */ = {
+			isa = PBXGroup;
+			children = (
+				327F542C69C2450EB363BF7F /* Preview Assets.xcassets */,
+			);
+			path = "Preview Content";
+			sourceTree = "<group>";
+		};
+		DA001006000000000001006 /* DropLiveActivity */ = {
+			isa = PBXGroup;
+			children = (
+				E44368892F917632009530A5 /* DropLiveActivity.entitlements */,
+				DA002001000000000002001 /* DropLiveActivityWidget.swift */,
+				DA002006000000000002006 /* Assets.xcassets */,
+			);
+			path = DropLiveActivity;
+			sourceTree = SOURCE_ROOT;
+		};
+		E4FFB3282F94DC5A004E687A /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				FA015OO02F90000000FOO120 /* ImagePickerView.swift */,
+			);
+			name = "Recovered References";
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AA000002000000000000002 /* Drops */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA000010000000000000010 /* Build configuration list for PBXNativeTarget "Drops" */;
+			buildPhases = (
+				AA000005000000000000005 /* Sources */,
+				AA000007000000000000007 /* Frameworks */,
+				AA000006000000000000006 /* Resources */,
+				DA00100A00000000000100A /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				DA00100D00000000000100D /* PBXTargetDependency */,
+			);
+			name = Drops;
+			packageProductDependencies = (
+				E4315F832F814CE100E60F54 /* FirebaseAuth */,
+				E4315F852F814CE100E60F54 /* FirebaseCore */,
+				FA004DD02F900000004DD120 /* FirebaseDatabase */,
+				FA005EE02F900000005EE120 /* FirebaseMessaging */,
+				FA00C3E12F900000C3E10120 /* FirebaseStorage */,
+				FA00F5012F900000F5010120 /* FirebaseFirestore */,
+			);
+			productName = LinkUp;
+			productReference = AA000008000000000000008 /* Drops.app */;
+			productType = "com.apple.product-type.application";
+		};
+		DA001002000000000001002 /* DropLiveActivity */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DA001009000000000001009 /* Build configuration list for PBXNativeTarget "DropLiveActivity" */;
+			buildPhases = (
+				DA001003000000000001003 /* Sources */,
+				DA001004000000000001004 /* Frameworks */,
+				DA001005000000000001005 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DropLiveActivity;
+			productName = DropLiveActivity;
+			productReference = DA001001000000000001001 /* DropLiveActivity.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AA000001000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 2640;
+				TargetAttributes = {
+					AA000002000000000000002 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					DA001002000000000001002 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = AA000009000000000000009 /* Build configuration list for PBXProject "Drops" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = de;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				de,
+				Base,
+			);
+			mainGroup = AA000004000000000000004;
+			packageReferences = (
+				E4315F822F814CE100E60F54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+			);
+			productRefGroup = AA000003000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AA000002000000000000002 /* Drops */,
+				DA001002000000000001002 /* DropLiveActivity */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AA000006000000000000006 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				89042F9CF58F49A7AAC76CBA /* Preview Assets.xcassets in Resources */,
+				1F8FA44A225D4E1BA5BECEBE /* Assets.xcassets in Resources */,
+				E4315F882F814CEA00E60F54 /* GoogleService-Info.plist in Resources */,
+				FAPRIVACY1000000010000001 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DA001005000000000001005 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DA002007000000000002007 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AA000005000000000000005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BB3BC38B666E419AAC69B477 /* LinkUpApp.swift in Sources */,
+				FA001AA12F900000001AA121 /* FirebaseAuthManager.swift in Sources */,
+				E4FFB3302F95298B004E687A /* DropsStoreManager.swift in Sources */,
+				FA002BB12F900000002BB121 /* AppDelegate.swift in Sources */,
+				FA006FF12F900000006FF121 /* RealtimeDBManager.swift in Sources */,
+				FA007GG12F900000007GG121 /* PushNotificationManager.swift in Sources */,
+				FA008HH12F900000008HH121 /* LegalView.swift in Sources */,
+				FA009II12F900000009II121 /* NetworkMonitor.swift in Sources */,
+				FA010JJ12F90000000AJJ121 /* SharedComponents.swift in Sources */,
+				FA011KK12F90000000BKK121 /* CityGateView.swift in Sources */,
+				FA012LL12F90000000CLL121 /* BluetoothMeetupManager.swift in Sources */,
+				B3BB3982DE3946A7B973E3C5 /* Models.swift in Sources */,
+				AB5D31427FAF496F81E12038 /* DesignSystem.swift in Sources */,
+				13CF507DAAB3456EB4F37CCF /* OnboardingView.swift in Sources */,
+				945C33D97EC74398844A2F5C /* MainTabView.swift in Sources */,
+				B88A3AA80FF24A3E972ED64F /* LiveMapView.swift in Sources */,
+				13B2973FA52749D888CC45A1 /* FeedView.swift in Sources */,
+				98D1213810614C4BA718BC7A /* ProfileAndAlertsView.swift in Sources */,
+				E4155E9E2F810ED9006A5368 /* CreateDropView.swift in Sources */,
+				E4FFB32A2F94EDAD004E687A /* SessionLockView 2.swift in Sources */,
+				FA013MM12F90000000DMM121 /* Localization.swift in Sources */,
+				FA014NN12F90000000ENN121 /* AdminPanelView.swift in Sources */,
+				FA015OO12F90000000FOO121 /* ImagePickerView.swift in Sources */,
+				DA002004000000000002004 /* DropLiveActivityAttributes.swift in Sources */,
+				E4FFB3322F952A3E004E687A /* DropsPlusView 2.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DA001003000000000001003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DA002002000000000002002 /* DropLiveActivityWidget.swift in Sources */,
+				DA002005000000000002005 /* DropLiveActivityAttributes.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		DA00100D00000000000100D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = DA001002000000000001002 /* DropLiveActivity */;
+			targetProxy = DA00100C00000000000100C /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		AA000011000000000000011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSET_CATALOG_COMPILER_OPTIMIZATION = space;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 63N54256Q7;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		AA000012000000000000012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSET_CATALOG_COMPILER_OPTIMIZATION = space;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 63N54256Q7;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		AA000013000000000000013 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_SIZES = YES;
+				CODE_SIGN_ENTITLEMENTS = Drops/Drops.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				DEVELOPMENT_ASSET_PATHS = "\"Drops/Preview Content\"";
+				DEVELOPMENT_TEAM = 63N54256Q7;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Drops/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Drops;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
+				LE_SWIFT_VERSION = 5.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dennis.drops;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AA000014000000000000014 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_SIZES = YES;
+				CODE_SIGN_ENTITLEMENTS = Drops/Drops.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				DEVELOPMENT_ASSET_PATHS = "\"Drops/Preview Content\"";
+				DEVELOPMENT_TEAM = 63N54256Q7;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Drops/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Drops;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
+				LE_SWIFT_VERSION = 5.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dennis.drops;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		DA001007000000000001007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = DropLiveActivity/DropLiveActivity.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = 63N54256Q7;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = DropLiveActivity/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
+				LE_SWIFT_VERSION = 5.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dennis.drops.DropLiveActivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		DA001008000000000001008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = DropLiveActivity/DropLiveActivity.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = 63N54256Q7;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = DropLiveActivity/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
+				LE_SWIFT_VERSION = 5.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dennis.drops.DropLiveActivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		AA000009000000000000009 /* Build configuration list for PBXProject "Drops" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA000011000000000000011 /* Debug */,
+				AA000012000000000000012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA000010000000000000010 /* Build configuration list for PBXNativeTarget "Drops" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA000013000000000000013 /* Debug */,
+				AA000014000000000000014 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		DA001009000000000001009 /* Build configuration list for PBXNativeTarget "DropLiveActivity" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DA001007000000000001007 /* Debug */,
+				DA001008000000000001008 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		E4315F822F814CE100E60F54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.11.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		E4315F832F814CE100E60F54 /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E4315F822F814CE100E60F54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		E4315F852F814CE100E60F54 /* FirebaseCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E4315F822F814CE100E60F54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCore;
+		};
+		FA004DD02F900000004DD120 /* FirebaseDatabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E4315F822F814CE100E60F54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseDatabase;
+		};
+		FA005EE02F900000005EE120 /* FirebaseMessaging */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E4315F822F814CE100E60F54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseMessaging;
+		};
+		FA00C3E12F900000C3E10120 /* FirebaseStorage */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E4315F822F814CE100E60F54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseStorage;
+		};
+		FA00F5012F900000F5010120 /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E4315F822F814CE100E60F54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = AA000001000000000000001 /* Project object */;
+}

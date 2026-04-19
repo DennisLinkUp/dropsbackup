@@ -1,0 +1,48 @@
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+*.xcuserdatad/
+xcuserdata/
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+Packages/
+Package.pins
+Package.resolved
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# CocoaPods
+Pods/
+
+# Carthage
+Carthage/Build/
+
+# Preview Assets (optional — behalte wenn Previews wichtig)
+# Preview Content/
+
+# Secrets — Firebase-Config nicht ins Repo!
+GoogleService-Info.plist
+
+# Env / Keys
+*.env
+.env.*
+secrets.plist
+
+# Editor
+.vscode/
+.idea/
+*.swp

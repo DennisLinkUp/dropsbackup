@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>de</string>
+	<key>CFBundleDisplayName</key>
+	<string>Drops</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>de</string>
+		<string>en</string>
+	</array>
+	<key>CFBundleName</key>
+	<string>Drops</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.455209768458-8iergka0lf4lhnlpbj6buouud93qu2sg</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Drops nutzt Bluetooth um Treffen mit anderen Nutzer:innen automatisch zu erkennen und deinen Zuverlässigkeits-Score zu aktualisieren — ganz ohne manuelle Bestätigung.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Drops nutzt Bluetooth um Treffen automatisch zu bestätigen.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Drops nutzt die Kamera für dein Profil-Selfie.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Drops kann Kontakte importieren damit du Freunde einfach hinzufügen kannst.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Drops kann Face ID zur schnellen Anmeldung nutzen.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Drops nutzt deinen Standort im Hintergrund um Freunde zu benachrichtigen.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Drops nutzt deinen Standort für die Live Karte.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Drops benötigt Zugriff auf deine Fotos für dein Profilbild.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>NSUserNotificationsUsageDescription</key>
+	<string>Drops benachrichtigt dich wenn Freunde in der Nähe einen Drop starten.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+		<string>bluetooth-central</string>
+		<string>bluetooth-peripheral</string>
+	</array>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+	</dict>
+	<key>UIRequiresFullScreen</key>
+	<true/>
+	<key>UIStatusBarStyle</key>
+	<string></string>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+</dict>
+</plist>
