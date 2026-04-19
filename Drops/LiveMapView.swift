@@ -1864,8 +1864,10 @@ struct ActiveDropTabView: View {
 
     // MARK: - Extend Button (nur Host)
 
-    /// Verbleibende Cooldown-Sekunden nach dem letzten Verlängern (nil = bereit)
+    /// Verbleibende Cooldown-Sekunden nach dem letzten Verlängern (nil = bereit).
+    /// Drops+ Mitglieder haben keinen Cooldown — sie können beliebig oft verlängern.
     private var extendCooldownRemaining: Int? {
+        if store.isDropsPlusActive { return nil }
         guard let last = lastExtendedAt, lastExtendCooldownSecs > 0 else { return nil }
         let elapsed = Int(now.timeIntervalSince(last))
         let remaining = lastExtendCooldownSecs - elapsed

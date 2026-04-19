@@ -61,6 +61,10 @@ struct MainTabView: View {
             CreateDropView()
                 .environmentObject(store)
         }
+        .fullScreenCover(isPresented: $store.showDropsPlusSuccess) {
+            DropsPlusSuccessView()
+                .environmentObject(store)
+        }
 
         } // ZStack
         .safeAreaInset(edge: .top, spacing: 0) {

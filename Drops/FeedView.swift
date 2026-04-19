@@ -58,12 +58,19 @@ struct FeedView: View {
         profileAccent = Color.brand
     }
 
-    // Öffentliche Drops — nach Interessen-Match priorisiert (kein harter Filter)
+    // Öffentliche Drops — Drops+ Boost zuerst, dann nach Interessen-Match priorisiert
     private var strangerAnnotations: [MapAnnotationItem] {
         let base = store.allMapAnnotations.filter { $0.isStranger }
-        guard !store.userInterests.isEmpty else { return base }
         return base.sorted { a, b in
-            interestScore(for: a) > interestScore(for: b)
+            // Priority Listing: geboostete Drops immer zuerst
+            if a.isBoosted != b.isBoosted { return a.isBoosted }
+            // Danach nach Interessen-Match (falls Interessen gesetzt sind)
+            if !store.userInterests.isEmpty {
+                let scoreA = interestScore(for: a)
+                let scoreB = interestScore(for: b)
+                if scoreA != scoreB { return scoreA > scoreB }
+            }
+            return false
         }
     }
 

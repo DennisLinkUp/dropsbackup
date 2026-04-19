@@ -225,6 +225,13 @@ struct AdminPanelView: View {
                                     // Wenn der Admin sich selbst freischaltet/entzieht: lokalen State sofort updaten
                                     if user.id == Auth.auth().currentUser?.uid {
                                         store.isPlusUser = newPlus
+                                        // Success-Popup nur bei Aktivierung — Admin-Panel schließen, dann anzeigen
+                                        if newPlus {
+                                            dismiss()
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                                                store.showDropsPlusSuccess = true
+                                            }
+                                        }
                                     }
                                 }
                             )

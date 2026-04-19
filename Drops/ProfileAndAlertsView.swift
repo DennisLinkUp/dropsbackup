@@ -1729,6 +1729,11 @@ struct ProfileView: View {
                             DropsPlusView()
                         }
 
+                        // Drop-Statistiken (Drops+ Feature)
+                        DropsPlusStatsCard(showPaywall: $showDropsPlus)
+                            .environmentObject(store)
+                            .padding(.horizontal, 16)
+
                         // Sichtbarkeit + Mitteilungen
                         settingsSection(icon: "location.fill", color: Color(UIColor.systemGreen), title: tr("settings.visibility")) {
                             locationSection
@@ -2763,6 +2768,130 @@ private struct ActivityHeatmap: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+// MARK: - Drops+ Stats Card
+
+/// Kompakte Statistik-Karte in den Einstellungen: Joins, Zuverlässigkeit, erstellte Drops.
+/// Für Free-User als gelockter Teaser, der beim Tap die Paywall öffnet.
+struct DropsPlusStatsCard: View {
+    @EnvironmentObject var store: AppStore
+    @Binding var showPaywall: Bool
+
+    private var totalJoins: Int { store.reliabilityScore.totalCommits }
+    private var scorePct: Int   { Int(store.reliabilityScore.score.rounded()) }
+    private var dropsCreated: Int { store.pastDrops.count + store.activeDrops.count }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "chart.bar.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Color(hex: "f59e0b"))
+                Text("Deine Statistiken")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.textPrimary)
+                if !store.isDropsPlusActive {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.textTertiary)
+                }
+                Spacer()
+                Text(store.isDropsPlusActive ? "PLUS" : "DROPS+")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(store.isDropsPlusActive ? .black : Color(hex: "f59e0b"))
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(
+                        store.isDropsPlusActive ? Color(hex: "f59e0b") : Color(hex: "f59e0b").opacity(0.15),
+                        in: Capsule()
+                    )
+            }
+
+            HStack(spacing: 10) {
+                StatBox(
+                    icon: "person.2.fill",
+                    value: "\(totalJoins)",
+                    label: "Joins",
+                    locked: !store.isDropsPlusActive
+                )
+                StatBox(
+                    icon: "rosette",
+                    value: totalJoins > 0 ? "\(scorePct)%" : "–",
+                    label: "Zuverlässig",
+                    locked: !store.isDropsPlusActive
+                )
+                StatBox(
+                    icon: "mappin.and.ellipse",
+                    value: "\(dropsCreated)",
+                    label: "Erstellt",
+                    locked: !store.isDropsPlusActive
+                )
+            }
+
+            if store.isDropsPlusActive {
+                Text(store.reliabilityScore.label)
+                    .font(.system(size: 12))
+                    .foregroundColor(.textSecondary)
+            } else {
+                Button { showPaywall = true } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("Mit Drops+ freischalten")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundStyle(.black)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+                    .background(
+                        LinearGradient(
+                            colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
+                            startPoint: .leading, endPoint: .trailing
+                        ),
+                        in: RoundedRectangle(cornerRadius: 10)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(UIColor.secondarySystemGroupedBackground))
+        )
+    }
+}
+
+private struct StatBox: View {
+    let icon: String
+    let value: String
+    let label: String
+    let locked: Bool
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(locked ? .textTertiary : Color(hex: "f59e0b"))
+            Text(locked ? "–" : value)
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundColor(locked ? .textTertiary : .textPrimary)
+                .contentTransition(.numericText())
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundColor(.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.black.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(locked ? Color.textTertiary.opacity(0.15) : Color(hex: "f59e0b").opacity(0.15), lineWidth: 1)
+        )
     }
 }
 

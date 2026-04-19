@@ -5,10 +5,11 @@ import StoreKit
 
 struct DropsPlusView: View {
     @ObservedObject private var store = DropsStoreManager.shared
+    @EnvironmentObject private var appStore: AppStore
     @Environment(\.dismiss) private var dismiss
 
-    /// Animations-Overlay nach erfolgreicher Freischaltung
-    @State private var showSuccessOverlay = false
+    /// Wird nur dann auf true gesetzt, wenn der User im aktuellen Sheet auf "Kaufen" getippt hat —
+    /// verhindert, dass das Success-Popup beim bloßen Öffnen einer bereits aktiven Paywall auftaucht.
     @State private var justActivated = false
 
     var body: some View {
@@ -39,20 +40,14 @@ struct DropsPlusView: View {
                     .foregroundStyle(.white.opacity(0.35))
             }
             .padding(.top, 16).padding(.trailing, 20)
-
-            // ── Success-Overlay ──────────────────────────────────────────
-            if showSuccessOverlay {
-                successOverlay
-                    .transition(.opacity)
-                    .zIndex(10)
-            }
         }
         .onChange(of: store.isPlusUser) { newValue in
-            // Wenn der Kauf erfolgreich war und Paywall noch offen ist → Popup
+            // Kauf erfolgreich → Paywall schließen, Global Success-Popup triggern
             if newValue && justActivated {
                 justActivated = false
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.72)) {
-                    showSuccessOverlay = true
+                dismiss()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    appStore.showDropsPlusSuccess = true
                 }
             }
         }
@@ -120,6 +115,21 @@ struct DropsPlusView: View {
                 icon: "shield.fill",
                 title: "Kein Zuverlässigkeits-Abzug",
                 description: "Mal kurzfristig doch nicht erschienen? Als Drops+ Mitglied bleibt dein Score makellos."
+            )
+            PlusFeatureRow(
+                icon: "arrow.up.forward.circle.fill",
+                title: "Priority Listing",
+                description: "Deine Drops werden in der Nähe-Ansicht zuerst angezeigt — auch ohne aktiven Boost."
+            )
+            PlusFeatureRow(
+                icon: "clock.arrow.circlepath",
+                title: "Verlängerung ohne Cooldown",
+                description: "Verlängere deinen Drop so oft du willst — keine Wartezeit zwischen den Verlängerungen."
+            )
+            PlusFeatureRow(
+                icon: "chart.bar.fill",
+                title: "Drop-Statistiken",
+                description: "Siehe deine Gesamt-Joins, Zuverlässigkeits-Verlauf und erstellte Drops auf einen Blick."
             )
             PlusFeatureRow(
                 icon: "heart.fill",
@@ -219,14 +229,19 @@ struct DropsPlusView: View {
                 .multilineTextAlignment(.center)
         }
     }
+}
 
-    // MARK: - Success Overlay
+// MARK: - Drops+ Success Popup (global, from purchase or admin grant)
 
-    private var successOverlay: some View {
+struct DropsPlusSuccessView: View {
+    @EnvironmentObject private var appStore: AppStore
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
         ZStack {
             // Dunkler, goldener Glow-Hintergrund
             RadialGradient(
-                colors: [Color(hex: "f59e0b").opacity(0.22), Color.black.opacity(0.88)],
+                colors: [Color(hex: "f59e0b").opacity(0.22), Color.black.opacity(0.94)],
                 center: .center,
                 startRadius: 20, endRadius: 500
             )
@@ -278,6 +293,9 @@ struct DropsPlusView: View {
                     SuccessFeatureLine(icon: "bolt.circle.fill", text: "Drop-Boost freigeschaltet")
                     SuccessFeatureLine(icon: "scope", text: "Suchradius bis unbegrenzt")
                     SuccessFeatureLine(icon: "shield.fill", text: "Score-Schutz aktiv")
+                    SuccessFeatureLine(icon: "arrow.up.forward.circle.fill", text: "Priority Listing aktiv")
+                    SuccessFeatureLine(icon: "clock.arrow.circlepath", text: "Keine Verlängerungs-Cooldowns")
+                    SuccessFeatureLine(icon: "chart.bar.fill", text: "Drop-Statistiken verfügbar")
                 }
                 .padding(18)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -291,12 +309,8 @@ struct DropsPlusView: View {
 
                 // Los-geht's-Button
                 Button {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        showSuccessOverlay = false
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                        dismiss()
-                    }
+                    appStore.showDropsPlusSuccess = false
+                    dismiss()
                 } label: {
                     Text("Los geht's")
                         .font(.system(size: 17, weight: .bold))
@@ -384,6 +398,12 @@ private struct SuccessFeatureLine: View {
 
 // MARK: - Preview
 
-#Preview {
+#Preview("Paywall") {
     DropsPlusView()
+        .environmentObject(AppStore())
+}
+
+#Preview("Success") {
+    DropsPlusSuccessView()
+        .environmentObject(AppStore())
 }
