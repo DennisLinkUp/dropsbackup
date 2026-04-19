@@ -1697,8 +1697,8 @@ struct ProfileView: View {
                                         }
                                     }
                                     Text(store.isPlusUser
-                                         ? "Boost & Zuverlässigkeits-Schutz aktiv"
-                                         : "Drop boosten · Kein Score-Abzug")
+                                         ? "Boost · Großer Radius · Score-Schutz"
+                                         : "Boost · Radius bis ∞ · Score-Schutz")
                                         .font(.system(size: 12))
                                         .foregroundStyle(.secondary)
                                 }
