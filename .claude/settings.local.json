@@ -6,7 +6,15 @@
       "Bash(awk 'NR==1 || /^<!--/ || \\(length < 500 && !/^[A-Za-z0-9+\\\\/=]{50,}$/\\)' drops-website/index.html)",
       "Read(//private/tmp/**)",
       "Bash(awk 'length < 500 && !/^[A-Za-z0-9+\\\\/=]{50,}/' drops-website/index.html)",
-      "Bash(awk 'length < 400 && !/^[A-Za-z0-9+\\\\/=]{50,}/' drops-website/index.html)"
+      "Bash(awk 'length < 400 && !/^[A-Za-z0-9+\\\\/=]{50,}/' drops-website/index.html)",
+      "Bash(awk 'NR>=1090 && NR<=1180 && length<400 && !/^[A-Za-z0-9+\\\\/=]{50,}$/' drops-website/index.html)",
+      "Bash(awk 'NR>=230 && NR<=310 && length<400' drops-website/index.html)",
+      "Bash(awk 'NR>=1165 && NR<=1215 && length<400' drops-website/index.html)",
+      "Bash(awk 'NR>=1140 && NR<=1175 && length<400' drops-website/index.html)",
+      "Bash(awk '/src=\"data:image/ { print NR }' drops-website/index.html)",
+      "Bash(awk ' *)",
+      "Bash(mv /tmp/index_new.html drops-website/index.html)",
+      "Bash(awk 'NR>=1140 && NR<=1175' drops-website/index.html)"
     ]
   }
 }
