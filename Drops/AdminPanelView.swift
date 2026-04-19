@@ -220,7 +220,12 @@ struct AdminPanelView: View {
                                     : "\(user.name) Drops+ kostenlos freischalten?",
                                 destructive: user.isPlusUser,
                                 action: {
-                                    RealtimeDBManager.shared.adminSetPlus(uid: user.id, isPlus: !user.isPlusUser) { loadData() }
+                                    let newPlus = !user.isPlusUser
+                                    RealtimeDBManager.shared.adminSetPlus(uid: user.id, isPlus: newPlus) { loadData() }
+                                    // Wenn der Admin sich selbst freischaltet/entzieht: lokalen State sofort updaten
+                                    if user.id == Auth.auth().currentUser?.uid {
+                                        store.isPlusUser = newPlus
+                                    }
                                 }
                             )
                         }
