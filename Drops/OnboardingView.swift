@@ -1971,7 +1971,16 @@ struct ProfileSetupStep: View {
     /// Mindestens 18 Jahre alt
     private var dateIsValid: Bool { parsedBirthdate != nil }
     private var canContinue: Bool {
-        !name.trimmingCharacters(in: .whitespaces).isEmpty && !gender.isEmpty && dateIsValid
+        !name.trimmingCharacters(in: .whitespaces).isEmpty
+            && !gender.isEmpty
+            && dateIsValid
+            && phoneIsValid
+    }
+
+    /// Handynummer ist Pflicht — mindestens 6 Ziffern (Länder-Präfix optional).
+    /// Ohne Nummer finden dich deine Kontakte nicht, deshalb muss sie hinterlegt werden.
+    private var phoneIsValid: Bool {
+        phone.filter { $0.isNumber }.count >= 6
     }
 
     /// Formatiert Roheingabe zu "TT.MM.JJJJ"
@@ -2173,9 +2182,9 @@ struct ProfileSetupStep: View {
                             .foregroundColor(.textTertiary)
                         }
 
-                        // ── Telefonnummer (optional) ──────────────────
+                        // ── Telefonnummer (Pflicht) ──────────────────
                         VStack(alignment: .leading, spacing: 6) {
-                            Label("Handynummer (optional)", systemImage: "phone.fill")
+                            Label("Handynummer", systemImage: "phone.fill")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(.textSecondary)
                             ZStack(alignment: .leading) {
@@ -2193,8 +2202,9 @@ struct ProfileSetupStep: View {
                             }
                             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
                             .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.1), lineWidth: 1))
-                            Text("Wird nicht öffentlich angezeigt.")
+                            Text("Wird nicht öffentlich angezeigt. Deine Kontakte können dich nur so finden.")
                                 .font(.system(size: 11)).foregroundColor(.textTertiary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     .padding(.horizontal, 24)
