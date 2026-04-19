@@ -600,7 +600,7 @@ struct GreenGlowBackground: View {
 
 // MARK: - Minderjährigen-Sperrscreen
 
-/// Wird angezeigt wenn das gescannte Geburtsdatum ein Alter unter 16 ergibt.
+/// Wird angezeigt wenn das eingegebene Geburtsdatum ein Alter unter 18 ergibt.
 /// Kein Weiterkommen — der Nutzer muss die App verlassen.
 struct UnderAgeBlockView: View {
     /// Callback: Zurück zum ID-Scan (z.B. "anderer Ausweis") oder App-Reset
@@ -633,7 +633,7 @@ struct UnderAgeBlockView: View {
                     .multilineTextAlignment(.center)
                     .padding(.bottom, 14)
 
-                Text("Drops ist ausschließlich für Personen ab 16 Jahren.\n\nDein Ausweis zeigt, dass du diese Altersgrenze noch nicht erreicht hast. Eine Nutzung ist leider nicht möglich.")
+                Text("Drops ist ausschließlich für Personen ab 18 Jahren.\n\nDein angegebenes Alter liegt unter dieser Grenze. Eine Nutzung ist leider nicht möglich.")
                     .font(.system(size: 15))
                     .foregroundColor(Color.white.opacity(0.65))
                     .multilineTextAlignment(.center)
@@ -687,7 +687,7 @@ struct UnderAgeBlockView: View {
 
 private func isUserUnderage(birthdate: Date) -> Bool {
     let age = Calendar.current.dateComponents([.year], from: birthdate, to: Date()).year ?? 0
-    return age < 16
+    return age < 18
 }
 
 struct IDConsentStep: View {
@@ -2421,7 +2421,7 @@ struct AgeVerifyStep: View {
         return "\(age) Jahre"
     }
     private var ageLabelColor: Color {
-        age < 16 ? .accentRed : .onlineGreen
+        age < 18 ? .accentRed : .onlineGreen
     }
 
     // Kalender mit deutschem Locale

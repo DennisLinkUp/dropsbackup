@@ -1408,7 +1408,7 @@ class AppStore: ObservableObject {
     }
 
     func enforceAgeGuard() {
-        if let age = userAge, age < 16 {
+        if let age = userAge, age < 18 {
             isUnderageBlocked = true
             saveAll()
         }

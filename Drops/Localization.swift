@@ -226,11 +226,11 @@ private let strings: [String: [String: String]] = [
     "settings.locked_until":              ["de": "Gesperrt bis du 18 Jahre alt bist","en": "Locked until you are 18 years old"],
     "settings.your_age_group":            ["de": "Deine Altersgruppe",               "en": "Your Age Group"],
     "settings.your_group":                ["de": "Deine Gruppe",                     "en": "Your Group"],
-    "settings.age_restricted_msg":        ["de": "Ab 30 Jahren wird die Altersgruppe 16–21 automatisch gesperrt – zum Schutz jüngerer Nutzer. Du kannst weiterhin alle anderen Altersgruppen auswählen.", "en": "From age 30, the 16-21 age group is automatically blocked to protect younger users. You can still select all other age groups."],
+    "settings.age_restricted_msg":        ["de": "Ab 30 Jahren wird die Altersgruppe 18–24 automatisch gesperrt – zum Schutz jüngerer Nutzer. Du kannst weiterhin alle anderen Altersgruppen auswählen.", "en": "From age 30, the 18-24 age group is automatically blocked to protect younger users. You can still select all other age groups."],
     "settings.cannot_see_other_groups":   ["de": "Andere Altersgruppen sind für dich nicht sichtbar", "en": "Other age groups are not visible to you"],
-    "settings.see_only_teens":            ["de": "Du siehst nur Drops von 16–21 Jährigen", "en": "You only see drops from 16-21 year olds"],
+    "settings.see_only_teens":            ["de": "Du siehst nur Drops von 18–24 Jährigen", "en": "You only see drops from 18-24 year olds"],
     "settings.full_access_at_18":         ["de": "Ab 18 Jahren wird die volle Auswahl automatisch freigeschaltet", "en": "Full access is automatically unlocked at age 18"],
-    "settings.protected_by_id":           ["de": "Diese Einstellung ist durch das Geburtsdatum deines Ausweises geschützt", "en": "This setting is protected by your ID's date of birth"],
+    "settings.protected_by_id":           ["de": "Diese Einstellung ist durch dein angegebenes Geburtsdatum geschützt", "en": "This setting is protected by your date of birth"],
 
     // ── Safety – Extended ────────────────────────────────────────
     "safety.active":            ["de": "Aktiv",                                 "en": "Active"],
@@ -255,8 +255,8 @@ private let strings: [String: [String: String]] = [
     "account.confirm_delete":       ["de": "Konto wirklich löschen?",              "en": "Really Delete Account?"],
     "account.delete_warning":       ["de": "Alle deine Daten werden unwiderruflich gelöscht.", "en": "All your data will be permanently deleted."],
     "account.delete_failed":        ["de": "Konto konnte nicht gelöscht werden",   "en": "Could Not Delete Account"],
-    "account.age_restricted_title": ["de": "16–21 nicht verfügbar",               "en": "16–21 Not Available"],
-    "account.age_restricted_msg":   ["de": "Ab 30 Jahren wird die Altersgruppe 16–21 automatisch gesperrt – zum Schutz jüngerer Nutzer. Du kannst weiterhin alle anderen Altersgruppen auswählen.", "en": "From age 30, the 16-21 age group is automatically blocked to protect younger users. You can still select all other age groups."],
+    "account.age_restricted_title": ["de": "18–24 nicht verfügbar",               "en": "18–24 Not Available"],
+    "account.age_restricted_msg":   ["de": "Ab 30 Jahren wird die Altersgruppe 18–24 automatisch gesperrt – zum Schutz jüngerer Nutzer. Du kannst weiterhin alle anderen Altersgruppen auswählen.", "en": "From age 30, the 18-24 age group is automatically blocked to protect younger users. You can still select all other age groups."],
 
     // ── Reliability ──────────────────────────────────────────────
     "reliability.title":       ["de": "Zuverlässigkeits-Score",  "en": "Reliability Score"],
@@ -479,7 +479,7 @@ private let strings: [String: [String: String]] = [
     "onboard.mrz_detected":          ["de": "MRZ erkannt!",                 "en": "MRZ Detected!"],
     "onboard.mrz_example":           ["de": "So sieht der MRZ-Streifen aus","en": "Here's what the MRZ strip looks like"],
     "onboard.mrz_label":             ["de": "MRZ",                          "en": "MRZ"],
-    "onboard.must_be_16":            ["de": "Du musst mindestens 16 Jahre alt sein.", "en": "You must be at least 16 years old."],
+    "onboard.must_be_16":            ["de": "Du musst mindestens 18 Jahre alt sein.", "en": "You must be at least 18 years old."],
     "onboard.no_account_question":   ["de": "Noch kein Account?",           "en": "No account?"],
     "onboard.no_account_register":   ["de": "Noch kein Account? Jetzt registrieren", "en": "No account? Register now"],
     "onboard.no_sharing":            ["de": "Keine Weitergabe",             "en": "No sharing"],
@@ -514,7 +514,7 @@ private let strings: [String: [String: String]] = [
     "onboard.tap_to_place":          ["de": "Tippe zum Platzieren",         "en": "Tap to place"],
     "onboard.tos_notice":            ["de": "Mit der Registrierung stimmst du unseren Nutzungsbedingungen zu.", "en": "By registering, you agree to our Terms of Service."],
     "onboard.touchid_reason":        ["de": "Mit Touch ID in Drops einloggen","en": "Sign in to Drops with Touch ID"],
-    "onboard.underage_message":      ["de": "Drops ist ausschließlich für Personen ab 16 Jahren.\n\nDein Ausweis zeigt, dass du diese Altersgrenze noch nicht erreicht hast. Eine Nutzung ist leider nicht möglich.", "en": "Drops is only available for people 16 years and older.\n\nYour ID shows that you have not yet reached this age limit. Unfortunately, you cannot use the app."],
+    "onboard.underage_message":      ["de": "Drops ist ausschließlich für Personen ab 18 Jahren.\n\nDein angegebenes Alter liegt unter dieser Grenze. Eine Nutzung ist leider nicht möglich.", "en": "Drops is only available for people 18 years and older.\n\nYour age is below this limit. Unfortunately, you cannot use the app."],
     "onboard.welcome_back":          ["de": "Willkommen zurück",            "en": "Welcome back"],
     "onboard.where_are_you":         ["de": "Wo bist du?",                  "en": "Where are you?"],
     "onboard.years":                 ["de": "Jahre",                        "en": "years"],

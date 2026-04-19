@@ -113,146 +113,267 @@ private struct PrivacyContent: View {
 
             LegalSection(
                 title: "1. Verantwortlicher",
-                text: "Verantwortlich für die Verarbeitung personenbezogener Daten im Sinne der DSGVO ist:\n\nDrops App · drops-app.de\nEntwickler: Dennis Gundermann\nLechstr. 19, 80638 München\n\nKontakt: contact@drops-app.de\n\nBei Fragen zum Datenschutz kannst du uns jederzeit per E-Mail kontaktieren."
+                text: """
+Verantwortlich für die Verarbeitung personenbezogener Daten im Sinne der DSGVO ist:
+
+Dennis Gundermann · Lechstr. 19, 80638 München · drops-app.de
+
+Kontakt: contact@drops-app.de
+
+Bei Fragen zum Datenschutz kannst du uns jederzeit per E-Mail kontaktieren.
+"""
             )
 
             LegalSection(
                 title: "2. Welche Daten wir erheben",
                 text: """
-• Telefonnummer (zur Authentifizierung via Firebase)
-• Standortdaten (GPS, nur während der App-Nutzung)
-• Profilbild (optional — lokal als Selfie und/oder als Upload in Firebase Storage)
-• Vorname (bei Ausweis-Verifizierung aus MRZ gelesen)
-• Geburtsdatum (bei Ausweis-Verifizierung, nur für Altersberechnung)
-• Verifizierungsstatus (ob Ausweis-Verifizierung erfolgreich war oder manuell durch einen Admin bestätigt wurde)
-• Aktivitätsdaten (erstellte Drops, Begegnungen, Beitritte)
-• Notfallkontakt (nur lokal auf deinem Gerät)
-• FCM-Token (für Push-Benachrichtigungen)
-• Technische Daten (Geräte-ID, Betriebssystem, App-Version)
+KONTO & AUTHENTIFIZIERUNG
+• Sign in with Apple – Apple User ID, Nonce (SHA256-Hash), optional E-Mail, Authorization Code (für Token-Widerrufung bei Kontolöschung)
+• Handynummer (Pflichtangabe bei Registrierung — damit dich deine Kontakte finden können)
 
-NICHT gespeichert werden:
-• Das Foto deines Ausweises
-• Die Ausweis- oder Passnummer
-• Biometrische Rohdaten jeglicher Art
+PROFIL
+• Name (frei wählbar)
+• Geburtsdatum (Selbstangabe, zur Altersprüfung ≥ 16)
+• Geschlecht (optional)
+• E-Mail (nur bei Sign in with Apple, falls freigegeben)
+• Profilbild (optional, auf Firebase Storage)
+• Zuverlässigkeits-Score (Anzahl bestätigter / nicht eingehaltener Treffen)
+
+NUTZUNG DER APP
+• Standortdaten (GPS, nur bei aktivem Drop – siehe Abschnitt 4)
+• Erstellte Drops (Koordinaten, Emoji, Aktivitätsname, Ablaufzeit)
+• Beitritte, Beitrittsanfragen, aufgezeichnete Begegnungen
+• Freundschaftsbeziehungen (reine Verknüpfung, keine Inhalte)
+
+DISCOVERY-INDIZES
+• Normalisierte Telefonnummer (E.164-Format) und E-Mail (normalisiert) als Suchindex, damit Freunde dich finden können
+
+TECHNIK & KOMMUNIKATION
+• FCM-Token (für Push-Benachrichtigungen, nur lokal)
+• Bluetooth-Proximity-Token (anonyme 8-Zeichen-Kennung, siehe Abschnitt 5)
+• Live-Activity-Daten (Name, Emoji, Profilbild, Teilnehmerzahl)
+• Drops+ Kauf-Status
+• Gerätetyp, Betriebssystem, App-Version
+
+LOKAL (verlässt dein Gerät nicht)
+• BLE-Bestätigungshistorie (zur Missbrauchs-Vermeidung)
+• Push-Benachrichtigungs-Zeitstempel (zur Rate-Limitierung)
+
+NICHT gespeichert: Ausweisdaten, biometrische Rohdaten, dein Adressbuch. Der Kontakt-Abgleich findet ausschließlich auf deinem Gerät statt.
 """
             )
 
             LegalSection(
-                title: "2b. Live Activity & Dynamic Island",
+                title: "3. Zweck & Rechtsgrundlage",
                 text: """
-Wenn du einen aktiven Drop hast, nutzt Drops Apples ActivityKit, um Echtzeit-Informationen auf dem Sperrbildschirm und in der Dynamic Island anzuzeigen.
+Wir verarbeiten deine Daten für folgende Zwecke:
 
-WELCHE DATEN ANGEZEIGT WERDEN:
-• Aktivitätsname und Emoji des Drops
-• Anzahl der Teilnehmer
-• Adresse des Drop-Standorts (wird einmalig per Apple CLGeocoder aus GPS-Koordinaten ermittelt)
-• Emojis, Namen und Profilbilder der Teilnehmer
+• Vertragserfüllung (Art. 6 Abs. 1 lit. b DSGVO): Authentifizierung, Kontoverwaltung, Drop-Erstellung, Karte, Begegnungen, Bluetooth-Proximity, Push-Benachrichtigungen, Drops+
 
-LOKALE ZWISCHENSPEICHERUNG:
-Profilbilder werden temporär in einem gemeinsam genutzten App-Bereich (App Group: group.com.dennis.drops) zwischen der Haupt-App und der Widget-Erweiterung geteilt. Diese Daten verlassen dein Gerät nicht und werden beim Beenden des Drops automatisch nicht mehr aktualisiert.
+• Einwilligung (Art. 6 Abs. 1 lit. a DSGVO): Kontakt-Abgleich, Profilbild-Upload
 
-ADRESSERMITTLUNG:
-Die Drop-Adresse wird über Apples CLGeocoder-Dienst aus den GPS-Koordinaten des Drop-Standorts ermittelt. Dabei werden die Koordinaten kurzzeitig an Apple-Server übertragen. Apple's Datenschutzrichtlinien gelten: apple.com/privacy
-"""
-            )
+• Berechtigtes Interesse (Art. 6 Abs. 1 lit. f DSGVO): Moderation & Missbrauchs-Vermeidung (Admin-Panel, Sperren, Zuverlässigkeits-Score), Sicherheit der Plattform
 
-            LegalSection(
-                title: "2a. Ausweis-Verifizierung",
-                text: """
-Drops bietet eine freiwillige Identitätsverifizierung an, um echte Begegnungen unter verifizierten Personen zu ermöglichen. Die Verifizierung kann auf zwei Wegen erfolgen:
-
-WEG 1 – AUSWEIS-SCAN (automatisch):
-Die maschinenlesbare Zone (MRZ) deines Personalausweises oder Reisepasses wird per OCR lokal auf deinem Gerät ausgelesen. Dabei werden ausschließlich dein Vorname und dein Geburtsdatum erfasst.
-
-WEG 2 – MANUELLE VERIFIZIERUNG:
-Drops-Administratoren können den Verifizierungsstatus eines Accounts manuell bestätigen, z.B. nach persönlicher Identitätsprüfung.
-
-WAS GESPEICHERT WIRD:
-Nur: Vorname, Geburtsdatum und ob die Verifizierung erfolgreich war (Ja/Nein). Das Ausweisfoto, die Ausweis- oder Passnummer und alle weiteren Daten werden weder gespeichert noch übertragen.
-
-VERARBEITUNG NUR AUF DEINEM GERÄT:
-Der gesamte OCR-Prozess findet ausschließlich auf deinem iPhone statt. Keine Bilddaten verlassen dein Gerät.
-
-RECHTSGRUNDLAGE:
-Die Verarbeitung erfolgt auf Basis deiner ausdrücklichen Einwilligung (Art. 6 Abs. 1 lit. a DSGVO). Du kannst diese Einwilligung jederzeit widerrufen, indem du dein Konto löschst. Dabei werden alle gespeicherten Daten sofort und vollständig gelöscht.
-"""
-            )
-
-            LegalSection(
-                title: "3. Zweck der Datenverarbeitung",
-                text: """
-Wir verarbeiten deine Daten ausschließlich für folgende Zwecke:
-
-• Authentifizierung und Kontoverwaltung (Art. 6 Abs. 1 lit. b DSGVO)
-• Bereitstellung der Kernfunktionen der App (Drops erstellen, Karte, Begegnungen)
-• Echtzeit-Standortfreigabe im Umgebungsbereich (nur bei aktiviertem Drop)
-• SOS-Notfallfunktion (Standortübermittlung an Notfallkontakt)
-• Push-Benachrichtigungen zu Drops in deiner Nähe und Re-Engagement-Hinweise
-• Anzeige von Drop-Informationen auf dem Sperrbildschirm (Live Activity)
-• Verbesserung der App (nur mit deiner Zustimmung)
+Einwilligungen kannst du jederzeit über die App-Einstellungen oder durch Kontolöschung widerrufen.
 """
             )
 
             LegalSection(
                 title: "4. Standortdaten",
-                text: "Drops erhebt deinen Standort nur, wenn du die App aktiv verwendest (\"Nur während der Nutzung\"). Dein Standort wird temporär an Firebase Realtime Database übertragen, solange du einen aktiven Drop hast oder die SOS-Funktion aktiviert ist. Nach Deaktivierung werden Standortdaten sofort gelöscht. Wir speichern keine historischen Bewegungsprofile."
-            )
-
-            LegalSection(
-                title: "5. Drittanbieter & Auftragsverarbeiter",
                 text: """
-GOOGLE LLC (USA) — EU-US Data Privacy Framework zertifiziert, AVV abgeschlossen:
-• Firebase Authentication – Telefonnummer-Verifizierung
-• Firebase Realtime Database – Live-Daten (Drops, Standorte, SOS)
-• Firebase Cloud Messaging – Push-Benachrichtigungen
-• Firebase Storage – Profilbilder (optional, nur wenn du ein Foto hochlädst)
-• Firebase Firestore – Profildaten (Name, Verifizierungsstatus, Profilbild-URL)
+Drops erhebt deinen Standort NUR, wenn mindestens eine dieser Bedingungen erfüllt ist:
+• Du hast einen aktiven Drop erstellt
+• Du bist einem Drop beigetreten
 
-Weitere Informationen: policies.google.com/privacy
+GENAUIGKEIT: GPS mit bester Auflösung. Auf der Karte für andere Nutzer wird der Standort durch den Drop-Radius maskiert.
 
-APPLE INC. (USA):
-• CLGeocoder / Apple Maps – Einmalige Umwandlung von GPS-Koordinaten in lesbare Adressen für die Live Activity. Es werden nur die Koordinaten des Drop-Standorts übertragen, keine personenbezogenen Daten.
-• ActivityKit / WidgetKit – Darstellung von Drop-Informationen auf dem Sperrbildschirm
+HINTERGRUND-MODUS: Damit Drops auch im Hintergrund aktualisiert werden, läuft Location-Tracking weiter, solange ein Drop aktiv ist. Ohne aktiven Drop werden sofort keine Standortdaten mehr erhoben oder übertragen.
 
-Apples Datenschutzrichtlinien: apple.com/privacy
+SPEICHERUNG: Der aktuelle Standort wird live an die Firebase Realtime Database (EU-Region, Frankfurt) übertragen und bei Drop-Beendigung sofort gelöscht. Wir speichern KEINE historischen Bewegungsprofile.
 """
             )
 
             LegalSection(
-                title: "6. Speicherdauer",
-                text: "Kontodaten werden gelöscht, sobald du dein Konto löschst. Aktive Drops werden nach ihrer Beendigung automatisch aus der Datenbank entfernt. SOS-Einträge werden nach maximal 30 Minuten automatisch gelöscht. Logs werden nach 90 Tagen automatisch bereinigt."
+                title: "5. Bluetooth & automatische Treffen-Bestätigung",
+                text: """
+Drops nutzt Bluetooth Low Energy (BLE), um tatsächliche Treffen zwischen Drop-Teilnehmern automatisch zu erkennen — ohne dass du manuell bestätigen musst.
+
+ÜBERTRAGEN WIRD:
+• Eine anonyme 8-Zeichen-Kennung (abgeleitet aus deiner internen Nutzer-ID, NICHT deine Telefonnummer oder E-Mail)
+• Eine drop-spezifische Service-UUID
+• Keine Namen, keine Profilbilder, keine Standortdaten, keine MAC-Adressen
+
+MISSBRAUCHS-VERMEIDUNG (drei Schutzebenen):
+1. Mindestdauer: Frühestens 5 Minuten nach Drop-Beitritt kann eine Begegnung registriert werden
+2. Partner-Cooldown: Dieselbe Person wird maximal alle 6 Stunden bestätigt
+3. Tages-Limit: Maximal 4 Bluetooth-Bestätigungen pro Tag
+
+ENTFERNUNG: Eine Begegnung wird nur registriert, wenn das Signal stärker als -72 dBm ist (ca. 5-10 Meter).
+
+HINTERGRUND-MODUS: BLE läuft im Hintergrund, solange ein Drop aktiv ist. Ohne aktiven Drop wird Bluetooth nicht genutzt.
+
+SPEICHERUNG: Die BLE-Bestätigungshistorie wird AUSSCHLIESSLICH lokal auf deinem Gerät gespeichert und verlässt dein iPhone nicht. Nur die eigentliche Begegnung wird in der Realtime DB als Verknüpfung zwischen den beiden Nutzer-IDs gespeichert.
+
+RECHTSGRUNDLAGE: Art. 6 Abs. 1 lit. b DSGVO (Kernfunktion von Drops).
+"""
             )
 
             LegalSection(
-                title: "7. Deine Rechte",
+                title: "6. Kontakt-Abgleich (optional)",
+                text: """
+Wenn du die Funktion „Freunde finden" nutzt, kannst du Drops dein Adressbuch durchsuchen lassen, um Kontakte zu entdecken, die ebenfalls Drops nutzen.
+
+ABLAUF:
+• Telefonnummern werden zu E.164-Format normalisiert, E-Mails werden normalisiert
+• Jede normalisierte Adresse wird mit dem Firebase-Discovery-Index verglichen
+• Bei Treffer wird dir der entsprechende Drops-Nutzer zur Freundschaftsanfrage angeboten
+
+NICHT GESPEICHERT: Dein Adressbuch wird weder an unsere Server übertragen noch lokal dauerhaft kopiert. Nur die Übereinstimmungen, die du aktiv als Freund hinzufügst, werden gespeichert.
+
+RECHTSGRUNDLAGE: Ausdrückliche Einwilligung (Art. 6 Abs. 1 lit. a DSGVO). Widerruf über iOS-Systemeinstellungen (Einstellungen → Drops → Kontakte).
+"""
+            )
+
+            LegalSection(
+                title: "7. Push-Benachrichtigungen",
+                text: """
+Mit deiner Zustimmung senden wir Push-Benachrichtigungen über Apple Push Notification Service (APNs) und Firebase Cloud Messaging (FCM).
+
+ARTEN:
+• Drops in deiner Nähe (max. 1× alle 30 Minuten)
+• Warnung bei Drops in deiner Heimzone (max. 1× alle 60 Minuten)
+• Beitrittsanfragen zu deinem Drop
+• Automatische Bestätigung abgelaufener Beitrittsanfragen
+• Jemand ist deinem Drop beigetreten
+• Neue aufgezeichnete Begegnungen
+• Freund startet Drop in deiner Nähe
+• Re-Engagement-Hinweise bei längerer Inaktivität
+
+FCM-TOKEN: Das Gerät-Token wird nur lokal in den App-Einstellungen gespeichert, nicht in der Datenbank. Du kannst Push jederzeit über iOS-Systemeinstellungen deaktivieren.
+"""
+            )
+
+            LegalSection(
+                title: "8. Live Activity (Dynamic Island & Sperrbildschirm)",
+                text: """
+Sobald du einem Drop beitrittst oder einen startest, zeigt iOS im Dynamic Island und auf dem Sperrbildschirm eine Live-Übersicht.
+
+ANGEZEIGTE DATEN: Drop-Name, Emoji, Teilnehmerzahl, Ablaufzeit, Vornamen und Profilbilder der Teilnehmer sowie deren voraussichtliche Ankunftszeit.
+
+TECHNISCH: Die Live-Activity läuft über Apples ActivityKit LOKAL auf deinem Gerät. APNs wird nur als Trigger-Kanal für Aktualisierungen genutzt — keine Nutzerdaten werden an Apple übertragen.
+
+ADRESSERMITTLUNG: Die Drop-Adresse wird über Apples CLGeocoder-Dienst aus den GPS-Koordinaten ermittelt. Dabei werden die Koordinaten kurzzeitig an Apple-Server übertragen. Apples Datenschutzrichtlinien: apple.com/privacy
+"""
+            )
+
+            LegalSection(
+                title: "9. Drops+ (In-App-Kauf)",
+                text: """
+Drops+ ist ein optionales kostenpflichtiges Zusatz-Feature (z.B. Drop-Hervorhebung auf der Karte, größerer Suchradius, Score-Schutz).
+
+ZAHLUNGSABWICKLUNG: Der Kauf läuft ausschließlich über Apples App Store mit deiner Apple-ID. Wir erhalten keine Zahlungsdaten, keine Apple-ID und keine Kreditkarteninformationen.
+
+WAS DROPS SPEICHERT: Nur die Information, dass du Drops+ freigeschaltet hast (Flag isPlusUser: true in deinem Nutzerprofil).
+
+SPEICHERDAUER: Bis zur Kontolöschung. Rückerstattung über Apple.
+"""
+            )
+
+            LegalSection(
+                title: "10. Moderation & Admin-Funktionen",
+                text: """
+Zur Sicherung der Plattform gegen Missbrauch existiert ein Admin-Bereich mit eingeschränktem Zugriff.
+
+WER HAT ZUGRIFF: Ausschließlich der Betreiber (Dennis Gundermann) sowie ggf. manuell benannte Moderatoren.
+
+WAS ADMINS EINSEHEN KÖNNEN:
+• Nutzerliste mit Name, E-Mail, Registrierungsdatum, Sperr- und Drops+-Status
+• Aktive Drops (Aktivitätsname, Emoji)
+• Aggregierte Statistiken
+
+WAS ADMINS TUN KÖNNEN: Nutzer sperren/entsperren, Drops vorzeitig beenden, Accounts löschen (bei Verstößen), Drops+-Status manuell setzen.
+
+RECHTSGRUNDLAGE: Berechtigtes Interesse an einer sicheren Plattform (Art. 6 Abs. 1 lit. f DSGVO).
+"""
+            )
+
+            LegalSection(
+                title: "11. Drittanbieter & Auftragsverarbeiter",
+                text: """
+GOOGLE LLC / GOOGLE IRELAND LTD.:
+• Firebase Authentication – Apple-Sign-In-Verifizierung
+• Firebase Realtime Database (Region europe-west1, Frankfurt) – Live-Daten (Drops, Standort, Begegnungen)
+• Firebase Storage – Profilbilder
+• Firebase Firestore – Profilergänzungen (Zuverlässigkeits-Score, Profilbild-URL)
+• Firebase Cloud Messaging – Push-Zustellung
+
+Google LLC ist unter dem EU-US Data Privacy Framework zertifiziert. Eine Auftragsverarbeitungsvereinbarung (AVV) nach Art. 28 DSGVO ist abgeschlossen. Details: policies.google.com/privacy
+
+APPLE INC.:
+• Sign in with Apple (optional)
+• Apple Push Notification Service (APNs)
+• App Store / StoreKit – Drops+ Kaufabwicklung
+• CLGeocoder – Koordinaten → Adresse (für Live Activity)
+
+Details: apple.com/legal/privacy
+
+KEINE WEITEREN DRITTANBIETER. Drops nutzt keine Werbe-SDKs, keine externen Analyse-Tools (z.B. Google Analytics, Firebase Analytics, Mixpanel, Facebook SDK) und kein Tracking für Marketingzwecke.
+"""
+            )
+
+            LegalSection(
+                title: "12. Speicherdauer",
+                text: """
+• Kontodaten: Bis zur Kontolöschung
+• Profilbild: Bis zur Kontolöschung oder manuellem Entfernen
+• Drops: Bis zur Beendigung durch dich oder automatischem Ablauf
+• Beitritte/Anfragen: Automatisch mit Drop-Ende gelöscht
+• Standort: Live, sofortige Löschung nach Drop-Ende
+• Aufgezeichnete Begegnungen: Bis zur Kontolöschung
+• Discovery-Indizes (Telefon/E-Mail): Bis zur Kontolöschung
+• BLE-Bestätigungshistorie (lokal): Tägliche Liste zurückgesetzt um Mitternacht; Partner-Cooldown bis App-Deinstallation
+• FCM-Token (lokal): Bis App-Deinstallation
+"""
+            )
+
+            LegalSection(
+                title: "13. Deine Rechte",
                 text: """
 Du hast das Recht auf:
 
 • Auskunft über gespeicherte Daten (Art. 15 DSGVO)
 • Berichtigung unrichtiger Daten (Art. 16 DSGVO)
-• Löschung deiner Daten (Art. 17 DSGVO)
+• Löschung deiner Daten (Art. 17 DSGVO) – direkt in der App möglich
 • Einschränkung der Verarbeitung (Art. 18 DSGVO)
 • Datenübertragbarkeit (Art. 20 DSGVO)
 • Widerspruch gegen die Verarbeitung (Art. 21 DSGVO)
+• Widerruf erteilter Einwilligungen (Art. 7 Abs. 3 DSGVO)
 • Beschwerde bei einer Aufsichtsbehörde (Art. 77 DSGVO)
 
 Zur Ausübung deiner Rechte: contact@drops-app.de
+
+Zuständige Aufsichtsbehörde: Bayerisches Landesamt für Datenschutzaufsicht (BayLDA), Promenade 18, 91522 Ansbach
 """
             )
 
             LegalSection(
-                title: "8. Datensicherheit",
-                text: "Alle Daten werden verschlüsselt übertragen (TLS 1.3). Firebase-Sicherheitsregeln stellen sicher, dass Nutzer nur auf ihre eigenen Daten zugreifen können. Telefonnummern werden von Firebase gehasht gespeichert und nicht im Klartext übertragen."
+                title: "14. Datensicherheit",
+                text: """
+• Alle Übertragungen erfolgen TLS-verschlüsselt
+• Firebase-Sicherheitsregeln stellen sicher, dass jeder Nutzer nur auf seine eigenen Daten schreibend zugreifen kann
+• Drop-Standorte sind nur über den vom Host definierten Sichtbarkeits-Radius zugänglich
+• Der Zuverlässigkeits-Score ist für andere Nutzer nicht sichtbar
+"""
             )
 
             LegalSection(
-                title: "9. Minderjährige",
-                text: "Drops ist nicht für Personen unter 16 Jahren bestimmt. Wir erheben wissentlich keine Daten von Minderjährigen. Falls du Kenntnis davon hast, dass ein Kind unter 16 Jahren Drops nutzt, wende dich bitte an contact@drops-app.de."
+                title: "15. Minderjährige",
+                text: "Drops ist nicht für Personen unter 18 Jahren bestimmt. Bei der Registrierung wird das Geburtsdatum abgefragt und Accounts unter 18 werden blockiert. Falls du Kenntnis davon hast, dass eine minderjährige Person Drops nutzt, wende dich bitte an contact@drops-app.de."
             )
 
             LegalSection(
-                title: "10. Änderungen",
-                text: "Wir behalten uns vor, diese Datenschutzerklärung anzupassen. Über wesentliche Änderungen wirst du per Push-Benachrichtigung oder beim nächsten App-Start informiert. Das Datum der letzten Aktualisierung ist oben angegeben."
+                title: "16. Änderungen dieser Erklärung",
+                text: "Wir behalten uns vor, diese Datenschutzerklärung anzupassen, um rechtliche oder technische Änderungen abzubilden. Bei wesentlichen Änderungen informieren wir dich per Push-Benachrichtigung oder beim nächsten App-Start. Maßgebend ist die jeweils aktuelle Version, die auf drops-app.de/datenschutz abrufbar ist. Das Datum der letzten Aktualisierung findest du oben."
             )
         }
     }
@@ -310,14 +431,15 @@ private struct TermsContent: View {
 
             LegalSection(
                 title: "1. Geltungsbereich",
-                text: "Diese Nutzungsbedingungen gelten für die Nutzung der mobilen App \"Drops\" (nachfolgend \"App\") und alle damit verbundenen Dienste. Mit der Nutzung der App erklärst du dich mit diesen Bedingungen einverstanden."
+                text: "Diese Nutzungsbedingungen gelten für die Nutzung der mobilen App „Drops" und alle damit verbundenen Dienste. Mit der Nutzung der App erklärst du dich mit diesen Bedingungen einverstanden."
             )
 
             LegalSection(
                 title: "2. Nutzungsvoraussetzungen",
                 text: """
-• Du musst mindestens 16 Jahre alt sein
-• Du benötigst eine gültige Telefonnummer zur Registrierung
+• Du musst mindestens 18 Jahre alt sein
+• Du benötigst eine Apple-ID für „Sign in with Apple"
+• Du musst eine gültige Handynummer hinterlegen, damit dich deine Kontakte finden können
 • Du benötigst ein Gerät mit iOS 16.0 oder neuer
 • Eine aktive Internetverbindung ist für die meisten Funktionen erforderlich
 • Du bist verantwortlich für alle Aktivitäten unter deinem Account
@@ -340,7 +462,6 @@ Folgende Aktivitäten sind untersagt:
 • Umgehung von Sicherheitsmaßnahmen
 • Kommerzielle Werbung oder Promotion
 • Verwendung der App für illegale Aktivitäten jeglicher Art
-• Missbrauch der SOS-Notfallfunktion
 • Erstellung mehrerer Accounts zur Umgehung von Sperren
 """
             )
@@ -351,8 +472,8 @@ Folgende Aktivitäten sind untersagt:
             )
 
             LegalSection(
-                title: "6. SOS-Notfallfunktion",
-                text: "Die SOS-Funktion ist ausschließlich für echte Notfallsituationen bestimmt. Der Missbrauch der SOS-Funktion kann zur sofortigen Sperrung deines Accounts führen. Im Notfall zögere nicht — die Funktion ruft automatisch den Notruf 112 an und benachrichtigt deinen Notfallkontakt sowie Drops-Nutzer in der Nähe."
+                title: "6. Drops+ (In-App-Kauf)",
+                text: "Drops+ ist ein optionales kostenpflichtiges Zusatz-Feature. Der Kauf wird über den Apple App Store abgewickelt. Für Widerruf, Rückerstattung und Laufzeit gelten die Bedingungen von Apple. Drops+ schaltet ausschließlich Zusatzfunktionen frei und ändert nichts an den grundlegenden Pflichten aus diesen Nutzungsbedingungen."
             )
 
             LegalSection(
@@ -362,7 +483,7 @@ Folgende Aktivitäten sind untersagt:
 
             LegalSection(
                 title: "8. Haftungsbeschränkung",
-                text: "Drops vermittelt lediglich die Möglichkeit zur Begegnung zwischen Nutzern und ist nicht verantwortlich für das Verhalten der Nutzer. Wir haften nicht für Schäden, die aus der Nutzung der App entstehen, sofern diese nicht auf grober Fahrlässigkeit oder Vorsatz beruhen. Die Nutzung der SOS-Funktion ersetzt nicht den Notruf bei Behörden."
+                text: "Drops vermittelt lediglich die Möglichkeit zur Begegnung zwischen Nutzern und ist nicht verantwortlich für das Verhalten der Nutzer. Wir haften nicht für Schäden, die aus der Nutzung der App entstehen, sofern diese nicht auf grober Fahrlässigkeit oder Vorsatz beruhen."
             )
 
             LegalSection(
