@@ -66,17 +66,7 @@ struct MainTabView: View {
                 .environmentObject(store)
         }
 
-            // Aurora-Pulse unten — zieht sich durch die Tab-Bar wenn ein Drop aktiv ist.
-            // Wird BELOW TabView gerendert; die iOS-26-Glass-Tab-Bar lässt die Farben
-            // dezent durchschimmern, als "breathing" Akzent unter den Tabs.
-            if store.isInActiveDrop {
-                ActiveDropAuroraPulse()
-                    .allowsHitTesting(false)
-                    .transition(.opacity)
-            }
-
         } // ZStack
-        .animation(.easeInOut(duration: 0.4), value: store.isInActiveDrop)
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 6) {
                 OfflineBanner()
@@ -232,60 +222,3 @@ struct WelcomeSheet: View {
     }
 }
 
-// MARK: - Active Drop Aurora Pulse
-
-/// Pulse der ausschließlich im Tab-Bar-Bereich läuft: sanfter Grundglow in der Mitte
-/// plus zwei Ripple-Ringe, die von der Mitte nach außen expandieren und dabei
-/// ausfaden — wie ein Sonar-Ping horizontal durch die Tab-Bar.
-///
-/// Höhe wird **dynamisch** aus der Safe-Area berechnet (Home-Indicator-iPhones haben
-/// mehr Bottom-Inset als Home-Button-Geräte). So sitzt der Pulse auf jedem Gerät
-/// exakt im Tab-Bar-Bereich — ohne darüber hinauszuragen.
-struct ActiveDropAuroraPulse: View {
-    /// Visuelle Höhe der iOS-Tab-Bar (die Icons/Labels-Region — ohne Home-Indicator).
-    /// Der Pulse sitzt genau hier; der Home-Indicator-Bereich darunter bleibt unberührt.
-    private let tabBarVisualHeight: CGFloat = 49
-    private let pulsePeriod: Double = 2.5
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-            TimelineView(.animation) { context in
-                let t = context.date.timeIntervalSinceReferenceDate
-                GeometryReader { geo in
-                    let p1 = CGFloat(t.truncatingRemainder(dividingBy: pulsePeriod) / pulsePeriod)
-                    let p2 = CGFloat((t + pulsePeriod / 2).truncatingRemainder(dividingBy: pulsePeriod) / pulsePeriod)
-                    ZStack {
-                        // Stärkerer, satterer Grundglow in der Mitte
-                        RadialGradient(
-                            colors: [Color.brand.opacity(0.65), .clear],
-                            center: .center,
-                            startRadius: 4,
-                            endRadius: geo.size.width * 0.42
-                        )
-
-                        // Ripple-Ringe mit deutlich mehr Kontrast
-                        pulseRing(phase: p1, color: .brand, geo: geo)
-                        pulseRing(phase: p2, color: Color(hex: "06b6d4"), geo: geo)
-                    }
-                    .frame(width: geo.size.width, height: geo.size.height)
-                    .blur(radius: 3)
-                }
-            }
-            .frame(height: tabBarVisualHeight)
-            .clipped()
-        }
-        .allowsHitTesting(false)
-    }
-
-    /// Einzelner Ring, der vom Zentrum (phase=0) auf volle Breite (phase=1) expandiert
-    /// und dabei ausfadet. Nutzt Capsule — gibt den horizontalen Tab-Bar-Look.
-    private func pulseRing(phase: CGFloat, color: Color, geo: GeometryProxy) -> some View {
-        Capsule()
-            .stroke(color.opacity(Double(1 - phase) * 0.85), lineWidth: 3)
-            .frame(
-                width: max(10, geo.size.width * phase),
-                height: geo.size.height * 0.60
-            )
-    }
-}
