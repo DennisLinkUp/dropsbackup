@@ -1223,6 +1223,8 @@ struct ActiveDropTabView: View {
     @Environment(\.colorScheme) var colorScheme
     @AppStorage("appLanguage") private var appLanguage = "de"
 
+    /// Eigene LocationManager-Instanz — für GPS-basierte Ankunfts-Erkennung.
+    @StateObject private var locationManager = LocationManager()
     @State private var route: MKRoute? = nil
     @State private var isLoadingRoute = true
     @State private var resolvedAddress: String? = nil
@@ -1254,12 +1256,29 @@ struct ActiveDropTabView: View {
         String(store.currentUser.id.uuidString.replacingOccurrences(of: "-", with: "").prefix(8))
     }
 
-    /// Host ist immer "angekommen", Joiner nach erster BLE-Bestätigung
+    /// Schwelle in Metern, ab der GPS-Nähe als „vor Ort" gilt.
+    /// Großzügig (100 m) wegen Stadt-GPS-Drift — besser zu früh ankommen lassen
+    /// als den Host dauerhaft auf „unterwegs" zu halten.
+    private static let gpsArrivalThresholdMeters: Double = 100
+
+    /// Prüft ob GPS-Position nahe genug am Drop-Ort ist.
+    private var isNearDropByGPS: Bool {
+        guard let user = locationManager.userLocation else { return false }
+        let userLoc = CLLocation(latitude: user.latitude, longitude: user.longitude)
+        let dropLoc = CLLocation(latitude: item.coordinate.latitude, longitude: item.coordinate.longitude)
+        return userLoc.distance(from: dropLoc) <= Self.gpsArrivalThresholdMeters
+    }
+
+    /// Host ist „angekommen" sobald eine dieser Bedingungen zutrifft:
+    ///   1. Drop wurde am aktuellen Standort erstellt (`dropLocationType == .current`)
+    ///   2. GPS-Position ist ≤ 100 m vom Drop-Koordinaten entfernt
+    ///   3. Mindestens eine BLE-Bestätigung mit einem anderen Teilnehmer
+    /// Joiner: ebenfalls via GPS oder BLE.
     var isArrived: Bool {
-        // Aktueller Standort als Drop-Ort → Host gilt sofort als vor Ort.
-        // Anderer Ort (searched / pin) → Host muss auch erst hinfahren (BLE-Bestätigung).
         let hostAutoArrived = isOwnDrop && item.dropLocationType == .current
-        return hostAutoArrived || !store.bluetoothMeetup.confirmedTokens.isEmpty
+        return hostAutoArrived
+            || isNearDropByGPS
+            || !store.bluetoothMeetup.confirmedTokens.isEmpty
     }
 
     /// Synthetischer Host-Teilnehmer für fremde Drops (Firebase liefert keine Participants).
