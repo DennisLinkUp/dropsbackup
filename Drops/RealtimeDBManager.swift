@@ -318,6 +318,67 @@ class RealtimeDBManager: ObservableObject {
         return true
     }
 
+    // MARK: - Drop Views (Drops+ „wer hat geschaut")
+
+    /// Snapshot eines Drop-Viewers — für die Host-UI.
+    struct DropViewerSnapshot: Identifiable {
+        let id: String               // viewerUID
+        let name: String
+        let age: Int?
+        let emoji: String
+        let profileImageURL: String?
+        let viewedAt: Date
+    }
+
+    /// Schreibt einen "view"-Eintrag (idempotent — Timestamp wird bei erneutem Öffnen aktualisiert).
+    /// Der Host selbst wird nicht als Viewer gezählt.
+    func recordDropView(dropID: String, viewerName: String, viewerEmoji: String,
+                        viewerAge: Int?, viewerProfileImageURL: String?) {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        // Host nicht als Viewer zählen — wird client-seitig im Caller gechekt
+        var payload: [String: Any] = [
+            "name":      viewerName,
+            "emoji":     viewerEmoji,
+            "viewedAt":  ServerValue.timestamp()
+        ]
+        if let age = viewerAge { payload["age"] = age }
+        if let url = viewerProfileImageURL { payload["profileImageURL"] = url }
+        db.child("dropViews").child(dropID).child(uid).setValue(payload)
+    }
+
+    /// Beobachtet alle Viewer eines Drops (für den Host).
+    /// Feuert bei jedem neuen View und bei Updates. Liefert die komplette Liste neu.
+    @discardableResult
+    func observeDropViews(dropID: String, onUpdate: @escaping ([DropViewerSnapshot]) -> Void) -> DatabaseHandle {
+        let ref = db.child("dropViews").child(dropID)
+        return ref.observe(.value) { snapshot in
+            var viewers: [DropViewerSnapshot] = []
+            for child in snapshot.children {
+                guard let snap = child as? DataSnapshot,
+                      let dict = snap.value as? [String: Any],
+                      let name = dict["name"] as? String
+                else { continue }
+                let tsMs = dict["viewedAt"] as? Double ?? 0
+                let date = tsMs > 0 ? Date(timeIntervalSince1970: tsMs / 1000) : Date()
+                viewers.append(DropViewerSnapshot(
+                    id: snap.key,
+                    name: name,
+                    age: dict["age"] as? Int,
+                    emoji: dict["emoji"] as? String ?? "👤",
+                    profileImageURL: dict["profileImageURL"] as? String,
+                    viewedAt: date
+                ))
+            }
+            // Neueste zuerst
+            viewers.sort { $0.viewedAt > $1.viewedAt }
+            DispatchQueue.main.async { onUpdate(viewers) }
+        }
+    }
+
+    func removeDropViewsObserver(_ handle: DatabaseHandle, dropID: String) {
+        db.child("dropViews").child(dropID).removeObserver(withHandle: handle)
+    }
+
     /// Schreibt den Drops+ Status des aktuell eingeloggten Users nach Firebase.
     /// Wird nach erfolgreichem IAP-Kauf oder Entitlement-Refresh aufgerufen.
     func setMyPlusStatus(_ isPlus: Bool) {

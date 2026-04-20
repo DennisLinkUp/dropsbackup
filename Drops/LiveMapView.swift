@@ -918,7 +918,11 @@ struct DropJoinSheet: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.ultraThinMaterial)
-        .onAppear { geocodeAddress() }
+        .onAppear {
+            geocodeAddress()
+            // Drop-View für Drops+ „wer hat geschaut" erfassen
+            store.viewDrop(item)
+        }
         .sheet(isPresented: $showCreatorProfile) {
             if let creator = item.participants.first {
                 if #available(iOS 16.4, *) {
@@ -1565,6 +1569,9 @@ struct ActiveDropTabView: View {
                 // ── Plätze-Balken ─────────────────────────────────────
                 spotsCard
 
+                // ── „Wer hat deinen Drop gesehen" (Drops+ Feature) ─────
+                dropViewersCard
+
                 // ── Einladungslink (immer sichtbar) ───────────────────
                 shareButtonCard
 
@@ -1741,6 +1748,118 @@ struct ActiveDropTabView: View {
                 .frame(height: 6)
             }
         }
+    }
+
+    // MARK: - „Wer hat deinen Drop gesehen" — Drops+ Feature
+
+    /// Zeigt die Anzahl der Viewer. Free-User sehen nur die Zahl + CTA zur Paywall.
+    /// Drops+ Mitglieder sehen zusätzlich Avatare + Namen.
+    @ViewBuilder
+    private var dropViewersCard: some View {
+        let viewers = store.dropViewersByDropID[item.id.uuidString] ?? []
+        if !viewers.isEmpty {
+            sectionCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "eye.fill")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(Color(hex: "f59e0b"))
+                        Text("\(viewers.count) \(viewers.count == 1 ? "Person hat" : "Personen haben") geschaut")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(textPrimary)
+                        Spacer()
+                        if !store.isDropsPlusActive {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(textTertiary)
+                        }
+                    }
+
+                    if store.isDropsPlusActive {
+                        // Plus: Avatare + Namen
+                        VStack(spacing: 8) {
+                            ForEach(viewers.prefix(8)) { viewer in
+                                HStack(spacing: 10) {
+                                    RemoteProfileImage(
+                                        url: viewer.profileImageURL,
+                                        fallbackEmoji: viewer.emoji,
+                                        size: 34,
+                                        strokeColor: Color.white.opacity(0.12)
+                                    )
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        HStack(spacing: 4) {
+                                            Text(viewer.name)
+                                                .font(.system(size: 14, weight: .semibold))
+                                                .foregroundColor(textPrimary)
+                                            if let age = viewer.age {
+                                                Text(", \(age)")
+                                                    .font(.system(size: 13))
+                                                    .foregroundColor(textSecondary)
+                                            }
+                                        }
+                                        Text(relativeTimeLabel(viewer.viewedAt))
+                                            .font(.system(size: 11))
+                                            .foregroundColor(textTertiary)
+                                    }
+                                    Spacer()
+                                }
+                            }
+                            if viewers.count > 8 {
+                                Text("+ \(viewers.count - 8) weitere")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(textTertiary)
+                            }
+                        }
+                    } else {
+                        // Free: verschwommene Avatare + Upgrade-Prompt
+                        HStack(spacing: -10) {
+                            ForEach(viewers.prefix(5)) { viewer in
+                                RemoteProfileImage(
+                                    url: viewer.profileImageURL,
+                                    fallbackEmoji: viewer.emoji,
+                                    size: 36,
+                                    strokeColor: Color.white.opacity(0.15)
+                                )
+                                .blur(radius: 6)
+                                .overlay(Circle().fill(Color.black.opacity(0.12)))
+                            }
+                            Spacer()
+                        }
+                        .frame(height: 40)
+
+                        Button {
+                            store.showDropsPlusPaywall = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "bolt.fill")
+                                    .font(.system(size: 11, weight: .bold))
+                                Text("Mit Drops+ aufdecken")
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            .foregroundStyle(.black)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(
+                                LinearGradient(
+                                    colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
+                                    startPoint: .leading, endPoint: .trailing
+                                ),
+                                in: RoundedRectangle(cornerRadius: 10)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private func relativeTimeLabel(_ date: Date) -> String {
+        let elapsed = Int(Date().timeIntervalSince(date))
+        if elapsed < 60 { return "gerade eben" }
+        if elapsed < 3600 { return "vor \(elapsed / 60) Min" }
+        if elapsed < 86400 { return "vor \(elapsed / 3600) Std" }
+        return "vor \(elapsed / 86400) Tagen"
     }
 
     // MARK: - Einladungs-Button (immer sichtbar)

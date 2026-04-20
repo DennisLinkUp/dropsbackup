@@ -785,6 +785,15 @@ class AppStore: ObservableObject {
 
     /// Eingehende Beitrittsanfragen für den eigenen Drop (Host-Ansicht)
     @Published var pendingJoinRequests: [IncomingJoinRequest] = []
+
+    /// Viewers des eigenen aktiven Drops (Drops+ „wer hat geschaut"-Feature).
+    /// Key = dropID.uuidString → Liste aller Viewer sortiert nach viewedAt (neueste zuerst).
+    @Published var dropViewersByDropID: [String: [RealtimeDBManager.DropViewerSnapshot]] = [:]
+    /// Handles der Firebase-Observer (pro Drop) — zum sauberen Abmelden.
+    private var dropViewsObserverHandles: [String: DatabaseHandle] = [:]
+    /// Drop-IDs die in der aktuellen App-Session bereits „gezählt" wurden —
+    /// verhindert dass mehrfaches Öffnen des Sheets mehrfach feuert.
+    private var viewedDropIDsThisSession: Set<String> = []
     /// Sheet: aktuell angezeigte Anfrage
     @Published var activeIncomingRequest: IncomingJoinRequest? = nil
 
@@ -911,6 +920,7 @@ class AppStore: ObservableObject {
                     DropNotificationManager.scheduleExpiryReminders(for: drop)
                     self.startObservingDropIns(forDropID: snap.dropID)
                     self.startObservingJoinRequests(forDropID: snap.dropID)
+                    self.startObservingDropViews(forDropID: snap.dropID)
                 }
             }
         }
@@ -1638,6 +1648,40 @@ class AppStore: ObservableObject {
                                                          activityName: activityName)
             // Live-Activity aktualisieren damit der neue Teilnehmer erscheint
             self.refreshLiveActivityParticipants()
+        }
+    }
+
+    // MARK: - Drop Views („wer hat geschaut")
+
+    /// Wird aufgerufen wenn der User ein öffentliches Drop-Detail öffnet.
+    /// Eigener Drop wird nicht als View gezählt (item.type .stranger filtert bereits).
+    func viewDrop(_ item: MapAnnotationItem) {
+        guard item.type == .stranger else { return }
+        // Safety: nicht zweimal in derselben Session für denselben Drop schreiben
+        let dropKey = item.id.uuidString
+        guard viewedDropIDsThisSession.insert(dropKey).inserted else { return }
+        RealtimeDBManager.shared.recordDropView(
+            dropID: dropKey,
+            viewerName: currentUser.name,
+            viewerEmoji: currentUser.emoji,
+            viewerAge: userAge,
+            viewerProfileImageURL: profileImageURL
+        )
+    }
+
+    /// Startet den Live-Observer für die Viewer eines eigenen Drops.
+    func startObservingDropViews(forDropID dropID: String) {
+        stopObservingDropViews(forDropID: dropID)
+        let handle = RealtimeDBManager.shared.observeDropViews(dropID: dropID) { [weak self] viewers in
+            self?.dropViewersByDropID[dropID] = viewers
+        }
+        dropViewsObserverHandles[dropID] = handle
+    }
+
+    func stopObservingDropViews(forDropID dropID: String) {
+        if let handle = dropViewsObserverHandles[dropID] {
+            RealtimeDBManager.shared.removeDropViewsObserver(handle, dropID: dropID)
+            dropViewsObserverHandles.removeValue(forKey: dropID)
         }
     }
 
@@ -2513,6 +2557,7 @@ class AppStore: ObservableObject {
         // Host beobachtet eingehende DropIns (nach Accept) und neue Join-Requests
         startObservingDropIns(forDropID: drop.id.uuidString)
         startObservingJoinRequests(forDropID: drop.id.uuidString)
+        startObservingDropViews(forDropID: drop.id.uuidString)
 
         // BLE: Host scannt nach Teilnehmer-Tokens desselben Drops
         let hostToken = String(currentUser.id.uuidString.replacingOccurrences(of: "-", with: "").prefix(8))

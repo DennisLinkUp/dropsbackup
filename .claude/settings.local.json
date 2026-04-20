@@ -15,7 +15,10 @@
       "Bash(awk ' *)",
       "Bash(mv /tmp/index_new.html drops-website/index.html)",
       "Bash(awk 'NR>=1140 && NR<=1175' drops-website/index.html)",
-      "Bash(awk -F: '{print $1, $2}')"
+      "Bash(awk -F: '{print $1, $2}')",
+      "Bash(awk -F: '$1 >= 504 && $1 <= 620')",
+      "Bash(awk 'NR>=560 && /onAppear|\\\\.onAppear/' Drops/LiveMapView.swift)",
+      "Bash(grep -rn 'showDropsPlusPaywall\\\\|\\\\$store.showDropsPlusPaywall' 'Drops/*.swift')"
     ]
   }
 }
