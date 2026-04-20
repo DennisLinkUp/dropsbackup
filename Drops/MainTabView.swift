@@ -236,41 +236,50 @@ struct WelcomeSheet: View {
 
 /// Pulse der ausschließlich im Tab-Bar-Bereich läuft: sanfter Grundglow in der Mitte
 /// plus zwei Ripple-Ringe, die von der Mitte nach außen expandieren und dabei
-/// ausfaden — wie ein Sonar-Ping horizontal durch die Tab-Bar. Die iOS-26-Glass-
-/// Tab-Bar lässt die Farben durchschimmern; oberhalb der Tab-Bar ist nichts sichtbar,
-/// da der Container auf die Tab-Bar-Höhe beschränkt und geclippt ist.
+/// ausfaden — wie ein Sonar-Ping horizontal durch die Tab-Bar.
+///
+/// Höhe wird **dynamisch** aus der Safe-Area berechnet (Home-Indicator-iPhones haben
+/// mehr Bottom-Inset als Home-Button-Geräte). So sitzt der Pulse auf jedem Gerät
+/// exakt im Tab-Bar-Bereich — ohne darüber hinauszuragen.
 struct ActiveDropAuroraPulse: View {
-    /// Höhe des Streifens — passt ungefähr zur iOS-Tab-Bar inkl. Safe Area.
-    private let barHeight: CGFloat = 82
+    /// Visuelle Höhe der iOS-Tab-Bar oberhalb des Home-Indicators.
+    private let tabBarVisualHeight: CGFloat = 49
     private let pulsePeriod: Double = 2.5
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-            TimelineView(.animation) { context in
-                let t = context.date.timeIntervalSinceReferenceDate
-                GeometryReader { geo in
-                    let p1 = CGFloat(t.truncatingRemainder(dividingBy: pulsePeriod) / pulsePeriod)
-                    let p2 = CGFloat((t + pulsePeriod / 2).truncatingRemainder(dividingBy: pulsePeriod) / pulsePeriod)
-                    ZStack {
-                        // Stabile sanfte Mitten-Tönung
-                        RadialGradient(
-                            colors: [Color.brand.opacity(0.38), .clear],
-                            center: .center,
-                            startRadius: 4,
-                            endRadius: geo.size.width * 0.35
-                        )
+        GeometryReader { outer in
+            let safeBottom = outer.safeAreaInsets.bottom
+            let barHeight = tabBarVisualHeight + safeBottom
 
-                        pulseRing(phase: p1, color: .brand, geo: geo)
-                        pulseRing(phase: p2, color: Color(hex: "06b6d4"), geo: geo)
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+                TimelineView(.animation) { context in
+                    let t = context.date.timeIntervalSinceReferenceDate
+                    GeometryReader { geo in
+                        let p1 = CGFloat(t.truncatingRemainder(dividingBy: pulsePeriod) / pulsePeriod)
+                        let p2 = CGFloat((t + pulsePeriod / 2).truncatingRemainder(dividingBy: pulsePeriod) / pulsePeriod)
+                        ZStack {
+                            // Stärkerer, satterer Grundglow in der Mitte
+                            RadialGradient(
+                                colors: [Color.brand.opacity(0.65), .clear],
+                                center: .center,
+                                startRadius: 4,
+                                endRadius: geo.size.width * 0.42
+                            )
+
+                            // Ripple-Ringe mit deutlich mehr Kontrast
+                            pulseRing(phase: p1, color: .brand, geo: geo)
+                            pulseRing(phase: p2, color: Color(hex: "06b6d4"), geo: geo)
+                        }
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .blur(radius: 3)
                     }
-                    .frame(width: geo.size.width, height: geo.size.height)
-                    .blur(radius: 4)
                 }
+                .frame(height: barHeight)
+                .clipped()
             }
-            .frame(height: barHeight)
-            .clipped()
         }
+        .ignoresSafeArea(edges: .bottom)
         .allowsHitTesting(false)
     }
 
@@ -278,10 +287,10 @@ struct ActiveDropAuroraPulse: View {
     /// und dabei ausfadet. Nutzt Capsule — gibt den horizontalen Tab-Bar-Look.
     private func pulseRing(phase: CGFloat, color: Color, geo: GeometryProxy) -> some View {
         Capsule()
-            .stroke(color.opacity(Double(1 - phase) * 0.55), lineWidth: 2.5)
+            .stroke(color.opacity(Double(1 - phase) * 0.85), lineWidth: 3)
             .frame(
                 width: max(10, geo.size.width * phase),
-                height: geo.size.height * 0.55
+                height: geo.size.height * 0.60
             )
     }
 }
