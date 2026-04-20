@@ -817,6 +817,17 @@ struct OnboardingView: View {
             onBack: { withAnimation(.spring(response: 0.4)) { step = .welcome } }
         )
         .environment(\.colorScheme, adaptiveScheme)
+        .onAppear {
+            // Vorname aus Apple-ID übernehmen — nur wenn das Namensfeld noch leer ist
+            // und Apple ihn uns beim initialen Login geliefert hat. Apple sendet
+            // fullName nur beim ersten Sign-In, deshalb persistieren wir ihn in
+            // UserDefaults (siehe FirebaseAuthManager) und lesen ihn hier zurück.
+            if userName.isEmpty,
+               let given = UserDefaults.standard.string(forKey: "ud_appleGivenName"),
+               !given.isEmpty {
+                userName = given
+            }
+        }
     }
 
     @ViewBuilder private var interestsStepView: some View {

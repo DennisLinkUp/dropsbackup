@@ -287,6 +287,12 @@ class AppleSignInManager: NSObject, ObservableObject,
            let codeString = String(data: codeData, encoding: .utf8) {
             lastAuthorizationCode = codeString
         }
+        // Vorname aus Apple-Credential — WICHTIG: Apple liefert fullName
+        // nur beim ALLERERSTEN Authorization-Request je User/App-Kombination.
+        // Danach ist das Feld nil — wir müssen ihn also sofort persistieren.
+        if let given = appleIDCredential.fullName?.givenName, !given.isEmpty {
+            UserDefaults.standard.set(given, forKey: "ud_appleGivenName")
+        }
 
         let credential = OAuthProvider.appleCredential(
             withIDToken: tokenString,
