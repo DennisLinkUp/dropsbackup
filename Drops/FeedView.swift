@@ -58,9 +58,13 @@ struct FeedView: View {
         profileAccent = Color.brand
     }
 
-    // Öffentliche Drops — Drops+ Boost zuerst, dann nach Interessen-Match priorisiert
+    // Öffentliche Drops — Drops+ Boost zuerst, dann nach Interessen-Match priorisiert.
+    // „Nur weiblich"-Filter blendet alle Nicht-weiblich-Hosts aus (nur für weibliche Userinnen).
     private var strangerAnnotations: [MapAnnotationItem] {
-        let base = store.allMapAnnotations.filter { $0.isStranger }
+        var base = store.allMapAnnotations.filter { $0.isStranger }
+        if store.genderFilterEnabled && store.userGender == "weiblich" {
+            base = base.filter { ($0.hostGender?.lowercased() ?? "") == "weiblich" }
+        }
         return base.sorted { a, b in
             // Priority Listing: geboostete Drops immer zuerst
             if a.isBoosted != b.isBoosted { return a.isBoosted }
@@ -72,6 +76,44 @@ struct FeedView: View {
             }
             return false
         }
+    }
+
+    /// Pill-Toggle „Nur weiblich" — blendet Drops von nicht-weiblichen Hosts aus.
+    /// Nur sichtbar für Userinnen mit userGender == "weiblich".
+    private var femaleOnlyFilterBar: some View {
+        Button {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                store.genderFilterEnabled.toggle()
+                store.saveAll()
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Text("♀")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(store.genderFilterEnabled ? .white : .brand)
+                Text("Nur weiblich")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(store.genderFilterEnabled ? .white : .textPrimary)
+                Spacer(minLength: 0)
+                if store.genderFilterEnabled {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.white)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(store.genderFilterEnabled ? Color.brand : Color(UIColor.secondarySystemGroupedBackground))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(store.genderFilterEnabled ? Color.clear : Color.brand.opacity(0.25), lineWidth: 1)
+            )
+            .shadow(color: store.genderFilterEnabled ? Color.brand.opacity(0.3) : .clear, radius: 8, y: 3)
+        }
+        .buttonStyle(.plain)
     }
 
     // Freunde-Drops — nach Interessen-Match priorisiert
@@ -179,6 +221,14 @@ struct FeedView: View {
 
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 0) {
+
+                        // ── „Nur weiblich"-Filter (nur für weibliche Userinnen) ──
+                        if store.userGender == "weiblich" {
+                            femaleOnlyFilterBar
+                                .padding(.horizontal, 16)
+                                .padding(.top, 8)
+                                .padding(.bottom, 4)
+                        }
 
                         // ── Freunde in der Nähe (prominent) ──
                         if !sortedFriendDrops.isEmpty {

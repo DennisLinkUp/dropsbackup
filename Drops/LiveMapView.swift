@@ -77,14 +77,8 @@ struct LiveMapView: View {
     }
 
     var filteredAnnotations: [MapAnnotationItem] {
-        var base = store.allMapAnnotations
-        // Gender filter: stranger drops ohne übereinstimmendes Geschlecht ausblenden
-        if store.genderFilterEnabled && !store.userGender.isEmpty {
-            base = base.filter { item in
-                guard item.type == .stranger, let hg = item.hostGender else { return true }
-                return hg.lowercased() == store.userGender.lowercased()
-            }
-        }
+        let base = store.allMapAnnotations
+        // Der „Nur weiblich"-Filter läuft jetzt im Umgebungs-Tab, nicht mehr hier.
         guard selectedActivity != "Alle" else { return base }
         return base.filter { selectedActivity.contains($0.emoji) }
     }
@@ -185,41 +179,8 @@ struct LiveMapView: View {
             VStack {
                 Spacer()
 
-                // Recenter + Gender-Filter
+                // Recenter-Button
                 HStack(alignment: .bottom) {
-                    // Gender-Filter Toggle (nur sichtbar wenn Geschlecht gesetzt)
-                    if !store.userGender.isEmpty {
-                        Button(action: {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                store.genderFilterEnabled.toggle()
-                                store.saveAll()
-                            }
-                        }) {
-                            let symbol: String = {
-                                switch store.userGender {
-                                case "weiblich": return "♀"
-                                case "männlich": return "♂"
-                                default:         return "⚥"
-                                }
-                            }()
-                            Text(symbol)
-                                .font(.system(size: 18, weight: .bold))
-                                .foregroundColor(store.genderFilterEnabled ? .white : .brand)
-                                .padding(13)
-                                .background {
-                                    if store.genderFilterEnabled {
-                                        Circle().fill(Color.brand)
-                                            .shadow(color: Color.brand.opacity(0.4), radius: 8, y: 3)
-                                    } else {
-                                        Circle().fill(.ultraThinMaterial)
-                                            .overlay(Circle().stroke(Color.brand.opacity(0.3), lineWidth: 1))
-                                    }
-                                }
-                        }
-                        .padding(.leading, 16)
-                        .transition(.scale.combined(with: .opacity))
-                    }
-
                     Spacer()
 
                     Button(action: {
