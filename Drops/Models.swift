@@ -1341,14 +1341,24 @@ class AppStore: ObservableObject {
     }
 
     func loadProfileImageURL() {
-        guard let uid = Auth.auth().currentUser?.uid else { return }
+        guard let uid = Auth.auth().currentUser?.uid else {
+            print("[selfie] loadProfileImageURL: kein Auth-User")
+            return
+        }
         Firestore.firestore()
             .collection("users").document(uid)
-            .getDocument { [weak self] snapshot, _ in
+            .getDocument { [weak self] snapshot, error in
                 guard let self = self else { return }
+                if let error = error {
+                    print("[selfie] loadProfileImageURL Firestore-Fehler: \(error.localizedDescription)")
+                    return
+                }
                 let data = snapshot?.data()
-                if let url = data?["profileImageURL"] as? String {
+                if let url = data?["profileImageURL"] as? String, !url.isEmpty {
+                    print("[selfie] loadProfileImageURL ✓ URL: \(url.prefix(80))")
                     DispatchQueue.main.async { self.profileImageURL = url }
+                } else {
+                    print("[selfie] loadProfileImageURL: keine profileImageURL im Firestore-Dokument")
                 }
                 if let phone = data?["phoneNumber"] as? String, !phone.isEmpty {
                     DispatchQueue.main.async {

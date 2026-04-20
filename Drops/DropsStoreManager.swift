@@ -54,7 +54,13 @@ final class DropsStoreManager: ObservableObject {
                 await tx.finish()
             }
         }
-        applyPlusStatus(found)
+        // WICHTIG: refresh darf NUR hochstufen, niemals downgraden.
+        // Sonst würde bei jedem App-Start der Admin-gewährte Plus-Status
+        // (der kein StoreKit-Purchase hat) aus Firebase gelöscht.
+        // Echte Widerrufe laufen über `listenForTransactionUpdates` → applyPlusStatus(false).
+        if found {
+            applyPlusStatus(true)
+        }
     }
 
     // MARK: - Kauf
