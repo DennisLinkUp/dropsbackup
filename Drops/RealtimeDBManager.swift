@@ -933,11 +933,17 @@ class RealtimeDBManager: ObservableObject {
     struct FriendSnapshot {
         let uid: String
         let name: String
+        let profileImageURL: String?
     }
 
-    /// Lädt die Freundesliste des aktuellen Users aus Firebase.
-    /// Schritt 1: `friends/{myUID}` → Liste der UIDs.
-    /// Schritt 2: für jede UID `users/{theirUID}/name` holen.
+    /// Schreibt die eigene Profilbild-URL nach `users/{uid}/profileImageURL` in RTDB.
+    /// So können Freunde sie in einer einzigen Query mitlesen (spart Firestore-Rundfahrten).
+    func setMyProfileImageURL(_ urlString: String) {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        db.child("users").child(uid).updateChildValues(["profileImageURL": urlString])
+    }
+
+    /// Lädt eine Freundes-Liste EINMALIG — für Legacy-Aufrufer die nicht observe nutzen.
     func loadMyFriends(ownerUID: String) async -> [FriendSnapshot] {
         guard let friendsSnap = try? await db.child("friends").child(ownerUID).getData(),
               friendsSnap.exists() else { return [] }
@@ -946,18 +952,45 @@ class RealtimeDBManager: ObservableObject {
             guard let c = child as? DataSnapshot else { continue }
             uids.append(c.key)
         }
-        // Namen parallel laden (Limit auf 50 für Performance)
+        return await hydrateFriendSnapshots(from: uids)
+    }
+
+    /// Interne Helper: UIDs → FriendSnapshots (Name + Avatar) aus `users/{uid}`.
+    private func hydrateFriendSnapshots(from uids: [String]) async -> [FriendSnapshot] {
         var results: [FriendSnapshot] = []
         for uid in uids.prefix(50) {
             guard let userSnap = try? await db.child("users").child(uid).getData(),
                   let dict = userSnap.value as? [String: Any] else { continue }
-            // Soft-deleted Accounts überspringen
             if (dict["isDeleted"] as? Bool) == true { continue }
             let name = (dict["name"] as? String) ?? ""
             guard !name.isEmpty else { continue }
-            results.append(FriendSnapshot(uid: uid, name: name))
+            let url = dict["profileImageURL"] as? String
+            results.append(FriendSnapshot(uid: uid, name: name, profileImageURL: url))
         }
         return results.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Live-Observer auf `friends/{ownerUID}` — feuert bei jeder Änderung
+    /// (Freund hinzufügen, entfernen, anderes Gerät). Liefert die rehydratisierte Liste.
+    @discardableResult
+    func observeMyFriends(ownerUID: String, onUpdate: @escaping ([FriendSnapshot]) -> Void) -> DatabaseHandle {
+        let ref = db.child("friends").child(ownerUID)
+        return ref.observe(.value) { [weak self] snapshot in
+            guard let self = self else { return }
+            var uids: [String] = []
+            for child in snapshot.children {
+                guard let c = child as? DataSnapshot else { continue }
+                uids.append(c.key)
+            }
+            Task { @MainActor in
+                let list = await self.hydrateFriendSnapshots(from: uids)
+                onUpdate(list)
+            }
+        }
+    }
+
+    func removeFriendsObserver(_ handle: DatabaseHandle, ownerUID: String) {
+        db.child("friends").child(ownerUID).removeObserver(withHandle: handle)
     }
 }
 

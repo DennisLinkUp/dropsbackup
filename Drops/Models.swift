@@ -33,13 +33,17 @@ struct User: Identifiable, Equatable {
     var isAvailable: Bool
     var statusMessage: String
     var coordinate: CLLocationCoordinate2D
+    /// Firebase Storage Download-URL — wird für Avatare in Freundesliste etc. genutzt.
+    var profileImageURL: String? = nil
 
     init(id: UUID = UUID(), name: String, emoji: String,
          isAvailable: Bool, statusMessage: String,
-         coordinate: CLLocationCoordinate2D = CLLocationCoordinate2D(latitude: 48.1371, longitude: 11.5754)) {
+         coordinate: CLLocationCoordinate2D = CLLocationCoordinate2D(latitude: 48.1371, longitude: 11.5754),
+         profileImageURL: String? = nil) {
         self.id = id; self.name = name; self.emoji = emoji
         self.isAvailable = isAvailable; self.statusMessage = statusMessage
         self.coordinate = coordinate
+        self.profileImageURL = profileImageURL
     }
     static func == (lhs: User, rhs: User) -> Bool { lhs.id == rhs.id }
 }
@@ -801,6 +805,15 @@ class AppStore: ObservableObject {
     /// Drop-IDs die in der aktuellen App-Session bereits „gezählt" wurden —
     /// verhindert dass mehrfaches Öffnen des Sheets mehrfach feuert.
     private var viewedDropIDsThisSession: Set<String> = []
+
+    /// Live-Observer-Handle für `friends/{myUID}`.
+    private var friendsObserverHandle: DatabaseHandle?
+    private var friendsObservedUID: String?
+    /// UIDs der Freunde, die wir bei der letzten Observer-Feuerung schon hatten.
+    /// Damit können wir NEUE Freundschafts-Adds erkennen und Push auslösen.
+    private var knownFriendUIDs: Set<String> = []
+    /// Erste Observer-Feuerung initialisiert nur die Baseline — ohne Push.
+    private var friendsObserverInitialized = false
     /// Sheet: aktuell angezeigte Anfrage
     @Published var activeIncomingRequest: IncomingJoinRequest? = nil
 
@@ -932,21 +945,12 @@ class AppStore: ObservableObject {
             }
         }
 
-        // ── Freundesliste aus Firebase laden ──────────────────────────────
-        // store.friends ist in-memory only, muss also bei jedem App-Start aus
-        // friends/{myUID} + users/{theirUID} neu aufgebaut werden.
+        // ── Freundesliste live aus Firebase observieren ───────────────────
+        // friends/{myUID} wird beobachtet: Adds auf anderen Geräten,
+        // Re-Hydrates nach App-Neustart etc. feuern alle über denselben Weg.
+        // Avatare kommen aus users/{theirUID}/profileImageURL (RTDB-Cache).
         if let uid = FirebaseAuth.Auth.auth().currentUser?.uid {
-            Task { @MainActor in
-                let snapshots = await RealtimeDBManager.shared.loadMyFriends(ownerUID: uid)
-                for snap in snapshots where !self.friends.contains(where: { $0.name == snap.name }) {
-                    self.friends.append(User(
-                        name: snap.name,
-                        emoji: "👋",
-                        isAvailable: false,
-                        statusMessage: ""
-                    ))
-                }
-            }
+            startObservingFriends(ownerUID: uid)
         }
 
         // ── Veraltete Drop-Benachrichtigungen aus vorherigen Sessions löschen ─
@@ -1198,6 +1202,12 @@ class AppStore: ObservableObject {
 
     /// Löscht alle lokalen Daten und meldet den User aus.
     func clearLocalData() {
+        // Friends-Observer abmelden, damit er beim nächsten User nicht auf der
+        // alten UID hängen bleibt
+        stopObservingFriends()
+        friends = []
+        knownFriendUIDs = []
+
         // ── 1. UserDefaults leeren ────────────────────────────────────────
         let ud = UserDefaults.standard
         let allKeys = [
@@ -1346,10 +1356,13 @@ class AppStore: ObservableObject {
                 }
                 let urlString = url.absoluteString
                 print("[selfie] Upload ✓ → \(urlString)")
-                // Firestore: users/{uid} → profileImageURL
+                // Firestore: users/{uid} → profileImageURL (für den eigenen Profil-Load)
                 Firestore.firestore()
                     .collection("users").document(uid)
                     .setData(["profileImageURL": urlString], merge: true)
+                // Realtime DB: users/{uid}/profileImageURL — damit Freunde-Avatare
+                // mit einem einzigen Query gleich den URL mitbekommen.
+                RealtimeDBManager.shared.setMyProfileImageURL(urlString)
                 DispatchQueue.main.async {
                     self.profileImageURL = urlString
                 }
@@ -1758,6 +1771,84 @@ class AppStore: ObservableObject {
             RealtimeDBManager.shared.removeDropViewsObserver(handle, dropID: dropID)
             dropViewsObserverHandles.removeValue(forKey: dropID)
         }
+    }
+
+    // MARK: - Freunde live synchronisieren
+
+    /// Startet den Live-Observer auf `friends/{uid}` — adds auf anderen Geräten
+    /// landen automatisch in store.friends. Neue Adds lösen einen Notification-
+    /// Push aus (Freundschafts-Event).
+    func startObservingFriends(ownerUID: String) {
+        stopObservingFriends()
+        friendsObservedUID = ownerUID
+        friendsObserverInitialized = false
+        friendsObserverHandle = RealtimeDBManager.shared.observeMyFriends(ownerUID: ownerUID) { [weak self] snapshots in
+            guard let self = self else { return }
+            self.applyFriendSnapshots(snapshots)
+        }
+    }
+
+    func stopObservingFriends() {
+        if let handle = friendsObserverHandle, let uid = friendsObservedUID {
+            RealtimeDBManager.shared.removeFriendsObserver(handle, ownerUID: uid)
+        }
+        friendsObserverHandle = nil
+        friendsObservedUID = nil
+        friendsObserverInitialized = false
+    }
+
+    /// Merged eine frische Snapshot-Liste in store.friends. Dedup per Name
+    /// (wie bisher), ergänzt fehlende Einträge, entfernt nicht mehr vorhandene
+    /// (nur wenn sie via Friend-Snapshot-Liste ursprünglich kamen).
+    /// Bei neuen UIDs (echte Freundschafts-Adds) wird ein lokaler Push ausgelöst.
+    private func applyFriendSnapshots(_ snapshots: [RealtimeDBManager.FriendSnapshot]) {
+        let currentUIDs = Set(snapshots.map { $0.uid })
+
+        // Adds erkennen
+        if friendsObserverInitialized {
+            let newUIDs = currentUIDs.subtracting(knownFriendUIDs)
+            for newUID in newUIDs {
+                if let snap = snapshots.first(where: { $0.uid == newUID }) {
+                    notifyFriendshipAdded(name: snap.name)
+                }
+            }
+        }
+
+        // Vorhandene Einträge aktualisieren / fehlende hinzufügen (Dedup per Name)
+        for snap in snapshots {
+            if let idx = friends.firstIndex(where: { $0.name == snap.name }) {
+                // Avatar-URL aktualisieren falls neu verfügbar
+                if friends[idx].profileImageURL != snap.profileImageURL {
+                    friends[idx].profileImageURL = snap.profileImageURL
+                }
+            } else {
+                friends.append(User(
+                    name: snap.name,
+                    emoji: "👋",
+                    isAvailable: false,
+                    statusMessage: "",
+                    profileImageURL: snap.profileImageURL
+                ))
+            }
+        }
+
+        knownFriendUIDs = currentUIDs
+        friendsObserverInitialized = true
+    }
+
+    /// Lokale Notification wenn eine neue Freundschaft erkannt wurde.
+    /// Bei App im Vordergrund zeigt iOS den Banner oben; bei Hintergrund als Push.
+    private func notifyFriendshipAdded(name: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "Neuer Freund"
+        content.body  = "\(name) hat dich als Freund hinzugefügt."
+        content.sound = .default
+        content.categoryIdentifier = "FRIENDSHIP_ADDED"
+        // Unique ID, damit mehrere gleichzeitig funktionieren
+        let id = "friendship-\(name)-\(UUID().uuidString)"
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+        let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 
     func stopObservingDropIns() {
