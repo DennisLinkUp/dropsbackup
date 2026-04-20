@@ -242,44 +242,39 @@ struct WelcomeSheet: View {
 /// mehr Bottom-Inset als Home-Button-Geräte). So sitzt der Pulse auf jedem Gerät
 /// exakt im Tab-Bar-Bereich — ohne darüber hinauszuragen.
 struct ActiveDropAuroraPulse: View {
-    /// Visuelle Höhe der iOS-Tab-Bar oberhalb des Home-Indicators.
+    /// Visuelle Höhe der iOS-Tab-Bar (die Icons/Labels-Region — ohne Home-Indicator).
+    /// Der Pulse sitzt genau hier; der Home-Indicator-Bereich darunter bleibt unberührt.
     private let tabBarVisualHeight: CGFloat = 49
     private let pulsePeriod: Double = 2.5
 
     var body: some View {
-        GeometryReader { outer in
-            let safeBottom = outer.safeAreaInsets.bottom
-            let barHeight = tabBarVisualHeight + safeBottom
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            TimelineView(.animation) { context in
+                let t = context.date.timeIntervalSinceReferenceDate
+                GeometryReader { geo in
+                    let p1 = CGFloat(t.truncatingRemainder(dividingBy: pulsePeriod) / pulsePeriod)
+                    let p2 = CGFloat((t + pulsePeriod / 2).truncatingRemainder(dividingBy: pulsePeriod) / pulsePeriod)
+                    ZStack {
+                        // Stärkerer, satterer Grundglow in der Mitte
+                        RadialGradient(
+                            colors: [Color.brand.opacity(0.65), .clear],
+                            center: .center,
+                            startRadius: 4,
+                            endRadius: geo.size.width * 0.42
+                        )
 
-            VStack(spacing: 0) {
-                Spacer(minLength: 0)
-                TimelineView(.animation) { context in
-                    let t = context.date.timeIntervalSinceReferenceDate
-                    GeometryReader { geo in
-                        let p1 = CGFloat(t.truncatingRemainder(dividingBy: pulsePeriod) / pulsePeriod)
-                        let p2 = CGFloat((t + pulsePeriod / 2).truncatingRemainder(dividingBy: pulsePeriod) / pulsePeriod)
-                        ZStack {
-                            // Stärkerer, satterer Grundglow in der Mitte
-                            RadialGradient(
-                                colors: [Color.brand.opacity(0.65), .clear],
-                                center: .center,
-                                startRadius: 4,
-                                endRadius: geo.size.width * 0.42
-                            )
-
-                            // Ripple-Ringe mit deutlich mehr Kontrast
-                            pulseRing(phase: p1, color: .brand, geo: geo)
-                            pulseRing(phase: p2, color: Color(hex: "06b6d4"), geo: geo)
-                        }
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .blur(radius: 3)
+                        // Ripple-Ringe mit deutlich mehr Kontrast
+                        pulseRing(phase: p1, color: .brand, geo: geo)
+                        pulseRing(phase: p2, color: Color(hex: "06b6d4"), geo: geo)
                     }
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .blur(radius: 3)
                 }
-                .frame(height: barHeight)
-                .clipped()
             }
+            .frame(height: tabBarVisualHeight)
+            .clipped()
         }
-        .ignoresSafeArea(edges: .bottom)
         .allowsHitTesting(false)
     }
 
