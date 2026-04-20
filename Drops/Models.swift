@@ -528,6 +528,9 @@ enum AgeGroup: String, CaseIterable, Codable, Identifiable {
 
 private enum UDKey {
     static let userName             = "ud_userName"
+    /// Letzter bekannter Anzeigename — überlebt Logout (für „Willkommen zurück"-UI).
+    /// Wird nur bei echter Kontolöschung entfernt.
+    static let lastKnownName        = "ud_lastKnownName"
     static let userEmoji            = "ud_userEmoji"
     static let isUnderageBlocked    = "ud_isUnderageBlocked"
         static let isIdVerified         = "ud_isIdVerified"
@@ -1055,6 +1058,7 @@ class AppStore: ObservableObject {
             // 3. Lokale Daten + Logout
             print("[deleteAccount] Schritt 3: Lokale Daten + Logout…")
             UserDefaults.standard.removeObject(forKey: "hasOnboarded")
+            UserDefaults.standard.removeObject(forKey: UDKey.lastKnownName)
             self.clearLocalData()
             print("[deleteAccount] Fertig — isAuthenticated=\(self.isAuthenticated)")
 
@@ -1169,6 +1173,10 @@ class AppStore: ObservableObject {
     func saveAll() {
         let ud = UserDefaults.standard
         ud.set(currentUser.name,  forKey: UDKey.userName)
+        // Persistenter Name für „Willkommen zurück"-UI nach Logout
+        if !currentUser.name.isEmpty {
+            ud.set(currentUser.name, forKey: UDKey.lastKnownName)
+        }
         ud.set(currentUser.emoji, forKey: UDKey.userEmoji)
         if isAdmin { ud.set(true, forKey: UDKey.isAdmin) }  // Admin-Flag cachen
         ud.set(isUnderageBlocked, forKey: UDKey.isUnderageBlocked)
