@@ -304,13 +304,13 @@ struct FreundeView: View {
 
                 // Name + Alter + Drops+ Badge + Score
                 VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 4) {
                         Text(store.currentUser.name)
                             .font(.system(size: 17, weight: .bold, design: .rounded))
                             .foregroundColor(.textPrimary)
                             .lineLimit(1)
                         if let age = store.userAge {
-                            Text(", \(age)")
+                            Text("\(age)")
                                 .font(.system(size: 17, weight: .semibold, design: .rounded))
                                 .foregroundColor(.textSecondary)
                         }

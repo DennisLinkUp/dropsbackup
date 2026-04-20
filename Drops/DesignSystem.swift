@@ -440,6 +440,9 @@ struct ReliabilityScore {
         }
     }
     var badge: String {
+        // Neue User starten als „Drop-Entdecker" — erst mit einer realen Commit-Historie
+        // werden die höheren Tiers vergeben.
+        guard totalCommits > 0 else { return "Drop-Entdecker" }
         switch score {
         case 95...100: return "Drop-Legende"
         case 80..<95:  return "Stammgast"
