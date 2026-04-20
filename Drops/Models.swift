@@ -1348,7 +1348,15 @@ class AppStore: ObservableObject {
 
     private func loadAll() {
         let ud = UserDefaults.standard
-        if let name = ud.string(forKey: UDKey.userName), !name.isEmpty  { currentUser.name  = name }
+        if let name = ud.string(forKey: UDKey.userName), !name.isEmpty  {
+            currentUser.name  = name
+            // Migration: bestehende User haben den lastKnownName-Key evtl. nie
+            // bekommen (das Feature wurde nachträglich eingebaut). Jetzt nachholen,
+            // sonst wird „Willkommen zurück" nie gezeigt.
+            if (ud.string(forKey: UDKey.lastKnownName) ?? "").isEmpty {
+                ud.set(name, forKey: UDKey.lastKnownName)
+            }
+        }
         if let emoji = ud.string(forKey: UDKey.userEmoji), !emoji.isEmpty { currentUser.emoji = emoji }
         isUnderageBlocked = ud.bool(forKey: UDKey.isUnderageBlocked)
         isIdVerified      = ud.bool(forKey: UDKey.isIdVerified)
