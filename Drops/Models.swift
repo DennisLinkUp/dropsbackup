@@ -1231,21 +1231,36 @@ class AppStore: ObservableObject {
 
     func saveSelfie() {
         guard let img = selfieImage,
-              let data = img.jpegData(compressionQuality: 0.75) else { return }
+              let data = img.jpegData(compressionQuality: 0.75) else {
+            print("[selfie] saveSelfie: selfieImage ist nil oder JPEG-Encoding fehlgeschlagen")
+            return
+        }
+        print("[selfie] saveSelfie: \(data.count) bytes, lokal speichern…")
         // 1. Lokal speichern
         let localURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("drops_selfie.jpg")
         try? data.write(to: localURL)
         // 2. Firebase Storage Upload → URL in Firestore speichern
-        guard let uid = Auth.auth().currentUser?.uid else { return }
+        guard let uid = Auth.auth().currentUser?.uid else {
+            print("[selfie] saveSelfie: kein Auth-User → Upload übersprungen")
+            return
+        }
         let ref = Storage.storage().reference().child("profileImages/\(uid).jpg")
         let meta = StorageMetadata()
         meta.contentType = "image/jpeg"
         ref.putData(data, metadata: meta) { [weak self] _, error in
-            guard error == nil else { return }
+            if let error = error {
+                print("[selfie] Storage putData ✗: \(error.localizedDescription)")
+                return
+            }
+            print("[selfie] Storage putData ✓ — hole downloadURL…")
             ref.downloadURL { url, error in
-                guard let self = self, let url = url, error == nil else { return }
+                guard let self = self, let url = url, error == nil else {
+                    print("[selfie] downloadURL ✗: \(error?.localizedDescription ?? "kein URL")")
+                    return
+                }
                 let urlString = url.absoluteString
+                print("[selfie] Upload ✓ → \(urlString)")
                 // Firestore: users/{uid} → profileImageURL
                 Firestore.firestore()
                     .collection("users").document(uid)
