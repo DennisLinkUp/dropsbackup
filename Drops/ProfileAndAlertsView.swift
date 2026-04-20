@@ -1849,6 +1849,23 @@ struct ProfileView: View {
             } message: {
                 Text(deleteErrorMessage ?? "Unbekannter Fehler.")
             }
+            .overlay {
+                if isDeletingAccount {
+                    ZStack {
+                        Color.black.opacity(0.55).ignoresSafeArea()
+                        VStack(spacing: 14) {
+                            ProgressView().scaleEffect(1.4).tint(.white)
+                            Text("Konto wird gelöscht…")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.white.opacity(0.85))
+                        }
+                        .padding(28)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .animation(.easeInOut(duration: 0.2), value: isDeletingAccount)
             .alert(tr("account.age_restricted_title"), isPresented: $showTeensLockedInfo) {
                 Button(tr("form.understood"), role: .cancel) {}
             } message: {
