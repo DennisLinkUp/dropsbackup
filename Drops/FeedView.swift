@@ -58,21 +58,31 @@ struct FeedView: View {
         profileAccent = Color.brand
     }
 
-    /// Aktivitäts-Kategorien für den Chip-Filter. Key = Display-Name, Emoji +
+    /// Aktivitäts-Kategorien für den Chip-Filter. SF Symbol + Drop-Emojis +
     /// Keywords matchen gegen den activityName/emoji eines Drops.
-    private let activityCategories: [(key: String, emoji: String, keywords: [String])] = [
-        ("Kaffee", "☕️", ["kaffee", "coffee", "café", "cafe", "espresso", "latte"]),
-        ("Drink",  "🍺", ["drink", "drinks", "bier", "beer", "wein", "wine", "cocktail", "bar", "feierabend", "club", "party", "ausgehen"]),
-        ("Sport",  "🏃", ["sport", "fitness", "gym", "laufen", "run", "joggen", "jog", "fußball", "tennis", "basketball", "yoga", "fahrrad", "bike"]),
-        ("Essen",  "🍕", ["essen", "food", "lunch", "dinner", "pizza", "burger", "restaurant", "brunch", "sushi", "dönner"]),
-        ("Zocken", "🎮", ["zocken", "zock", "gaming", "game", "games", "spielen", "xbox", "playstation"])
+    private let activityCategories: [(key: String, icon: String, dropEmojis: [String], keywords: [String])] = [
+        ("Kaffee", "cup.and.saucer.fill",
+            ["☕️", "☕", "🧋"],
+            ["kaffee", "coffee", "café", "cafe", "espresso", "latte"]),
+        ("Drink",  "wineglass",
+            ["🍺", "🍻", "🍷", "🥂", "🍹", "🍸"],
+            ["drink", "drinks", "bier", "beer", "wein", "wine", "cocktail", "bar", "feierabend", "club", "party", "ausgehen"]),
+        ("Sport",  "figure.run",
+            ["🏃", "🏃‍♂️", "🏃‍♀️", "🏋️", "🧘", "⚽️", "🎾", "🏀", "🚴"],
+            ["sport", "fitness", "gym", "laufen", "run", "joggen", "jog", "fußball", "tennis", "basketball", "yoga", "fahrrad", "bike"]),
+        ("Essen",  "fork.knife",
+            ["🍕", "🍔", "🍣", "🍱", "🍜", "🌮", "🥗"],
+            ["essen", "food", "lunch", "dinner", "pizza", "burger", "restaurant", "brunch", "sushi", "dönner"]),
+        ("Zocken", "gamecontroller.fill",
+            ["🎮", "🕹️"],
+            ["zocken", "zock", "gaming", "game", "games", "spielen", "xbox", "playstation"])
     ]
 
-    /// Prüft ob ein Drop in die aktuell gewählte Kategorie passt (String-Match am activityName + Emoji).
+    /// Prüft ob ein Drop in die aktuell gewählte Kategorie passt.
     private func matchesActivityFilter(_ item: MapAnnotationItem) -> Bool {
         guard !store.activityCategoryFilter.isEmpty else { return true }
         guard let cat = activityCategories.first(where: { $0.key == store.activityCategoryFilter }) else { return true }
-        if item.emoji == cat.emoji { return true }
+        if cat.dropEmojis.contains(item.emoji) { return true }
         let activity = item.activity.lowercased()
         return cat.keywords.contains(where: { activity.contains($0) })
     }
@@ -99,54 +109,77 @@ struct FeedView: View {
         }
     }
 
-    /// Horizontale Chip-Leiste für den Aktivitäts-Filter.
+    /// Horizontale Chip-Leiste für den Aktivitäts-Filter — im App-Stil (Liquid Glass).
     private var activityFilterChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                activityChip(title: "Alle", emoji: nil, selected: store.activityCategoryFilter.isEmpty) {
+                activityChip(
+                    title: "Alle",
+                    icon: "square.grid.2x2.fill",
+                    selected: store.activityCategoryFilter.isEmpty
+                ) {
                     store.activityCategoryFilter = ""
                     store.saveAll()
                 }
                 ForEach(activityCategories, id: \.key) { cat in
-                    activityChip(title: cat.key, emoji: cat.emoji,
-                                 selected: store.activityCategoryFilter == cat.key) {
+                    activityChip(
+                        title: cat.key,
+                        icon: cat.icon,
+                        selected: store.activityCategoryFilter == cat.key
+                    ) {
                         store.activityCategoryFilter = (store.activityCategoryFilter == cat.key) ? "" : cat.key
                         store.saveAll()
                     }
                 }
             }
             .padding(.horizontal, 16)
+            .padding(.vertical, 2)
         }
     }
 
     @ViewBuilder
-    private func activityChip(title: String, emoji: String?, selected: Bool, action: @escaping () -> Void) -> some View {
+    private func activityChip(title: String, icon: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { action() }
         } label: {
-            HStack(spacing: 6) {
-                if let e = emoji {
-                    Text(e).font(.system(size: 14))
-                }
+            HStack(spacing: 7) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(selected ? .white : .brand)
                 Text(title)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(selected ? .white : .textPrimary)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                Capsule().fill(selected ? Color.brand : Color(UIColor.secondarySystemGroupedBackground))
-            )
-            .overlay(
-                Capsule().stroke(selected ? Color.clear : Color.textTertiary.opacity(0.2), lineWidth: 1)
-            )
-            .shadow(color: selected ? Color.brand.opacity(0.25) : .clear, radius: 6, y: 2)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 9)
+            .background {
+                if selected {
+                    Capsule()
+                        .fill(Color.brand)
+                        .shadow(color: Color.brand.opacity(0.35), radius: 8, y: 3)
+                } else {
+                    Capsule().fill(Color.clear)
+                }
+            }
+            .modifier(ChipGlassModifier(selected: selected))
         }
         .buttonStyle(.plain)
     }
 
-    /// Pill-Toggle „Nur weiblich" — blendet Drops von nicht-weiblichen Hosts aus.
-    /// Nur sichtbar für Userinnen mit userGender == "weiblich".
+    /// Liquid-Glass-Hintergrund für die nicht-selektierten Chips.
+    private struct ChipGlassModifier: ViewModifier {
+        let selected: Bool
+        func body(content: Content) -> some View {
+            if selected {
+                content
+            } else {
+                content.liquidGlassCapsule(shadowRadius: 6)
+            }
+        }
+    }
+
+    /// „Nur weiblich"-Toggle im App-Stil. Nutzt SF-Symbol `person.fill.and.arrow.left.and.arrow.right`
+    /// als generisches Filter-Icon statt des Unicode-♀.
     private var femaleOnlyFilterBar: some View {
         Button {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
@@ -155,8 +188,8 @@ struct FeedView: View {
             }
         } label: {
             HStack(spacing: 10) {
-                Text("♀")
-                    .font(.system(size: 15, weight: .bold))
+                Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(store.genderFilterEnabled ? .white : .brand)
                 Text("Nur weiblich")
                     .font(.system(size: 14, weight: .semibold))
@@ -169,18 +202,31 @@ struct FeedView: View {
                 }
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(store.genderFilterEnabled ? Color.brand : Color(UIColor.secondarySystemGroupedBackground))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(store.genderFilterEnabled ? Color.clear : Color.brand.opacity(0.25), lineWidth: 1)
-            )
-            .shadow(color: store.genderFilterEnabled ? Color.brand.opacity(0.3) : .clear, radius: 8, y: 3)
+            .padding(.vertical, 11)
+            .background {
+                if store.genderFilterEnabled {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.brand)
+                        .shadow(color: Color.brand.opacity(0.35), radius: 10, y: 4)
+                } else {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.clear)
+                }
+            }
+            .modifier(FemaleBarGlassModifier(selected: store.genderFilterEnabled))
         }
         .buttonStyle(.plain)
+    }
+
+    private struct FemaleBarGlassModifier: ViewModifier {
+        let selected: Bool
+        func body(content: Content) -> some View {
+            if selected {
+                content
+            } else {
+                content.liquidGlass(cornerRadius: 14, shadowRadius: 10)
+            }
+        }
     }
 
     // Freunde-Drops — nach Interessen-Match priorisiert
