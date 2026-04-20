@@ -411,6 +411,16 @@ struct FreundeView: View {
                         Button(action: {
                             RealtimeDBManager.shared.addFriend(theirUID: match.uid)
                             addedContactUIDs.insert(match.uid)
+                            // Direkt in die lokale Freunde-Liste aufnehmen, damit
+                            // der neue Kontakt sofort im Freunde-Tab erscheint.
+                            if !store.friends.contains(where: { $0.name == match.name }) {
+                                store.friends.append(User(
+                                    name: match.name,
+                                    emoji: "👋",
+                                    isAvailable: false,
+                                    statusMessage: tr("profile.newly_added")
+                                ))
+                            }
                         }) {
                             Text("Hinzufügen")
                                 .font(.system(size: 13, weight: .semibold))
@@ -1457,6 +1467,15 @@ struct AddFromContactsSheet: View {
                                 ContactMatchRow(match: match, isAdded: addedUIDs.contains(match.uid)) {
                                     RealtimeDBManager.shared.addFriend(theirUID: match.uid)
                                     addedUIDs.insert(match.uid)
+                                    // Direkt in die lokale Freunde-Liste aufnehmen
+                                    if !store.friends.contains(where: { $0.name == match.name }) {
+                                        store.friends.append(User(
+                                            name: match.name,
+                                            emoji: "👋",
+                                            isAvailable: false,
+                                            statusMessage: tr("profile.newly_added")
+                                        ))
+                                    }
                                 }
                                 if idx < filtered.count - 1 {
                                     Divider().padding(.leading, 60)

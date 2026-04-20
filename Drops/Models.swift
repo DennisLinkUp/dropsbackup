@@ -945,7 +945,12 @@ class AppStore: ObservableObject {
         // ── Drops+ Entitlements prüfen ────────────────────────────────────
         Task {
             await DropsStoreManager.shared.refreshEntitlements()
-            self.isPlusUser = DropsStoreManager.shared.isPlusUser
+            // NUR auf true hochsetzen — nie überschreiben.
+            // Sonst würde der Admin-gewährte Plus-Status (aus Firebase, ohne StoreKit-Purchase)
+            // vom refreshEntitlements()-Callback auf false zurückgesetzt.
+            if DropsStoreManager.shared.isPlusUser {
+                self.isPlusUser = true
+            }
         }
 
         // ── Drops+ Status live synchronisieren (nach Kauf / Widerruf / Restore) ──
@@ -1088,6 +1093,7 @@ class AppStore: ObservableObject {
             print("[deleteAccount] Schritt 3: Lokale Daten + Logout…")
             UserDefaults.standard.removeObject(forKey: "hasOnboarded")
             UserDefaults.standard.removeObject(forKey: UDKey.lastKnownName)
+            UserDefaults.standard.removeObject(forKey: "hasSeenWelcome")
             self.clearLocalData()
             print("[deleteAccount] Fertig — isAuthenticated=\(self.isAuthenticated)")
 
