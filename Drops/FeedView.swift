@@ -152,34 +152,19 @@ struct FeedView: View {
             }
             .padding(.horizontal, 13)
             .padding(.vertical, 9)
-            .background {
-                if selected {
-                    Capsule()
-                        .fill(Color.brand)
-                        .shadow(color: Color.brand.opacity(0.35), radius: 8, y: 3)
-                } else {
-                    Capsule().fill(Color.clear)
-                }
-            }
-            .modifier(ChipGlassModifier(selected: selected))
+            .background(
+                Capsule().fill(
+                    selected
+                        ? Color.brand
+                        : Color(UIColor.secondarySystemGroupedBackground)
+                )
+            )
+            .shadow(color: selected ? Color.brand.opacity(0.30) : .clear, radius: 8, y: 3)
         }
         .buttonStyle(.plain)
     }
 
-    /// Liquid-Glass-Hintergrund für die nicht-selektierten Chips.
-    private struct ChipGlassModifier: ViewModifier {
-        let selected: Bool
-        func body(content: Content) -> some View {
-            if selected {
-                content
-            } else {
-                content.liquidGlassCapsule(shadowRadius: 6)
-            }
-        }
-    }
-
-    /// „Nur weiblich"-Toggle im App-Stil. Nutzt SF-Symbol `person.fill.and.arrow.left.and.arrow.right`
-    /// als generisches Filter-Icon statt des Unicode-♀.
+    /// „Nur weiblich"-Toggle im App-Stil.
     private var femaleOnlyFilterBar: some View {
         Button {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
@@ -203,30 +188,17 @@ struct FeedView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 11)
-            .background {
-                if store.genderFilterEnabled {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.brand)
-                        .shadow(color: Color.brand.opacity(0.35), radius: 10, y: 4)
-                } else {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.clear)
-                }
-            }
-            .modifier(FemaleBarGlassModifier(selected: store.genderFilterEnabled))
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(
+                        store.genderFilterEnabled
+                            ? Color.brand
+                            : Color(UIColor.secondarySystemGroupedBackground)
+                    )
+            )
+            .shadow(color: store.genderFilterEnabled ? Color.brand.opacity(0.30) : .clear, radius: 10, y: 4)
         }
         .buttonStyle(.plain)
-    }
-
-    private struct FemaleBarGlassModifier: ViewModifier {
-        let selected: Bool
-        func body(content: Content) -> some View {
-            if selected {
-                content
-            } else {
-                content.liquidGlass(cornerRadius: 14, shadowRadius: 10)
-            }
-        }
     }
 
     // Freunde-Drops — nach Interessen-Match priorisiert

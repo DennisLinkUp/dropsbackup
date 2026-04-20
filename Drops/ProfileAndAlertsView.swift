@@ -248,14 +248,34 @@ struct FreundeView: View {
                 ZStack(alignment: .bottomLeading) {
                     Button(action: { showImageSourceSheet = true }) {
                         ZStack(alignment: .bottomTrailing) {
-                            if let img = store.selfieImage {
-                                Image(uiImage: img).resizable().scaledToFill()
-                                    .frame(width: 70, height: 70).clipShape(Circle())
-                                    .overlay(Circle().stroke(Color.white.opacity(0.25), lineWidth: 1.5))
-                            } else {
-                                RemoteProfileImage(url: store.profileImageURL, fallbackEmoji: store.currentUser.emoji,
-                                                   size: 70, strokeColor: Color.white.opacity(0.18))
+                            // Gold-Rand für Drops+ User, sonst dezenter Standard-Stroke
+                            let plusRing = LinearGradient(
+                                colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                            )
+                            let ringWidth: CGFloat = store.isDropsPlusActive ? 2.5 : 1.5
+                            Group {
+                                if let img = store.selfieImage {
+                                    Image(uiImage: img).resizable().scaledToFill()
+                                        .frame(width: 70, height: 70).clipShape(Circle())
+                                } else {
+                                    RemoteProfileImage(url: store.profileImageURL,
+                                                       fallbackEmoji: store.currentUser.emoji,
+                                                       size: 70, strokeColor: .clear)
+                                }
                             }
+                            .overlay(
+                                Circle()
+                                    .strokeBorder(
+                                        store.isDropsPlusActive
+                                            ? AnyShapeStyle(plusRing)
+                                            : AnyShapeStyle(Color.white.opacity(0.25)),
+                                        lineWidth: ringWidth
+                                    )
+                            )
+                            .shadow(color: store.isDropsPlusActive ? Color(hex: "f59e0b").opacity(0.35) : .clear,
+                                    radius: 8, y: 2)
+
                             // Kamera-Badge
                             ZStack {
                                 Circle().fill(Color.brand).frame(width: 22, height: 22)
@@ -282,12 +302,38 @@ struct FreundeView: View {
                     .offset(x: -2, y: 2)
                 }
 
-                // Name + Score + Badge
+                // Name + Alter + Drops+ Badge + Score
                 VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 5) {
+                    HStack(spacing: 6) {
                         Text(store.currentUser.name)
                             .font(.system(size: 17, weight: .bold, design: .rounded))
                             .foregroundColor(.textPrimary)
+                            .lineLimit(1)
+                        if let age = store.userAge {
+                            Text(", \(age)")
+                                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                                .foregroundColor(.textSecondary)
+                        }
+                        if store.isDropsPlusActive {
+                            // Drops+ Badge — goldene Blitz-Pille
+                            HStack(spacing: 3) {
+                                Image(systemName: "bolt.fill")
+                                    .font(.system(size: 9, weight: .bold))
+                                Text("PLUS")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .kerning(0.4)
+                            }
+                            .foregroundStyle(.black)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(
+                                LinearGradient(
+                                    colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
+                                    startPoint: .leading, endPoint: .trailing
+                                ),
+                                in: Capsule()
+                            )
+                            .shadow(color: Color(hex: "f59e0b").opacity(0.35), radius: 4, y: 1)
+                        }
                     }
                     // Score-Pill — tappbar für Erklärung
                     Button(action: { showScoreInfo = true }) {
