@@ -1741,8 +1741,8 @@ struct ProfileView: View {
                                         }
                                     }
                                     Text(store.isPlusUser
-                                         ? "Boost · Großer Radius · Score-Schutz"
-                                         : "Boost · Radius bis ∞ · Score-Schutz")
+                                         ? "Boost · Großer Radius · Wer hat geschaut"
+                                         : "Boost · Radius bis ∞ · Wer hat geschaut")
                                         .font(.system(size: 12))
                                         .foregroundStyle(.secondary)
                                 }
@@ -1773,10 +1773,12 @@ struct ProfileView: View {
                             DropsPlusView()
                         }
 
-                        // Drop-Statistiken (Drops+ Feature)
-                        DropsPlusStatsCard(showPaywall: $showDropsPlus)
-                            .environmentObject(store)
-                            .padding(.horizontal, 16)
+                        // Drop-Statistiken: als Drops+ Feature angekündigt, kommt mit einem
+                        // späteren Update. UI-Komponente (DropsPlusStatsCard) ist vorhanden
+                        // und kann durch Entkommentieren reaktiviert werden.
+                        // DropsPlusStatsCard(showPaywall: $showDropsPlus)
+                        //     .environmentObject(store)
+                        //     .padding(.horizontal, 16)
 
                         // Sichtbarkeit + Mitteilungen
                         settingsSection(icon: "location.fill", color: Color(UIColor.systemGreen), title: tr("settings.visibility")) {

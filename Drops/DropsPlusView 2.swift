@@ -100,42 +100,61 @@ struct DropsPlusView: View {
     // MARK: - Features
 
     private var featuresSection: some View {
-        VStack(spacing: 12) {
-            PlusFeatureRow(
-                icon: "bolt.circle.fill",
-                title: "Drop boosten",
-                description: "Hebe deinen Drop mit goldenem Rahmen auf der Karte hervor — mehr Sichtbarkeit, mehr Teilnehmer."
-            )
-            PlusFeatureRow(
-                icon: "scope",
-                title: "Größerer Suchradius",
-                description: "Finde Drops bis zu 25 km oder unbegrenzt stadtweit — Free-User sind auf 2 km begrenzt."
-            )
-            PlusFeatureRow(
-                icon: "shield.fill",
-                title: "Kein Zuverlässigkeits-Abzug",
-                description: "Mal kurzfristig doch nicht erschienen? Als Drops+ Mitglied bleibt dein Score makellos."
-            )
-            PlusFeatureRow(
-                icon: "arrow.up.forward.circle.fill",
-                title: "Priority Listing",
-                description: "Deine Drops werden in der Nähe-Ansicht zuerst angezeigt — auch ohne aktiven Boost."
-            )
-            PlusFeatureRow(
-                icon: "clock.arrow.circlepath",
-                title: "Verlängerung ohne Cooldown",
-                description: "Verlängere deinen Drop so oft du willst — keine Wartezeit zwischen den Verlängerungen."
-            )
-            PlusFeatureRow(
-                icon: "chart.bar.fill",
-                title: "Drop-Statistiken",
-                description: "Siehe deine Gesamt-Joins, Zuverlässigkeits-Verlauf und erstellte Drops auf einen Blick."
-            )
-            PlusFeatureRow(
-                icon: "heart.fill",
-                title: "Drops unterstützen",
-                description: "Du hilfst uns, die App dauerhaft kostenlos und werbefrei für alle zu halten."
-            )
+        VStack(spacing: 18) {
+            VStack(spacing: 12) {
+                PlusFeatureRow(
+                    icon: "bolt.circle.fill",
+                    title: "Drop boosten",
+                    description: "Hebe deinen Drop mit goldenem Rahmen auf der Karte hervor — mehr Sichtbarkeit, mehr Teilnehmer.",
+                    comingSoon: false
+                )
+                PlusFeatureRow(
+                    icon: "scope",
+                    title: "Größerer Suchradius",
+                    description: "Finde Drops bis zu 25 km oder unbegrenzt stadtweit — Free-User sind auf 2 km begrenzt.",
+                    comingSoon: false
+                )
+                PlusFeatureRow(
+                    icon: "eye.fill",
+                    title: "Wer hat geschaut",
+                    description: "Sieh welche Personen dein Drop geöffnet haben — mit Name, Alter und Zeitpunkt.",
+                    comingSoon: false
+                )
+            }
+
+            // ── Bald verfügbar ────────────────────────────────────────────
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Bald verfügbar")
+                        .font(.system(size: 11, weight: .bold))
+                        .kerning(0.8)
+                }
+                .foregroundColor(.white.opacity(0.45))
+                .padding(.leading, 4)
+
+                VStack(spacing: 12) {
+                    PlusFeatureRow(
+                        icon: "shield.fill",
+                        title: "Kein Zuverlässigkeits-Abzug",
+                        description: "Score-Schutz bei kurzfristigen Absagen.",
+                        comingSoon: true
+                    )
+                    PlusFeatureRow(
+                        icon: "clock.arrow.circlepath",
+                        title: "Verlängerung ohne Cooldown",
+                        description: "Drops beliebig oft verlängern, ohne Wartezeit.",
+                        comingSoon: true
+                    )
+                    PlusFeatureRow(
+                        icon: "chart.bar.fill",
+                        title: "Drop-Statistiken",
+                        description: "Joins, Score-Verlauf und erstellte Drops auf einen Blick.",
+                        comingSoon: true
+                    )
+                }
+            }
         }
     }
 
@@ -295,10 +314,7 @@ struct DropsPlusSuccessView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     SuccessFeatureLine(icon: "bolt.circle.fill", text: "Drop-Boost freigeschaltet")
                     SuccessFeatureLine(icon: "scope", text: "Suchradius bis unbegrenzt")
-                    SuccessFeatureLine(icon: "shield.fill", text: "Score-Schutz aktiv")
-                    SuccessFeatureLine(icon: "arrow.up.forward.circle.fill", text: "Priority Listing aktiv")
-                    SuccessFeatureLine(icon: "clock.arrow.circlepath", text: "Keine Verlängerungs-Cooldowns")
-                    SuccessFeatureLine(icon: "chart.bar.fill", text: "Drop-Statistiken verfügbar")
+                    SuccessFeatureLine(icon: "eye.fill", text: "Du siehst, wer deinen Drop geöffnet hat")
                 }
                 .padding(18)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -346,36 +362,55 @@ private struct PlusFeatureRow: View {
     let icon: String
     let title: String
     let description: String
+    var comingSoon: Bool = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            Image(systemName: icon)
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(
-                    LinearGradient(colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing)
-                )
-                .frame(width: 48, height: 48)
-                .background(Color(hex: "f59e0b").opacity(0.10))
-                .clipShape(RoundedRectangle(cornerRadius: 13))
+            ZStack {
+                Image(systemName: icon)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(
+                        comingSoon
+                            ? AnyShapeStyle(Color.white.opacity(0.35))
+                            : AnyShapeStyle(LinearGradient(
+                                colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                              ))
+                    )
+            }
+            .frame(width: 48, height: 48)
+            .background(
+                comingSoon ? Color.white.opacity(0.04) : Color(hex: "f59e0b").opacity(0.10)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 13))
 
             VStack(alignment: .leading, spacing: 5) {
-                Text(title)
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(.white)
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(comingSoon ? .white.opacity(0.6) : .white)
+                    if comingSoon {
+                        Text("BALD")
+                            .font(.system(size: 9, weight: .bold))
+                            .kerning(0.4)
+                            .foregroundColor(.black.opacity(0.7))
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Color.white.opacity(0.55), in: Capsule())
+                    }
+                }
                 Text(description)
                     .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(.white.opacity(comingSoon ? 0.4 : 0.72))
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
         .padding(16)
-        .background(Color.white.opacity(0.04))
+        .background(Color.white.opacity(comingSoon ? 0.02 : 0.04))
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+                .stroke(Color.white.opacity(comingSoon ? 0.04 : 0.07), lineWidth: 1)
         )
     }
 }

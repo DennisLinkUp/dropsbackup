@@ -848,7 +848,7 @@ struct CreateDropView: View {
                     Text("Mehr Leute erreichen mit Drops+")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundColor(.textPrimary)
-                    Text("Boost auf der Karte · oben im Feed · sieh wer geschaut hat")
+                    Text("Boost auf der Karte · größerer Suchradius · sieh wer geschaut hat")
                         .font(.system(size: 11))
                         .foregroundColor(.textSecondary)
                         .lineLimit(2)

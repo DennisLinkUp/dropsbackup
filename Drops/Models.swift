@@ -1500,9 +1500,8 @@ class AppStore: ObservableObject {
             let elapsed = Date().timeIntervalSince(req.createdAt)
             if elapsed >= 12 * 60 && elapsed < 30 * 60 {
                 reliabilityScore.totalCommits += 1
-                if !isDropsPlusActive {
-                    reliabilityScore.noShows += 1   // Mitten drin abgebrochen = No-Show
-                }                                   // Drops+: kein Abzug
+                // Score-Schutz für Drops+ ist als Feature angekündigt aber noch nicht aktiv
+                reliabilityScore.noShows += 1   // Mitten drin abgebrochen = No-Show
                 saveAll()                           // Score lokal persistieren
                 pushReliabilityScoreToFirestore()   // Score für andere sichtbar machen
             }
@@ -1593,9 +1592,8 @@ class AppStore: ObservableObject {
             // Als nicht erschienen markieren
             encounters[i].denied = true
             reliabilityScore.totalCommits += 1
-            if !isDropsPlusActive {
-                reliabilityScore.noShows += 1   // Drops+: kein Abzug
-            }
+            // Score-Schutz für Drops+ ist als Feature angekündigt aber noch nicht aktiv
+            reliabilityScore.noShows += 1
             changed = true
         }
         if changed {
@@ -1909,9 +1907,8 @@ class AppStore: ObservableObject {
 
             // Weit weg → No-Show
             reliabilityScore.totalCommits += 1
-            if !isDropsPlusActive {
-                reliabilityScore.noShows += 1   // Drops+: kein Abzug
-            }
+            // Score-Schutz für Drops+ ist als Feature angekündigt aber noch nicht aktiv
+            reliabilityScore.noShows += 1
             saveAll()
             pushReliabilityScoreToFirestore()
             return

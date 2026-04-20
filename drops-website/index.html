@@ -1335,8 +1335,32 @@
   }
   .plus-grid {
     display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
-    margin-bottom: 40px;
+    margin-bottom: 24px;
   }
+  .plus-soon-label {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.45);
+    text-align: center;
+    margin: 12px 0 14px;
+    display: flex; align-items: center; gap: 10px;
+    justify-content: center;
+  }
+  .plus-soon-label::before, .plus-soon-label::after {
+    content: ""; flex: 0 1 80px; height: 1px;
+    background: rgba(255,255,255,0.08);
+  }
+  .plus-grid-soon { margin-bottom: 40px; }
+  .plus-feature-soon {
+    opacity: 0.6;
+  }
+  .plus-feature-soon:hover {
+    opacity: 0.75;
+    border-color: rgba(255,255,255,0.12);
+    transform: none;
+  }
+  .plus-feature-soon h3 { color: rgba(255,255,255,0.75); }
+  .plus-feature-soon p { color: rgba(255,255,255,0.38); }
   .plus-feature {
     padding: 22px; border-radius: 16px;
     background: rgba(255,255,255,0.04);
@@ -1419,38 +1443,42 @@
       <div class="plus-feature">
         <div class="plus-feature-icon">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-            <path d="M12 2l8 4v6c0 5-3.5 9-8 10-4.5-1-8-5-8-10V6l8-4z" stroke="#f59e0b" stroke-width="1.8" fill="rgba(245,158,11,0.15)" stroke-linejoin="round"/>
+            <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" stroke="#f59e0b" stroke-width="1.8" fill="rgba(245,158,11,0.15)"/>
+            <circle cx="12" cy="12" r="3" stroke="#f59e0b" stroke-width="1.8" fill="none"/>
+          </svg>
+        </div>
+        <h3>Wer hat geschaut</h3>
+        <p>Sieh welche Personen dein Drop geöffnet haben — mit Name, Alter und Zeitpunkt.</p>
+      </div>
+    </div>
+
+    <div class="plus-soon-label reveal">Bald verfügbar</div>
+    <div class="plus-grid plus-grid-soon reveal">
+      <div class="plus-feature plus-feature-soon">
+        <div class="plus-feature-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <path d="M12 2l8 4v6c0 5-3.5 9-8 10-4.5-1-8-5-8-10V6l8-4z" stroke="rgba(255,255,255,0.45)" stroke-width="1.8" fill="none" stroke-linejoin="round"/>
           </svg>
         </div>
         <h3>Score-Schutz</h3>
         <p>Mal doch nicht erschienen? Dein Zuverlässigkeits-Score bleibt makellos.</p>
       </div>
-      <div class="plus-feature">
+      <div class="plus-feature plus-feature-soon">
         <div class="plus-feature-icon">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-            <path d="M7 4l-4 8 4 8h10l4-8-4-8z" stroke="#f59e0b" stroke-width="1.8" fill="none" stroke-linejoin="round"/>
-            <path d="M9 12h6M12 9v6" stroke="#f59e0b" stroke-width="1.8" stroke-linecap="round"/>
-          </svg>
-        </div>
-        <h3>Priority Listing</h3>
-        <p>Deine Drops erscheinen im Feed ganz oben — mehr Sichtbarkeit, mehr Joins.</p>
-      </div>
-      <div class="plus-feature">
-        <div class="plus-feature-icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-            <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" stroke="#f59e0b" stroke-width="1.8" stroke-linecap="round"/>
-            <circle cx="12" cy="12" r="3" stroke="#f59e0b" stroke-width="1.8" fill="none"/>
+            <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" stroke="rgba(255,255,255,0.45)" stroke-width="1.8" stroke-linecap="round"/>
+            <circle cx="12" cy="12" r="3" stroke="rgba(255,255,255,0.45)" stroke-width="1.8" fill="none"/>
           </svg>
         </div>
         <h3>Keine Cooldowns</h3>
         <p>Verlängere deinen Drop so oft du willst — keine Wartezeit.</p>
       </div>
-      <div class="plus-feature">
+      <div class="plus-feature plus-feature-soon">
         <div class="plus-feature-icon">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-            <rect x="3" y="14" width="3" height="7" rx="1" fill="#f59e0b" opacity=".5"/>
-            <rect x="9" y="10" width="3" height="11" rx="1" fill="#f59e0b" opacity=".7"/>
-            <rect x="15" y="6" width="3" height="15" rx="1" fill="#f59e0b"/>
+            <rect x="3" y="14" width="3" height="7" rx="1" fill="rgba(255,255,255,0.45)"/>
+            <rect x="9" y="10" width="3" height="11" rx="1" fill="rgba(255,255,255,0.45)"/>
+            <rect x="15" y="6" width="3" height="15" rx="1" fill="rgba(255,255,255,0.45)"/>
           </svg>
         </div>
         <h3>Statistiken</h3>
@@ -1543,7 +1571,7 @@
         <div class="check-item"><span class="check-tick">✓</span>Push-Benachrichtigungen bei Ablauf</div>
         <div class="check-item"><span class="check-tick">✓</span>Bluetooth Näherungs-Erkennung</div>
         <div class="check-item"><span class="check-tick">✓</span>Echtzeit-Synchronisation</div>
-        <div class="check-item"><span class="check-tick">✓</span>Drops+ Premium (Boost, größerer Radius, Score-Schutz)</div>
+        <div class="check-item"><span class="check-tick">✓</span>Drops+ Premium (Boost, größerer Radius, wer hat geschaut)</div>
         <div class="check-item"><span class="check-tick">✓</span>München Servicegebiet mit Geofencing</div>
       </div>
     </div>
