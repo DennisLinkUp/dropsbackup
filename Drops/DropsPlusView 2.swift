@@ -239,50 +239,53 @@ struct DropsPlusSuccessView: View {
 
     var body: some View {
         ZStack {
-            // Dunkler, goldener Glow-Hintergrund
-            RadialGradient(
-                colors: [Color(hex: "f59e0b").opacity(0.22), Color.black.opacity(0.94)],
-                center: .center,
-                startRadius: 20, endRadius: 500
+            // Dezent abgedunkelter Hintergrund — Glow nur um das Icon, nicht ganzflächig
+            LinearGradient(
+                colors: [Color(hex: "0a0a0a"), Color(hex: "1c1200"), Color(hex: "0a0a0a")],
+                startPoint: .top, endPoint: .bottom
             )
             .ignoresSafeArea()
 
             VStack(spacing: 24) {
-                // Icon
+                // Icon mit engem Glow (reicht nicht bis zum Titel)
                 ZStack {
                     Circle()
                         .fill(
                             RadialGradient(
-                                colors: [Color(hex: "f59e0b").opacity(0.4), .clear],
+                                colors: [Color(hex: "f59e0b").opacity(0.35), .clear],
                                 center: .center,
-                                startRadius: 0, endRadius: 90
+                                startRadius: 0, endRadius: 70
                             )
                         )
-                        .frame(width: 160, height: 160)
+                        .frame(width: 140, height: 140)
                     Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 88, weight: .semibold))
+                        .font(.system(size: 80, weight: .semibold))
                         .foregroundStyle(
                             LinearGradient(
                                 colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
                                 startPoint: .top, endPoint: .bottom
                             )
                         )
-                        .shadow(color: Color(hex: "f59e0b").opacity(0.6), radius: 20)
                 }
 
                 VStack(spacing: 10) {
-                    Text("Willkommen bei Drops+")
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                    // Titel in Weiß für maximalen Kontrast — „Drops+" als goldener Akzent
+                    (Text("Willkommen bei ")
+                        .foregroundColor(.white)
+                     + Text("Drops+")
                         .foregroundStyle(
                             LinearGradient(
                                 colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
-                                startPoint: .topLeading, endPoint: .bottomTrailing
+                                startPoint: .leading, endPoint: .trailing
                             )
                         )
+                    )
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .multilineTextAlignment(.center)
 
                     Text("Alle Premium-Features sind ab jetzt aktiv.\nDanke, dass du Drops unterstützt.")
                         .font(.system(size: 15))
-                        .foregroundStyle(.white.opacity(0.65))
+                        .foregroundColor(.white.opacity(0.75))
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                 }
