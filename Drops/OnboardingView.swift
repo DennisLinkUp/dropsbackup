@@ -1054,25 +1054,42 @@ struct OnboardingView: View {
                 if let email = email {
                     UserDefaults.standard.set(email.lowercased(), forKey: "ud_appleEmail")
                 }
-                // Firebase weiß sicher ob der Account neu ist.
-                // isNewUser = false → Account existiert definitiv → sofort einloggen, kein DB-Check nötig.
-                if !isNewUser {
-                    handleAppleSignInResult(exists: true)
-                    return
-                }
-                // Nur bei echten Neuzugängen: DB prüfen (mit Timeout als Netz-Absicherung)
-                var appleCheckDone = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
-                    guard !appleCheckDone else { return }
-                    appleCheckDone = true
-                    try? Auth.auth().signOut()
-                    showNotFoundAlert = true
-                }
-                RealtimeDBManager.shared.hasExistingProfile { exists in
-                    DispatchQueue.main.async {
+
+                // Tombstone-Check: Wurde dieser Apple-Account in der App schon mal
+                // gelöscht? Dann als Neuregistrierung behandeln — auch wenn Firebase
+                // den User weiterhin als „bekannt" meldet (isNewUser = false).
+                Task { @MainActor in
+                    var wasDeleted = false
+                    if let uid = Auth.auth().currentUser?.uid {
+                        wasDeleted = await RealtimeDBManager.shared.consumeDeletionTombstone(uid: uid)
+                    }
+                    if wasDeleted {
+                        // Frische Registrierung erzwingen
+                        isLoginMode = false
+                        withAnimation(.spring(response: 0.4)) { step = .profile }
+                        return
+                    }
+
+                    // Firebase weiß sicher ob der Account neu ist.
+                    // isNewUser = false → Account existiert definitiv → sofort einloggen.
+                    if !isNewUser {
+                        handleAppleSignInResult(exists: true)
+                        return
+                    }
+                    // Nur bei echten Neuzugängen: DB prüfen (mit Timeout als Netz-Absicherung)
+                    var appleCheckDone = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
                         guard !appleCheckDone else { return }
                         appleCheckDone = true
-                        handleAppleSignInResult(exists: exists)
+                        try? Auth.auth().signOut()
+                        showNotFoundAlert = true
+                    }
+                    RealtimeDBManager.shared.hasExistingProfile { exists in
+                        DispatchQueue.main.async {
+                            guard !appleCheckDone else { return }
+                            appleCheckDone = true
+                            handleAppleSignInResult(exists: exists)
+                        }
                     }
                 }
             },

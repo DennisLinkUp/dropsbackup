@@ -259,6 +259,25 @@ class RealtimeDBManager: ObservableObject {
         try? await Storage.storage().reference().child("profileImages/\(uid).jpg").delete()
     }
 
+    /// Setzt einen Tombstone-Marker nach Konto-Löschung. Wenn sich der User erneut
+    /// mit derselben Apple-ID einloggt (gleiche uid), erkennt die App das anhand
+    /// dieses Markers und behandelt den Login als Neuregistrierung.
+    func markAccountDeleted(uid: String) async {
+        try? await db.child("deletedAccounts").child(uid).setValue([
+            "deletedAt": ServerValue.timestamp()
+        ])
+    }
+
+    /// Prüft ob ein Tombstone existiert und entfernt ihn (für den resurrect-Flow).
+    /// Gibt `true` zurück wenn der Account als gelöscht markiert war — der Caller
+    /// muss dann das Onboarding neu starten.
+    func consumeDeletionTombstone(uid: String) async -> Bool {
+        let ref = db.child("deletedAccounts").child(uid)
+        guard let snap = try? await ref.getData(), snap.exists() else { return false }
+        try? await ref.removeValue()
+        return true
+    }
+
     /// Schreibt den Drops+ Status des aktuell eingeloggten Users nach Firebase.
     /// Wird nach erfolgreichem IAP-Kauf oder Entitlement-Refresh aufgerufen.
     func setMyPlusStatus(_ isPlus: Bool) {
