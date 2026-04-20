@@ -14,7 +14,8 @@
       "Bash(awk '/src=\"data:image/ { print NR }' drops-website/index.html)",
       "Bash(awk ' *)",
       "Bash(mv /tmp/index_new.html drops-website/index.html)",
-      "Bash(awk 'NR>=1140 && NR<=1175' drops-website/index.html)"
+      "Bash(awk 'NR>=1140 && NR<=1175' drops-website/index.html)",
+      "Bash(awk -F: '{print $1, $2}')"
     ]
   }
 }
