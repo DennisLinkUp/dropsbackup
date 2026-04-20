@@ -26,17 +26,17 @@ import { initializeApp } from "firebase-admin/app";
 import { getDatabase } from "firebase-admin/database";
 import { getAuth } from "firebase-admin/auth";
 
-initializeApp();
-
 const DB_URL = "https://drops-858d1-default-rtdb.europe-west1.firebasedatabase.app";
 const TZ = "Europe/Berlin";
+
+initializeApp({ databaseURL: DB_URL });
 
 // ── Main entry — scheduled once per day ──────────────────────────────────────
 
 export const dailyCleanup = onSchedule(
     { schedule: "0 3 * * *", timeZone: TZ, region: "europe-west1", timeoutSeconds: 540 },
     async () => {
-        const db = getDatabase(undefined, DB_URL);
+        const db = getDatabase();
         const auth = getAuth();
         const now = Date.now();
 
@@ -169,7 +169,7 @@ async function collectExpiredTombstones(db: any, now: number): Promise<string[]>
 //    tombstone itself (it's fulfilled its purpose).
 async function deleteAuthAccountsForTombstones(auth: any, uids: string[]): Promise<number> {
     if (uids.length === 0) return 0;
-    const db = getDatabase(undefined, DB_URL);
+    const db = getDatabase();
     const updates: Record<string, null> = {};
     let deleted = 0;
     for (const uid of uids) {
