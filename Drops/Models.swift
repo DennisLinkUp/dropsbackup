@@ -932,6 +932,23 @@ class AppStore: ObservableObject {
             }
         }
 
+        // ── Freundesliste aus Firebase laden ──────────────────────────────
+        // store.friends ist in-memory only, muss also bei jedem App-Start aus
+        // friends/{myUID} + users/{theirUID} neu aufgebaut werden.
+        if let uid = FirebaseAuth.Auth.auth().currentUser?.uid {
+            Task { @MainActor in
+                let snapshots = await RealtimeDBManager.shared.loadMyFriends(ownerUID: uid)
+                for snap in snapshots where !self.friends.contains(where: { $0.name == snap.name }) {
+                    self.friends.append(User(
+                        name: snap.name,
+                        emoji: "👋",
+                        isAvailable: false,
+                        statusMessage: ""
+                    ))
+                }
+            }
+        }
+
         // ── Veraltete Drop-Benachrichtigungen aus vorherigen Sessions löschen ─
         // Alte UNCalendarNotificationTrigger würden sonst feuern; neue werden nach
         // der Rehydration oben bzw. bei createDrop/joinDrop neu eingeplant.

@@ -921,6 +921,44 @@ class RealtimeDBManager: ObservableObject {
         db.child("friends").child(myUID).child(theirUID).setValue(true)
         db.child("friends").child(theirUID).child(myUID).setValue(true)
     }
+
+    /// Entfernt gegenseitige Freundschaft in Firebase.
+    func removeFriend(theirUID: String) {
+        guard let myUID = Auth.auth().currentUser?.uid else { return }
+        db.child("friends").child(myUID).child(theirUID).removeValue()
+        db.child("friends").child(theirUID).child(myUID).removeValue()
+    }
+
+    /// Snapshot eines Freundes — minimal ausgefüllt aus `users/{uid}` für die Freunde-Liste.
+    struct FriendSnapshot {
+        let uid: String
+        let name: String
+    }
+
+    /// Lädt die Freundesliste des aktuellen Users aus Firebase.
+    /// Schritt 1: `friends/{myUID}` → Liste der UIDs.
+    /// Schritt 2: für jede UID `users/{theirUID}/name` holen.
+    func loadMyFriends(ownerUID: String) async -> [FriendSnapshot] {
+        guard let friendsSnap = try? await db.child("friends").child(ownerUID).getData(),
+              friendsSnap.exists() else { return [] }
+        var uids: [String] = []
+        for child in friendsSnap.children {
+            guard let c = child as? DataSnapshot else { continue }
+            uids.append(c.key)
+        }
+        // Namen parallel laden (Limit auf 50 für Performance)
+        var results: [FriendSnapshot] = []
+        for uid in uids.prefix(50) {
+            guard let userSnap = try? await db.child("users").child(uid).getData(),
+                  let dict = userSnap.value as? [String: Any] else { continue }
+            // Soft-deleted Accounts überspringen
+            if (dict["isDeleted"] as? Bool) == true { continue }
+            let name = (dict["name"] as? String) ?? ""
+            guard !name.isEmpty else { continue }
+            results.append(FriendSnapshot(uid: uid, name: name))
+        }
+        return results.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
 }
 
 struct AdminStats {
