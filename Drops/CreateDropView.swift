@@ -667,6 +667,13 @@ struct CreateDropView: View {
                         ) { selectedLocationType = .pin; showPinMap = true }
                     }
 
+                    // ── Drops+ Upsell (nur für Free-User, vor CTA) ──────────
+                    if !store.isDropsPlusActive && !created {
+                        plusReachUpsell
+                            .padding(.horizontal, 16)
+                            .padding(.top, 4)
+                    }
+
                     // ── CTA ────────────────────────────────────────────────
                     if created {
                         HStack(spacing: 10) {
@@ -806,6 +813,69 @@ struct CreateDropView: View {
         }
         .buttonStyle(.plain)
         .animation(.spring(response: 0.2), value: isSelected)
+    }
+
+    // MARK: - Drops+ Reichweite-Upsell (nur Free-User)
+
+    /// Subtile Gold-Karte direkt vor dem „Drop erstellen"-Button.
+    /// Öffnet die Paywall beim Tap. Zeigt konkreten Nutzen (Boost + Priority Listing)
+    /// statt einer generischen „Pro"-Werbung.
+    private var plusReachUpsell: some View {
+        Button {
+            store.showDropsPlusPaywall = true
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [Color(hex: "f59e0b").opacity(0.35), .clear],
+                                center: .center,
+                                startRadius: 0, endRadius: 22
+                            )
+                        )
+                        .frame(width: 44, height: 44)
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                            )
+                        )
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Mehr Leute erreichen mit Drops+")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.textPrimary)
+                    Text("Boost auf der Karte · oben im Feed · sieh wer geschaut hat")
+                        .font(.system(size: 11))
+                        .foregroundColor(.textSecondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Color(hex: "f59e0b"))
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color(hex: "f59e0b").opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(
+                        LinearGradient(
+                            colors: [Color(hex: "f59e0b").opacity(0.55), Color(hex: "f59e0b").opacity(0.15)],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Create Helper
