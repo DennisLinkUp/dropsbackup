@@ -450,6 +450,17 @@ struct ReliabilityScore {
         default:       return "Dropout"
         }
     }
+
+    /// SF-Symbol passend zum Tier — wird neben dem Badge gerendert.
+    var badgeIcon: String {
+        guard totalCommits > 0 else { return "binoculars.fill" }  // Entdecker-Look für neue User
+        switch score {
+        case 95...100: return "crown.fill"           // Legende
+        case 80..<95:  return "star.fill"            // Stammgast
+        case 60..<80:  return "binoculars.fill"      // Drop-Entdecker
+        default:       return "exclamationmark.triangle.fill"  // Dropout
+        }
+    }
     /// Human-readable score — shows "Neu" for users with no commit history yet.
     var displayText: String {
         totalCommits == 0 ? "Neu" : "\(Int(score))%"

@@ -1257,9 +1257,9 @@ struct ActiveDropTabView: View {
     }
 
     /// Schwelle in Metern, ab der GPS-Nähe als „vor Ort" gilt.
-    /// Großzügig (100 m) wegen Stadt-GPS-Drift — besser zu früh ankommen lassen
-    /// als den Host dauerhaft auf „unterwegs" zu halten.
-    private static let gpsArrivalThresholdMeters: Double = 100
+    /// Eng gesetzt (< 20 m) damit der Host erst wirklich am Ziel ankommt — nicht
+    /// schon beim Vorbeifahren auf „angekommen" springt.
+    private static let gpsArrivalThresholdMeters: Double = 20
 
     /// Prüft ob GPS-Position nahe genug am Drop-Ort ist.
     private var isNearDropByGPS: Bool {
@@ -2131,7 +2131,11 @@ struct ParticipantDetailRow: View {
 
     private var score: ReliabilityScore {
         let s = participant.reliabilityScore
-        let total = 20
+        let total = participant.reliabilityCommits
+        guard total > 0 else {
+            // Neue User ohne Commit-Historie → Drop-Entdecker, nicht fiktives 100%
+            return ReliabilityScore(totalCommits: 0, showUps: 0, noShows: 0)
+        }
         let shows = Int(Double(s) / 100.0 * Double(total))
         return ReliabilityScore(totalCommits: total, showUps: shows, noShows: total - shows)
     }
@@ -2214,8 +2218,11 @@ struct ParticipantDetailRow: View {
                                 }
                             }
                             .frame(width: 52, height: 4)
-                            Text("\(participant.reliabilityScore)%")
+                            Text(score.displayText)
                                 .font(.system(size: 11, weight: .semibold)).foregroundColor(score.color)
+                            Image(systemName: score.badgeIcon)
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(score.color)
                             Text(score.badge).font(.system(size: 10)).foregroundColor(rowSub)
                         }
                     }

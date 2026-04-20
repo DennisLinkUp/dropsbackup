@@ -957,8 +957,6 @@ struct OnboardingView: View {
             guard let p = profile else { return }
             if let name = p.name, !name.isEmpty {
                 self.store.currentUser.name = name
-                // „Willkommen zurück"-Name direkt persistieren, unabhängig vom Logout-Zeitpunkt
-                UserDefaults.standard.set(name, forKey: "ud_lastKnownName")
             }
             if let bd = p.birthdate             { self.store.userBirthdate = bd }
             if let gender = p.gender            { self.store.userGender = gender }
@@ -1143,28 +1141,18 @@ struct WelcomeStep: View {
                         }
                         .padding(.bottom, 18)
 
-                        // Slogan Typewriter — oder „Willkommen zurück" wenn User bereits bekannt
-                        if isLoginMode, let lastName = UserDefaults.standard.string(forKey: "ud_lastKnownName"),
-                           !lastName.isEmpty {
-                            Text("Willkommen zurück, \(lastName)")
+                        // Slogan Typewriter
+                        HStack(spacing: 0) {
+                            Text(typedSlogan)
                                 .font(.system(size: 16, weight: .semibold, design: .rounded))
-                                .foregroundColor(textPrimary.opacity(isLight ? 0.65 : 0.60))
+                                .foregroundColor(textPrimary.opacity(isLight ? 0.55 : 0.50))
                                 .kerning(0.3)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        } else {
-                            HStack(spacing: 0) {
-                                Text(typedSlogan)
+                            if typedSlogan.count < fullSlogan.count {
+                                Text(tr("onboard.pipe"))
                                     .font(.system(size: 16, weight: .semibold, design: .rounded))
-                                    .foregroundColor(textPrimary.opacity(isLight ? 0.55 : 0.50))
-                                    .kerning(0.3)
-                                if typedSlogan.count < fullSlogan.count {
-                                    Text(tr("onboard.pipe"))
-                                        .font(.system(size: 16, weight: .semibold, design: .rounded))
-                                        .foregroundColor(textPrimary.opacity(0.30))
-                                        .opacity(showCursor ? 1 : 0)
-                                        .animation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true), value: showCursor)
-                                }
+                                    .foregroundColor(textPrimary.opacity(0.30))
+                                    .opacity(showCursor ? 1 : 0)
+                                    .animation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true), value: showCursor)
                             }
                         }
                     }
