@@ -58,13 +58,34 @@ struct FeedView: View {
         profileAccent = Color.brand
     }
 
+    /// Aktivitäts-Kategorien für den Chip-Filter. Key = Display-Name, Emoji +
+    /// Keywords matchen gegen den activityName/emoji eines Drops.
+    private let activityCategories: [(key: String, emoji: String, keywords: [String])] = [
+        ("Kaffee", "☕️", ["kaffee", "coffee", "café", "cafe", "espresso", "latte"]),
+        ("Drink",  "🍺", ["drink", "drinks", "bier", "beer", "wein", "wine", "cocktail", "bar", "feierabend", "club", "party", "ausgehen"]),
+        ("Sport",  "🏃", ["sport", "fitness", "gym", "laufen", "run", "joggen", "jog", "fußball", "tennis", "basketball", "yoga", "fahrrad", "bike"]),
+        ("Essen",  "🍕", ["essen", "food", "lunch", "dinner", "pizza", "burger", "restaurant", "brunch", "sushi", "dönner"]),
+        ("Zocken", "🎮", ["zocken", "zock", "gaming", "game", "games", "spielen", "xbox", "playstation"])
+    ]
+
+    /// Prüft ob ein Drop in die aktuell gewählte Kategorie passt (String-Match am activityName + Emoji).
+    private func matchesActivityFilter(_ item: MapAnnotationItem) -> Bool {
+        guard !store.activityCategoryFilter.isEmpty else { return true }
+        guard let cat = activityCategories.first(where: { $0.key == store.activityCategoryFilter }) else { return true }
+        if item.emoji == cat.emoji { return true }
+        let activity = item.activity.lowercased()
+        return cat.keywords.contains(where: { activity.contains($0) })
+    }
+
     // Öffentliche Drops — Drops+ Boost zuerst, dann nach Interessen-Match priorisiert.
     // „Nur weiblich"-Filter blendet alle Nicht-weiblich-Hosts aus (nur für weibliche Userinnen).
+    // Aktivitäts-Filter blendet Drops raus deren Kategorie nicht gewählt ist.
     private var strangerAnnotations: [MapAnnotationItem] {
         var base = store.allMapAnnotations.filter { $0.isStranger }
         if store.genderFilterEnabled && store.userGender == "weiblich" {
             base = base.filter { ($0.hostGender?.lowercased() ?? "") == "weiblich" }
         }
+        base = base.filter { matchesActivityFilter($0) }
         return base.sorted { a, b in
             // Priority Listing: geboostete Drops immer zuerst
             if a.isBoosted != b.isBoosted { return a.isBoosted }
@@ -76,6 +97,52 @@ struct FeedView: View {
             }
             return false
         }
+    }
+
+    /// Horizontale Chip-Leiste für den Aktivitäts-Filter.
+    private var activityFilterChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                activityChip(title: "Alle", emoji: nil, selected: store.activityCategoryFilter.isEmpty) {
+                    store.activityCategoryFilter = ""
+                    store.saveAll()
+                }
+                ForEach(activityCategories, id: \.key) { cat in
+                    activityChip(title: cat.key, emoji: cat.emoji,
+                                 selected: store.activityCategoryFilter == cat.key) {
+                        store.activityCategoryFilter = (store.activityCategoryFilter == cat.key) ? "" : cat.key
+                        store.saveAll()
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+    }
+
+    @ViewBuilder
+    private func activityChip(title: String, emoji: String?, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { action() }
+        } label: {
+            HStack(spacing: 6) {
+                if let e = emoji {
+                    Text(e).font(.system(size: 14))
+                }
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(selected ? .white : .textPrimary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                Capsule().fill(selected ? Color.brand : Color(UIColor.secondarySystemGroupedBackground))
+            )
+            .overlay(
+                Capsule().stroke(selected ? Color.clear : Color.textTertiary.opacity(0.2), lineWidth: 1)
+            )
+            .shadow(color: selected ? Color.brand.opacity(0.25) : .clear, radius: 6, y: 2)
+        }
+        .buttonStyle(.plain)
     }
 
     /// Pill-Toggle „Nur weiblich" — blendet Drops von nicht-weiblichen Hosts aus.
@@ -229,6 +296,11 @@ struct FeedView: View {
                                 .padding(.top, 8)
                                 .padding(.bottom, 4)
                         }
+
+                        // ── Aktivitäts-Filter (Chip-Leiste) ──
+                        activityFilterChips
+                            .padding(.top, store.userGender == "weiblich" ? 4 : 8)
+                            .padding(.bottom, 4)
 
                         // ── Freunde in der Nähe (prominent) ──
                         if !sortedFriendDrops.isEmpty {

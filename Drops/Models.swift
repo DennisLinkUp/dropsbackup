@@ -552,6 +552,7 @@ private enum UDKey {
     static let homeZoneRadius      = "ud_homeZoneRadius"
     static let userPhone           = "ud_userPhone"
     static let genderFilterEnabled = "ud_gender_filter"
+    static let activityCategoryFilter = "ud_activity_category_filter"
     static let ageFilterMin        = "ud_ageFilterMin"
     static let ageFilterMax        = "ud_ageFilterMax"
 }
@@ -681,6 +682,9 @@ class AppStore: ObservableObject {
     @Published var radiusFilter: Double = 2000   // Free-Default: 2km
     @Published var userGender: String = ""   // "männlich" | "weiblich" | "divers"
     @Published var genderFilterEnabled: Bool = false
+    /// Aktuelle Aktivitäts-Kategorie im Umgebungs-Tab-Filter. Leer = "Alle".
+    /// Gültige Werte: "Kaffee", "Drink", "Sport", "Essen", "Zocken"
+    @Published var activityCategoryFilter: String = ""
 
     // MARK: - Heimzone
     @Published var homeZoneCoordinate: CLLocationCoordinate2D? = nil
@@ -1179,6 +1183,7 @@ class AppStore: ObservableObject {
         ud.set(userGender,           forKey: UDKey.userGender)
         ud.set(userPhone,            forKey: UDKey.userPhone)
         ud.set(genderFilterEnabled,  forKey: UDKey.genderFilterEnabled)
+        ud.set(activityCategoryFilter, forKey: UDKey.activityCategoryFilter)
         ud.set(Array(blockedUserNames),                       forKey: UDKey.blockedUsers)
         ud.set(selectedAgeGroups.map { $0.rawValue },         forKey: UDKey.selectedAgeGroups)
         ud.set(ageFilterMin, forKey: UDKey.ageFilterMin)
@@ -1297,6 +1302,7 @@ class AppStore: ObservableObject {
         userGender          = ud.string(forKey: UDKey.userGender) ?? ""
         userPhone           = ud.string(forKey: UDKey.userPhone)  ?? ""
         genderFilterEnabled = ud.bool(forKey: UDKey.genderFilterEnabled)
+        activityCategoryFilter = ud.string(forKey: UDKey.activityCategoryFilter) ?? ""
         if let blocked = ud.stringArray(forKey: UDKey.blockedUsers) {
             blockedUserNames = Set(blocked)
         }
