@@ -231,7 +231,7 @@ class RealtimeDBManager: ObservableObject {
 
         // 2. RTDB: eigenen Discovery-Index-Eintrag direkt entfernen (kein Scan nötig —
         //    wir kennen Telefon aus UserDefaults und E-Mail aus Auth)
-        let savedPhone = UserDefaults.standard.string(forKey: UDKey.userPhone) ?? ""
+        let savedPhone = UserDefaults.standard.string(forKey: "ud_userPhone") ?? ""
         if !savedPhone.isEmpty {
             let normPhone = Self.normalizePhone(savedPhone)
             if !normPhone.isEmpty {
