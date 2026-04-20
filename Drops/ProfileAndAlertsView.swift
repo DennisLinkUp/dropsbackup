@@ -414,14 +414,18 @@ struct FreundeView: View {
                         Button(action: {
                             RealtimeDBManager.shared.addFriend(theirUID: match.uid)
                             addedContactUIDs.insert(match.uid)
-                            // Direkt in die lokale Freunde-Liste aufnehmen, damit
-                            // der neue Kontakt sofort im Freunde-Tab erscheint.
-                            if !store.friends.contains(where: { $0.name == match.name }) {
+                            // Direkt in die lokale Freunde-Liste aufnehmen, damit der
+                            // neue Kontakt sofort im Freunde-Tab erscheint. Dedup per
+                            // Firebase-UID — dann findet der Observer beim nächsten
+                            // Hydrate genau diesen Eintrag wieder und erzeugt keinen
+                            // Duplikat.
+                            if !store.friends.contains(where: { $0.firebaseUID == match.uid }) {
                                 store.friends.append(User(
                                     name: match.name,
                                     emoji: "👋",
                                     isAvailable: false,
-                                    statusMessage: tr("profile.newly_added")
+                                    statusMessage: tr("profile.newly_added"),
+                                    firebaseUID: match.uid
                                 ))
                             }
                         }) {
@@ -1470,13 +1474,14 @@ struct AddFromContactsSheet: View {
                                 ContactMatchRow(match: match, isAdded: addedUIDs.contains(match.uid)) {
                                     RealtimeDBManager.shared.addFriend(theirUID: match.uid)
                                     addedUIDs.insert(match.uid)
-                                    // Direkt in die lokale Freunde-Liste aufnehmen
-                                    if !store.friends.contains(where: { $0.name == match.name }) {
+                                    // Direkt in die lokale Freunde-Liste aufnehmen — Dedup per UID
+                                    if !store.friends.contains(where: { $0.firebaseUID == match.uid }) {
                                         store.friends.append(User(
                                             name: match.name,
                                             emoji: "👋",
                                             isAvailable: false,
-                                            statusMessage: tr("profile.newly_added")
+                                            statusMessage: tr("profile.newly_added"),
+                                            firebaseUID: match.uid
                                         ))
                                     }
                                 }
@@ -1603,7 +1608,17 @@ struct FreundRow: View {
     var body: some View {
         Button { onProfileTap?() } label: {
             HStack(spacing: 14) {
-                AvatarBadge(emoji: friend.emoji, size: 44, isAvailable: isOnline)
+                // Profilbild wenn vorhanden, sonst Emoji-Avatar
+                if let url = friend.profileImageURL, !url.isEmpty {
+                    RemoteProfileImage(
+                        url: url,
+                        fallbackEmoji: friend.emoji,
+                        size: 44,
+                        strokeColor: isOnline ? .onlineGreen : Color.textTertiary.opacity(0.25)
+                    )
+                } else {
+                    AvatarBadge(emoji: friend.emoji, size: 44, isAvailable: isOnline)
+                }
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(friend.name)

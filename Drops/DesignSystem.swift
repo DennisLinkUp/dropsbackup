@@ -424,18 +424,16 @@ struct ReliabilityScore {
         guard totalCommits > 0 else { return 100 }
         return Double(showUps) / Double(totalCommits) * 100
     }
-    var label: String {
-        switch score {
-        case 90...100: return "Immer vor Ort"
-        case 70..<90:  return "Fast immer dabei"
-        case 50..<70:  return "Manchmal dabei"
-        default:       return "Öfter abgehauen"
-        }
-    }
+    /// Langtext-Label — deckungsgleich mit den Tier-Bezeichnungen aus `badge`,
+    /// damit überall in der App dieselben 4 Stufen auftauchen
+    /// (Drop-Legende / Stammgast / Drop-Entdecker / Dropout).
+    var label: String { badge }
     var color: Color {
+        guard totalCommits > 0 else { return .accentOrange }
         switch score {
-        case 90...100: return .onlineGreen
-        case 70..<90:  return .accentOrange
+        case 95...100: return .brand
+        case 80..<95:  return .onlineGreen
+        case 60..<80:  return .accentOrange
         default:       return .accentRed
         }
     }

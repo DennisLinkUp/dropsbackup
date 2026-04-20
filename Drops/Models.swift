@@ -36,15 +36,20 @@ struct User: Identifiable, Equatable {
     var coordinate: CLLocationCoordinate2D
     /// Firebase Storage Download-URL — wird für Avatare in Freundesliste etc. genutzt.
     var profileImageURL: String? = nil
+    /// Firebase Auth UID des Users — stabiler Dedup-Key über alle Pfade hinweg
+    /// (Contact-Match, Observer-Hydration, Direct-Add).
+    var firebaseUID: String? = nil
 
     init(id: UUID = UUID(), name: String, emoji: String,
          isAvailable: Bool, statusMessage: String,
          coordinate: CLLocationCoordinate2D = CLLocationCoordinate2D(latitude: 48.1371, longitude: 11.5754),
-         profileImageURL: String? = nil) {
+         profileImageURL: String? = nil,
+         firebaseUID: String? = nil) {
         self.id = id; self.name = name; self.emoji = emoji
         self.isAvailable = isAvailable; self.statusMessage = statusMessage
         self.coordinate = coordinate
         self.profileImageURL = profileImageURL
+        self.firebaseUID = firebaseUID
     }
     static func == (lhs: User, rhs: User) -> Bool { lhs.id == rhs.id }
 }
@@ -1801,10 +1806,22 @@ class AppStore: ObservableObject {
             }
         }
 
-        // Vorhandene Einträge aktualisieren / fehlende hinzufügen (Dedup per Name)
+        // Vorhandene Einträge aktualisieren / fehlende hinzufügen — Dedup primär
+        // per Firebase-UID (stabil), Name-Fallback für Legacy-Einträge.
         for snap in snapshots {
-            if let idx = friends.firstIndex(where: { $0.name == snap.name }) {
-                // Avatar-URL aktualisieren falls neu verfügbar
+            let existingIdx: Int?
+            if let byUID = friends.firstIndex(where: { $0.firebaseUID == snap.uid }) {
+                existingIdx = byUID
+            } else if let byName = friends.firstIndex(where: { $0.firebaseUID == nil && $0.name == snap.name }) {
+                existingIdx = byName
+            } else {
+                existingIdx = nil
+            }
+
+            if let idx = existingIdx {
+                // Legacy-Eintrag mit UID/Name/Avatar auffrischen
+                if friends[idx].firebaseUID != snap.uid    { friends[idx].firebaseUID = snap.uid }
+                if friends[idx].name != snap.name          { friends[idx].name = snap.name }
                 if friends[idx].profileImageURL != snap.profileImageURL {
                     friends[idx].profileImageURL = snap.profileImageURL
                 }
@@ -1814,9 +1831,18 @@ class AppStore: ObservableObject {
                     emoji: "👋",
                     isAvailable: false,
                     statusMessage: "",
-                    profileImageURL: snap.profileImageURL
+                    profileImageURL: snap.profileImageURL,
+                    firebaseUID: snap.uid
                 ))
             }
+        }
+
+        // Lokale Einträge entfernen, deren UID nicht mehr in der Snapshot-Liste ist
+        // (Freund wurde gelöscht, auf anderem Gerät entfreundet etc.). Legacy-Einträge
+        // ohne UID lassen wir in Ruhe — Server ist nicht authoritativ über sie.
+        friends.removeAll { user in
+            guard let uid = user.firebaseUID else { return false }
+            return !currentUIDs.contains(uid)
         }
 
         knownFriendUIDs = currentUIDs

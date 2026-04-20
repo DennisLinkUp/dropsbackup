@@ -372,7 +372,13 @@ struct FeedView: View {
                             ForEach(store.friends.filter { !$0.isAvailable }) { friend in
                                 Button { showFriendProfile(friend) } label: {
                                     HStack(spacing: 12) {
-                                        AvatarBadge(emoji: friend.emoji, size: 38)
+                                        if let url = friend.profileImageURL, !url.isEmpty {
+                                            RemoteProfileImage(url: url,
+                                                               fallbackEmoji: friend.emoji,
+                                                               size: 38)
+                                        } else {
+                                            AvatarBadge(emoji: friend.emoji, size: 38)
+                                        }
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(friend.name)
                                                 .font(.system(size: 14, weight: .semibold))
