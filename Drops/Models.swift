@@ -952,8 +952,9 @@ class AppStore: ObservableObject {
         FirebaseAuth.Auth.auth().addStateDidChangeListener { [weak self] _, user in
             DispatchQueue.main.async {
                 let onboarded = UserDefaults.standard.bool(forKey: "hasOnboarded")
-                if user == nil && onboarded {
+                if user == nil && onboarded && self?.isAuthenticated == true {
                     // User wurde extern ausgeloggt oder Token ungültig
+                    print("[auth] stateDidChange: user=nil while onboarded — setting isAuthenticated=false")
                     self?.isAuthenticated = false
                 }
                 // Einloggen (user != nil) wird nur über den Onboarding-Flow
@@ -1003,8 +1004,10 @@ class AppStore: ObservableObject {
                     // Nur bei eindeutiger Konto-Löschung/-Sperrung ausloggen.
                     // userTokenExpired: Firebase erneuert Token selbst — kein Logout bei Netzwerkproblemen.
                     if code == .userNotFound || code == .userDisabled {
-                        // Konto wurde extern gelöscht oder deaktiviert
+                        print("[auth] validateFirebaseAccount: account gone (code=\(code?.rawValue ?? -1)) → clearLocalData")
                         self.clearLocalData()
+                    } else {
+                        print("[auth] validateFirebaseAccount: non-fatal error \(nsError.code) — keeping session")
                     }
                 }
             }
@@ -1166,6 +1169,7 @@ class AppStore: ObservableObject {
         endDropLiveActivity()
 
         // ── 5. Firebase ausloggen + Session beenden ───────────────────────
+        print("[auth] clearLocalData → signOut + isAuthenticated=false (caller: \(Thread.callStackSymbols.dropFirst(1).first ?? ""))")
         try? FirebaseAuth.Auth.auth().signOut()
         isAuthenticated = false
     }
