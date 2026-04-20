@@ -532,6 +532,9 @@ private enum UDKey {
     /// Letzter bekannter Anzeigename — überlebt Logout (für „Willkommen zurück"-UI).
     /// Wird nur bei echter Kontolöschung entfernt.
     static let lastKnownName        = "ud_lastKnownName"
+    /// Timestamp (timeIntervalSinceReferenceDate) der letzten App-Aktivierung.
+    /// Wird genutzt, um den Willkommen-zurück-Toast nur einmal pro ~24 h zu zeigen.
+    static let lastForegroundAt     = "ud_lastForegroundAt"
     static let userEmoji            = "ud_userEmoji"
     static let isUnderageBlocked    = "ud_isUnderageBlocked"
         static let isIdVerified         = "ud_isIdVerified"
@@ -786,6 +789,10 @@ class AppStore: ObservableObject {
     /// Eingehende Beitrittsanfragen für den eigenen Drop (Host-Ansicht)
     @Published var pendingJoinRequests: [IncomingJoinRequest] = []
 
+    /// Kurzer „Willkommen zurück"-Toast nach längerer Abwesenheit.
+    /// Wird in MainTabView als Overlay gerendert und nach 3 Sek automatisch geschlossen.
+    @Published var showWelcomeBackToast: Bool = false
+
     /// Viewers des eigenen aktiven Drops (Drops+ „wer hat geschaut"-Feature).
     /// Key = dropID.uuidString → Liste aller Viewer sortiert nach viewedAt (neueste zuerst).
     @Published var dropViewersByDropID: [String: [RealtimeDBManager.DropViewerSnapshot]] = [:]
@@ -1007,6 +1014,10 @@ class AppStore: ObservableObject {
     /// Wenn die Pause länger als `SessionTimeout.duration` war → ausloggen.
     func checkSessionTimeout() {
         let ud = UserDefaults.standard
+
+        // Willkommen-zurück-Toast nach ≥ 24 h Abwesenheit, unabhängig vom Session-Lock.
+        evaluateWelcomeBackToast()
+
         guard isAuthenticated,
               let ts = ud.object(forKey: UDKey.backgroundedAt) as? Double
         else {
@@ -1021,6 +1032,31 @@ class AppStore: ObservableObject {
             isSessionLocked = true
         }
         ud.removeObject(forKey: UDKey.backgroundedAt)
+    }
+
+    /// Zeigt den „Willkommen zurück"-Toast einmal pro ≥ 24 h Pause zwischen App-Sessions.
+    /// Voraussetzung: eingeloggt + bekannter Name.
+    private func evaluateWelcomeBackToast() {
+        guard isAuthenticated,
+              let name = UserDefaults.standard.string(forKey: UDKey.lastKnownName),
+              !name.isEmpty
+        else { return }
+        let ud = UserDefaults.standard
+        let now = Date().timeIntervalSinceReferenceDate
+        let last = ud.double(forKey: UDKey.lastForegroundAt)
+        let threshold: TimeInterval = 24 * 60 * 60   // 24 h
+        if last > 0 && (now - last) >= threshold {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
+                showWelcomeBackToast = true
+            }
+            // Nach 3 Sek wieder ausblenden
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                withAnimation(.easeOut(duration: 0.3)) {
+                    self?.showWelcomeBackToast = false
+                }
+            }
+        }
+        ud.set(now, forKey: UDKey.lastForegroundAt)
     }
 
     /// Prüft ob der Firebase-Account noch existiert (z.B. nach externer Löschung).

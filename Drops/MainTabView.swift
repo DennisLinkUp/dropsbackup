@@ -68,7 +68,15 @@ struct MainTabView: View {
 
         } // ZStack
         .safeAreaInset(edge: .top, spacing: 0) {
-            OfflineBanner()
+            VStack(spacing: 6) {
+                OfflineBanner()
+                if store.showWelcomeBackToast,
+                   let lastName = UserDefaults.standard.string(forKey: "ud_lastKnownName"),
+                   !lastName.isEmpty {
+                    welcomeBackToast(name: lastName)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
         }
         // ── Stadtsperre ─────────────────────────────
         .fullScreenCover(isPresented: .constant(BetaConfig.cityRestrictionEnabled && cityGate.isOutsideCity)) {
@@ -91,6 +99,32 @@ struct MainTabView: View {
             .presentationDragIndicator(.hidden)
             .interactiveDismissDisabled()
         }
+    }
+
+    /// Dezenter „Willkommen zurück"-Toast, wird einmalig nach ≥ 24 h Abwesenheit gezeigt
+    /// und blendet sich nach 3 Sek automatisch wieder aus.
+    @ViewBuilder
+    private func welcomeBackToast(name: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "hand.wave.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.brand)
+            Text("Willkommen zurück, \(name)")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(
+            Capsule().stroke(Color.brand.opacity(0.25), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.15), radius: 12, y: 4)
+        .padding(.horizontal, 20)
+        .padding(.top, 6)
     }
 }
 
