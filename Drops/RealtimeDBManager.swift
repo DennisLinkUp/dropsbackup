@@ -539,20 +539,22 @@ class RealtimeDBManager: ObservableObject {
     // MARK: - DropIn (Beitreten)
 
     /// Schreibt einen DropIn-Eintrag, damit der Drop-Ersteller benachrichtigt wird
-    func joinDrop(dropID: String, joinerID: String, joinerName: String, joinerEmoji: String = "") {
+    func joinDrop(dropID: String, joinerID: String, joinerName: String,
+                  joinerEmoji: String = "", joinerAge: Int? = nil) {
         let joinRef = db.child("dropins").child(dropID).child(joinerID)
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "name": joinerName,
             "emoji": joinerEmoji,
             "timestamp": ServerValue.timestamp()
         ]
+        if let age = joinerAge { payload["age"] = age }
         joinRef.setValue(payload)
     }
 
     /// Beobachtet neue DropIns für einen Drop (für den Host).
     /// Gibt einen DatabaseHandle zurück — mit `removeDropInObserver(_:dropID:)` abmelden.
     @discardableResult
-    func observeDropIns(dropID: String, onNew: @escaping (_ name: String, _ emoji: String) -> Void) -> DatabaseHandle {
+    func observeDropIns(dropID: String, onNew: @escaping (_ name: String, _ emoji: String, _ age: Int?) -> Void) -> DatabaseHandle {
         let ref = db.child("dropins").child(dropID)
         // childAdded feuert für jeden neuen Eintrag
         return ref.observe(.childAdded) { snapshot in
@@ -560,7 +562,8 @@ class RealtimeDBManager: ObservableObject {
                   let name = dict["name"] as? String
             else { return }
             let emoji = dict["emoji"] as? String ?? ""
-            DispatchQueue.main.async { onNew(name, emoji) }
+            let age = dict["age"] as? Int
+            DispatchQueue.main.async { onNew(name, emoji, age) }
         }
     }
 
@@ -577,13 +580,14 @@ class RealtimeDBManager: ObservableObject {
 
     /// Joiner sendet Beitrittsanfrage — Status: "pending"
     func sendJoinRequest(dropID: String, joinerID: String, joinerName: String,
-                         joinerEmoji: String, profileImageURL: String?) {
+                         joinerEmoji: String, joinerAge: Int?, profileImageURL: String?) {
         var payload: [String: Any] = [
             "name":        joinerName,
             "emoji":       joinerEmoji,
             "status":      "pending",
             "requestedAt": ServerValue.timestamp()
         ]
+        if let age = joinerAge { payload["age"] = age }
         if let url = profileImageURL { payload["profileImageURL"] = url }
         db.child("joinRequests").child(dropID).child(joinerID).setValue(payload)
     }
@@ -592,7 +596,8 @@ class RealtimeDBManager: ObservableObject {
     @discardableResult
     func observeIncomingJoinRequests(dropID: String,
                                      onNew: @escaping (_ joinerID: String, _ name: String,
-                                                       _ emoji: String, _ imageURL: String?,
+                                                       _ emoji: String, _ age: Int?,
+                                                       _ imageURL: String?,
                                                        _ requestedAt: Date) -> Void) -> DatabaseHandle {
         db.child("joinRequests").child(dropID).observe(.childAdded) { snap in
             guard let dict   = snap.value as? [String: Any],
@@ -600,10 +605,11 @@ class RealtimeDBManager: ObservableObject {
                   let status = dict["status"] as? String, status == "pending"
             else { return }
             let emoji    = dict["emoji"]          as? String ?? ""
+            let age      = dict["age"]            as? Int
             let imageURL = dict["profileImageURL"] as? String
             let ts       = (dict["requestedAt"]   as? Double ?? 0) / 1000
             let date     = ts > 0 ? Date(timeIntervalSince1970: ts) : Date()
-            DispatchQueue.main.async { onNew(snap.key, name, emoji, imageURL, date) }
+            DispatchQueue.main.async { onNew(snap.key, name, emoji, age, imageURL, date) }
         }
     }
 

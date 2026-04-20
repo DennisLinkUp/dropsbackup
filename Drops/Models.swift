@@ -180,6 +180,7 @@ struct IncomingJoinRequest: Identifiable {
     let dropID: String
     let joinerName: String
     let joinerEmoji: String
+    let joinerAge: Int?
     let joinerProfileImageURL: String?
     let requestedAt: Date
 
@@ -852,7 +853,22 @@ class AppStore: ObservableObject {
                     DispatchQueue.main.async {
                         if p.isAdmin    { self.isAdmin    = true }
                         if p.isPlusUser { self.isPlusUser = true }   // Admin-gewährtes Plus
-                        if let name = p.name, !name.isEmpty { self.currentUser.name = name }
+                        if let name = p.name, !name.isEmpty {
+                            self.currentUser.name = name
+                            UserDefaults.standard.set(name, forKey: "ud_lastKnownName")
+                        }
+                        // Geburtsdatum + Geschlecht auch aus Firebase zurückholen —
+                        // sonst fehlen sie nach Reinstall / Session-Restore, obwohl sie
+                        // beim Onboarding einmal gesetzt wurden.
+                        if let bd = p.birthdate {
+                            self.userBirthdate = bd
+                            UserDefaults.standard.set(bd.timeIntervalSinceReferenceDate,
+                                                       forKey: UDKey.userBirthdate)
+                        }
+                        if let gender = p.gender, !gender.isEmpty {
+                            self.userGender = gender
+                            UserDefaults.standard.set(gender, forKey: UDKey.userGender)
+                        }
                         // profileImageURL kommt aus Firestore (loadProfileImageURL)
                         self.loadProfileImageURL()
                     }
@@ -1446,7 +1462,8 @@ class AppStore: ObservableObject {
             dropID: drop.id.uuidString,
             joinerID: uid,
             joinerName: currentUser.name,
-            joinerEmoji: currentUser.emoji
+            joinerEmoji: currentUser.emoji,
+            joinerAge: userAge
         )
         // Auf DropIns des Hosts hören (falls der Host derselbe User auf anderem Gerät ist – Schutz)
         startObservingDropIns(forDropID: drop.id.uuidString)
@@ -1613,7 +1630,7 @@ class AppStore: ObservableObject {
         let activityName = activeDrops.first?.activity.name
             ?? activeDropAnnotation?.activity
             ?? "Drop"
-        dropInObserverHandle = RealtimeDBManager.shared.observeDropIns(dropID: dropID) { [weak self] name, emoji in
+        dropInObserverHandle = RealtimeDBManager.shared.observeDropIns(dropID: dropID) { [weak self] name, emoji, _ in
             guard let self = self else { return }
             // Nur den Host benachrichtigen — Joiner sollen keine eigene Notification bekommen
             guard !self.activeDrops.isEmpty else { return }
@@ -1638,13 +1655,14 @@ class AppStore: ObservableObject {
         stopObservingJoinRequests()
         joinRequestObserverHandle = RealtimeDBManager.shared.observeIncomingJoinRequests(
             dropID: dropID
-        ) { [weak self] joinerID, name, emoji, imageURL, requestedAt in
+        ) { [weak self] joinerID, name, emoji, age, imageURL, requestedAt in
             guard let self = self else { return }
             // Keine doppelten Einträge
             guard !self.pendingJoinRequests.contains(where: { $0.id == joinerID }) else { return }
             let req = IncomingJoinRequest(
                 id: joinerID, dropID: dropID,
                 joinerName: name, joinerEmoji: emoji,
+                joinerAge: age,
                 joinerProfileImageURL: imageURL,
                 requestedAt: requestedAt
             )
@@ -1732,6 +1750,7 @@ class AppStore: ObservableObject {
             joinerID: uid,
             joinerName: currentUser.name,
             joinerEmoji: currentUser.emoji,
+            joinerAge: userAge,
             profileImageURL: profileImageURL
         )
 
@@ -1790,7 +1809,8 @@ class AppStore: ObservableObject {
         RealtimeDBManager.shared.joinDrop(
             dropID: drop.id.uuidString,
             joinerID: FirebaseAuth.Auth.auth().currentUser?.uid ?? currentUser.id.uuidString,
-            joinerName: currentUser.name, joinerEmoji: currentUser.emoji
+            joinerName: currentUser.name, joinerEmoji: currentUser.emoji,
+            joinerAge: userAge
         )
     }
 

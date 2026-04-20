@@ -438,8 +438,15 @@ struct IncomingJoinRequestSheet: View {
                 }
                 .overlay(Circle().stroke(Color.white.opacity(0.15), lineWidth: 1.5))
 
-                Text(request.joinerName)
-                    .font(.system(size: 22, weight: .bold))
+                HStack(spacing: 6) {
+                    Text(request.joinerName)
+                        .font(.system(size: 22, weight: .bold))
+                    if let age = request.joinerAge {
+                        Text(", \(age)")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundColor(.textSecondary)
+                    }
+                }
 
                 // Auto-Accept Countdown
                 if timeLeft > 0 {

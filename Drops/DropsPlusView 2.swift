@@ -359,13 +359,13 @@ private struct PlusFeatureRow: View {
                 .background(Color(hex: "f59e0b").opacity(0.10))
                 .clipShape(RoundedRectangle(cornerRadius: 13))
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(.white)
                 Text(description)
                     .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.48))
+                    .foregroundStyle(.white.opacity(0.72))
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
