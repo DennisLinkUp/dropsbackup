@@ -820,13 +820,11 @@ class AppStore: ObservableObject {
             }
 
             // Sofort-Check per Telefon/E-Mail — kein Firebase-Roundtrip nötig
-            let adminPhones: Set<String> = ["+4915771677000"]
-            let adminEmails: Set<String> = ["dennisone95@hotmail.de", "ww688nmjp8@privaterelay.appleid.com"]
             let authPhone = FirebaseAuth.Auth.auth().currentUser?.phoneNumber ?? ""
             let authEmail = (FirebaseAuth.Auth.auth().currentUser?.email ?? "").lowercased()
             // Apple Relay-Email wird nur beim ersten Login gesendet → aus UserDefaults laden
             let storedAppleEmail = (UserDefaults.standard.string(forKey: UDKey.appleEmail) ?? "").lowercased()
-            if adminPhones.contains(authPhone) || adminEmails.contains(authEmail) || adminEmails.contains(storedAppleEmail) {
+            if AdminConfig.isBootstrapAdmin(authEmail: authEmail, authPhone: authPhone, storedAppleEmail: storedAppleEmail) {
                 isAdmin = true
             }
 

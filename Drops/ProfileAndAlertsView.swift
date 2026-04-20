@@ -1618,12 +1618,10 @@ struct ProfileView: View {
     /// Direkt-Check per gespeicherter Telefonnummer / Apple-Relay-E-Mail —
     /// Fallback falls store.isAdmin nach Neustart noch nicht asynchron gesetzt wurde.
     private var isAdminByCredentials: Bool {
-        let adminEmails: Set<String> = ["dennisone95@hotmail.de", "ww688nmjp8@privaterelay.appleid.com"]
-        let adminPhones: Set<String> = ["+4915771677000"]
         let storedApple = (UserDefaults.standard.string(forKey: "ud_appleEmail") ?? "").lowercased()
         let savedPhone  = (UserDefaults.standard.string(forKey: "savedPhoneDialCode") ?? "")
                         + (UserDefaults.standard.string(forKey: "savedPhoneNumber") ?? "")
-        return adminEmails.contains(storedApple) || adminPhones.contains(savedPhone)
+        return AdminConfig.isBootstrapAdmin(storedAppleEmail: storedApple, savedPhone: savedPhone)
     }
 
     let radiusOptions: [(label: String, subtitle: String, value: Double)] = [

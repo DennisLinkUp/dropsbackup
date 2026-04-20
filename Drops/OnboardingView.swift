@@ -846,10 +846,9 @@ struct OnboardingView: View {
             if let uid = Auth.auth().currentUser?.uid {
                 UserDefaults.standard.set(uid, forKey: "ud_firebaseUID")
             }
-            // Admin-Check
-            let adminEmails: Set<String> = ["dennisone95@hotmail.de", "ww688nmjp8@privaterelay.appleid.com"]
+            // Admin-Check (Bootstrap-Credentials siehe AdminConfig)
             let authEmail = (Auth.auth().currentUser?.email ?? "").lowercased()
-            if adminEmails.contains(authEmail) {
+            if AdminConfig.isBootstrapAdminEmail(authEmail) {
                 store.isAdmin = true
             }
             // Gender-Filter nie automatisch aktivieren — muss manuell eingeschaltet werden
@@ -904,10 +903,9 @@ struct OnboardingView: View {
                 showNotFoundAlert = true
             } else {
                 // Echter Neuzugang → Profil einrichten
-                let adminEmails: Set<String> = ["dennisone95@hotmail.de", "ww688nmjp8@privaterelay.appleid.com"]
                 let firebaseEmail = (Auth.auth().currentUser?.email ?? "").lowercased()
                 let appleEmail = (capturedAppleEmail ?? "").lowercased()
-                if adminEmails.contains(firebaseEmail) || adminEmails.contains(appleEmail) {
+                if AdminConfig.isBootstrapAdmin(authEmail: firebaseEmail, storedAppleEmail: appleEmail) {
                     store.isAdmin = true
                 }
                 withAnimation(.spring(response: 0.4)) { step = .profile }
@@ -938,11 +936,10 @@ struct OnboardingView: View {
 
     /// Lädt das Profil aus Firebase und befüllt den Store (z.B. nach Re-Login).
     private func loadProfileFromFirebase() {
-        // Admin-Check per E-Mail
-        let adminEmails: Set<String> = ["dennisone95@hotmail.de", "ww688nmjp8@privaterelay.appleid.com"]
+        // Admin-Check per E-Mail (Bootstrap-Credentials siehe AdminConfig)
         let authEmail = (Auth.auth().currentUser?.email ?? "").lowercased()
         let storedApple = (UserDefaults.standard.string(forKey: "ud_appleEmail") ?? "").lowercased()
-        if adminEmails.contains(authEmail) || adminEmails.contains(storedApple) {
+        if AdminConfig.isBootstrapAdmin(authEmail: authEmail, storedAppleEmail: storedApple) {
             self.store.isAdmin = true
         }
         RealtimeDBManager.shared.loadUserProfile { profile in

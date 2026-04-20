@@ -22,12 +22,6 @@ class RealtimeDBManager: ObservableObject {
 
     /// Legt ein Nutzerprofil an oder aktualisiert es.
     /// Wird am Ende des Onboardings aufgerufen (phone auth & Apple).
-    /// E-Mail-Adressen die automatisch Admin-Rechte erhalten (Apple Sign In)
-    private let adminEmails: Set<String> = [
-        "dennisone95@hotmail.de",
-        "ww688nmjp8@privaterelay.appleid.com"   // Apple Private Relay E-Mail
-    ]
-
     func saveUserProfile(
         name: String,
         email: String? = nil,
@@ -44,9 +38,9 @@ class RealtimeDBManager: ObservableObject {
         if let bd = birthdate                  { payload["birthdate"] = bd.timeIntervalSince1970 }
         if let gender = gender, !gender.isEmpty { payload["gender"] = gender }
 
-        // Auto-Admin für gelistete E-Mails
+        // Auto-Admin für Bootstrap-Credentials (siehe AdminConfig)
         let authEmail = (email ?? Auth.auth().currentUser?.email ?? "").lowercased()
-        if adminEmails.contains(authEmail) {
+        if AdminConfig.isBootstrapAdminEmail(authEmail) {
             payload["isAdmin"] = true
         }
 
@@ -202,7 +196,7 @@ class RealtimeDBManager: ObservableObject {
             // Auto-Admin beim Login prüfen und ggf. nachrüsten
             if exists, let self = self {
                 let email = (Auth.auth().currentUser?.email ?? "").lowercased()
-                if self.adminEmails.contains(email) {
+                if AdminConfig.isBootstrapAdminEmail(email) {
                     self.db.child("users").child(uid).child("isAdmin").observeSingleEvent(of: .value) { flagSnap in
                         if !(flagSnap.value as? Bool ?? false) {
                             self.db.child("users").child(uid).updateChildValues(["isAdmin": true])
