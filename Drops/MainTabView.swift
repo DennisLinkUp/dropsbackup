@@ -234,49 +234,54 @@ struct WelcomeSheet: View {
 
 // MARK: - Active Drop Aurora Pulse
 
-/// Animierter Farbstreifen der sich unter der Tab-Bar bewegt — sanfte Brand-Farben
-/// die langsam über die volle Breite wandern. Die iOS-Glass-Tab-Bar lässt das als
-/// dezenten Pulse durchschimmern, ohne die Lesbarkeit der Tabs zu stören.
+/// Pulse der ausschließlich im Tab-Bar-Bereich läuft: sanfter Grundglow in der Mitte
+/// plus zwei Ripple-Ringe, die von der Mitte nach außen expandieren und dabei
+/// ausfaden — wie ein Sonar-Ping horizontal durch die Tab-Bar. Die iOS-26-Glass-
+/// Tab-Bar lässt die Farben durchschimmern; oberhalb der Tab-Bar ist nichts sichtbar,
+/// da der Container auf die Tab-Bar-Höhe beschränkt und geclippt ist.
 struct ActiveDropAuroraPulse: View {
-    @State private var animate = false
+    /// Höhe des Streifens — passt ungefähr zur iOS-Tab-Bar inkl. Safe Area.
+    private let barHeight: CGFloat = 82
+    private let pulsePeriod: Double = 2.5
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                Circle()
-                    .fill(Color.brand.opacity(0.55))
-                    .frame(width: 280, height: 280)
-                    .blur(radius: 90)
-                    .offset(
-                        x: animate ? geo.size.width * 0.35 : -geo.size.width * 0.35,
-                        y: 0
-                    )
-                Circle()
-                    .fill(Color(hex: "06b6d4").opacity(0.40))
-                    .frame(width: 240, height: 240)
-                    .blur(radius: 80)
-                    .offset(
-                        x: animate ? -geo.size.width * 0.30 : geo.size.width * 0.30,
-                        y: animate ? -8 : 8
-                    )
-                Circle()
-                    .fill(Color(hex: "8b5cf6").opacity(0.28))
-                    .frame(width: 200, height: 200)
-                    .blur(radius: 70)
-                    .offset(
-                        x: animate ? geo.size.width * 0.10 : -geo.size.width * 0.10,
-                        y: animate ? 6 : -6
-                    )
-            }
-            .frame(width: geo.size.width, alignment: .center)
-            // Die Pulse-Layer sitzt am unteren Rand — hinter der Tab-Bar.
-            .position(x: geo.size.width / 2, y: geo.size.height - 35)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 4.5).repeatForever(autoreverses: true)) {
-                    animate = true
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            TimelineView(.animation) { context in
+                let t = context.date.timeIntervalSinceReferenceDate
+                GeometryReader { geo in
+                    let p1 = CGFloat(t.truncatingRemainder(dividingBy: pulsePeriod) / pulsePeriod)
+                    let p2 = CGFloat((t + pulsePeriod / 2).truncatingRemainder(dividingBy: pulsePeriod) / pulsePeriod)
+                    ZStack {
+                        // Stabile sanfte Mitten-Tönung
+                        RadialGradient(
+                            colors: [Color.brand.opacity(0.38), .clear],
+                            center: .center,
+                            startRadius: 4,
+                            endRadius: geo.size.width * 0.35
+                        )
+
+                        pulseRing(phase: p1, color: .brand, geo: geo)
+                        pulseRing(phase: p2, color: Color(hex: "06b6d4"), geo: geo)
+                    }
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .blur(radius: 4)
                 }
             }
+            .frame(height: barHeight)
+            .clipped()
         }
-        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    /// Einzelner Ring, der vom Zentrum (phase=0) auf volle Breite (phase=1) expandiert
+    /// und dabei ausfadet. Nutzt Capsule — gibt den horizontalen Tab-Bar-Look.
+    private func pulseRing(phase: CGFloat, color: Color, geo: GeometryProxy) -> some View {
+        Capsule()
+            .stroke(color.opacity(Double(1 - phase) * 0.55), lineWidth: 2.5)
+            .frame(
+                width: max(10, geo.size.width * phase),
+                height: geo.size.height * 0.55
+            )
     }
 }
