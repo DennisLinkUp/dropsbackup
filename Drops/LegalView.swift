@@ -431,7 +431,7 @@ private struct TermsContent: View {
 
             LegalSection(
                 title: "1. Geltungsbereich",
-                text: "Diese Nutzungsbedingungen gelten für die Nutzung der mobilen App „Drops" und alle damit verbundenen Dienste. Mit der Nutzung der App erklärst du dich mit diesen Bedingungen einverstanden."
+                text: "Diese Nutzungsbedingungen gelten für die Nutzung der mobilen App \"Drops\" und alle damit verbundenen Dienste. Mit der Nutzung der App erklärst du dich mit diesen Bedingungen einverstanden."
             )
 
             LegalSection(
