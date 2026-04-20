@@ -66,7 +66,17 @@ struct MainTabView: View {
                 .environmentObject(store)
         }
 
+            // Aurora-Pulse unten — zieht sich durch die Tab-Bar wenn ein Drop aktiv ist.
+            // Wird BELOW TabView gerendert; die iOS-26-Glass-Tab-Bar lässt die Farben
+            // dezent durchschimmern, als "breathing" Akzent unter den Tabs.
+            if store.isInActiveDrop {
+                ActiveDropAuroraPulse()
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+
         } // ZStack
+        .animation(.easeInOut(duration: 0.4), value: store.isInActiveDrop)
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 6) {
                 OfflineBanner()
@@ -219,5 +229,54 @@ struct WelcomeSheet: View {
             .padding(.bottom, 36)
         }
         .background(Color(UIColor.systemGroupedBackground).ignoresSafeArea())
+    }
+}
+
+// MARK: - Active Drop Aurora Pulse
+
+/// Animierter Farbstreifen der sich unter der Tab-Bar bewegt — sanfte Brand-Farben
+/// die langsam über die volle Breite wandern. Die iOS-Glass-Tab-Bar lässt das als
+/// dezenten Pulse durchschimmern, ohne die Lesbarkeit der Tabs zu stören.
+struct ActiveDropAuroraPulse: View {
+    @State private var animate = false
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                Circle()
+                    .fill(Color.brand.opacity(0.55))
+                    .frame(width: 280, height: 280)
+                    .blur(radius: 90)
+                    .offset(
+                        x: animate ? geo.size.width * 0.35 : -geo.size.width * 0.35,
+                        y: 0
+                    )
+                Circle()
+                    .fill(Color(hex: "06b6d4").opacity(0.40))
+                    .frame(width: 240, height: 240)
+                    .blur(radius: 80)
+                    .offset(
+                        x: animate ? -geo.size.width * 0.30 : geo.size.width * 0.30,
+                        y: animate ? -8 : 8
+                    )
+                Circle()
+                    .fill(Color(hex: "8b5cf6").opacity(0.28))
+                    .frame(width: 200, height: 200)
+                    .blur(radius: 70)
+                    .offset(
+                        x: animate ? geo.size.width * 0.10 : -geo.size.width * 0.10,
+                        y: animate ? 6 : -6
+                    )
+            }
+            .frame(width: geo.size.width, alignment: .center)
+            // Die Pulse-Layer sitzt am unteren Rand — hinter der Tab-Bar.
+            .position(x: geo.size.width / 2, y: geo.size.height - 35)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 4.5).repeatForever(autoreverses: true)) {
+                    animate = true
+                }
+            }
+        }
+        .ignoresSafeArea()
     }
 }

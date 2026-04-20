@@ -15,10 +15,18 @@ struct DropsPlusView: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
 
-            // ── Hintergrund ─────────────────────────────────────────────
-            LinearGradient(
-                colors: [Color(hex: "0a0a0a"), Color(hex: "1c1200"), Color(hex: "0a0a0a")],
-                startPoint: .top, endPoint: .bottom
+            // ── Hintergrund — warmes Cream mit sanftem Gold-Schimmer ─────
+            Color(UIColor.systemGroupedBackground).ignoresSafeArea()
+            RadialGradient(
+                colors: [Color(hex: "f59e0b").opacity(0.10), .clear],
+                center: .topLeading,
+                startRadius: 0, endRadius: 420
+            )
+            .ignoresSafeArea()
+            RadialGradient(
+                colors: [Color(hex: "fcd34d").opacity(0.08), .clear],
+                center: .bottomTrailing,
+                startRadius: 0, endRadius: 360
             )
             .ignoresSafeArea()
 
@@ -37,7 +45,7 @@ struct DropsPlusView: View {
             Button { dismiss() } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.title2)
-                    .foregroundStyle(.white.opacity(0.35))
+                    .foregroundStyle(Color.textTertiary)
             }
             .padding(.top, 16).padding(.trailing, 20)
         }
@@ -64,35 +72,38 @@ struct DropsPlusView: View {
                 Circle()
                     .fill(
                         RadialGradient(
-                            colors: [Color(hex: "f59e0b").opacity(0.28), .clear],
+                            colors: [Color(hex: "f59e0b").opacity(0.22), .clear],
                             center: .center,
-                            startRadius: 0, endRadius: 64
+                            startRadius: 0, endRadius: 60
                         )
                     )
                     .frame(width: 110, height: 110)
                 Image(systemName: "bolt.fill")
-                    .font(.system(size: 48))
+                    .font(.system(size: 42))
                     .foregroundStyle(
                         LinearGradient(
-                            colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
+                            colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
                             startPoint: .top, endPoint: .bottom
                         )
                     )
             }
 
-            // Titel
-            Text("Drops+")
-                .font(.system(size: 38, weight: .bold, design: .rounded))
+            // Titel — im Premium-Light: dunkles Monogramm + Gold-Plus-Zeichen
+            (Text("Drops")
+                .foregroundColor(.textPrimary)
+             + Text("+")
                 .foregroundStyle(
                     LinearGradient(
-                        colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
-                        startPoint: .topLeading, endPoint: .bottomTrailing
+                        colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                        startPoint: .top, endPoint: .bottom
                     )
                 )
+            )
+            .font(.system(size: 40, weight: .bold, design: .rounded))
 
             Text("Einmalig zahlen — für immer dabei.")
-                .font(.system(size: 16))
-                .foregroundStyle(.white.opacity(0.5))
+                .font(.system(size: 15))
+                .foregroundColor(.textSecondary)
                 .multilineTextAlignment(.center)
         }
     }
@@ -131,7 +142,7 @@ struct DropsPlusView: View {
                         .font(.system(size: 11, weight: .bold))
                         .kerning(0.8)
                 }
-                .foregroundColor(.white.opacity(0.45))
+                .foregroundColor(.textTertiary)
                 .padding(.leading, 4)
 
                 VStack(spacing: 12) {
@@ -167,34 +178,45 @@ struct DropsPlusView: View {
                 VStack(spacing: 10) {
                     Image(systemName: "checkmark.seal.fill")
                         .font(.system(size: 40))
-                        .foregroundStyle(Color(hex: "f59e0b"))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        )
                     Text("Du bist Drops+ Mitglied")
                         .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundColor(.textPrimary)
                     Text("Alle Features sind aktiv.")
                         .font(.system(size: 14))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundColor(.textSecondary)
                 }
                 .padding(.vertical, 24)
                 .frame(maxWidth: .infinity)
-                .background(Color.white.opacity(0.04))
-                .clipShape(RoundedRectangle(cornerRadius: 20))
+                .background(
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(Color(UIColor.secondarySystemGroupedBackground))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(Color(hex: "d4a017").opacity(0.2), lineWidth: 1)
+                )
             } else {
                 // Preis
                 if let price = store.product?.displayPrice {
                     Text("Einmalig \(price)")
-                        .font(.system(size: 15))
-                        .foregroundStyle(.white.opacity(0.45))
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.textSecondary)
                 }
 
-                // Kaufen-Button
+                // Kaufen-Button — goldener CTA bleibt, auf Light-Hintergrund noch eleganter
                 Button {
                     justActivated = true
                     Task { await store.purchase() }
                 } label: {
                     ZStack {
                         if store.isLoading {
-                            ProgressView().tint(.black)
+                            ProgressView().tint(.white)
                         } else {
                             HStack(spacing: 8) {
                                 Image(systemName: "bolt.fill")
@@ -202,26 +224,26 @@ struct DropsPlusView: View {
                                 Text("Drops+ freischalten")
                                     .font(.system(size: 17, weight: .bold))
                             }
-                            .foregroundStyle(.black)
+                            .foregroundStyle(.white)
                         }
                     }
                     .frame(maxWidth: .infinity)
-                    .frame(height: 56)
+                    .frame(height: 54)
                     .background(
                         LinearGradient(
-                            colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
-                            startPoint: .leading, endPoint: .trailing
+                            colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
                         )
                     )
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .shadow(color: Color(hex: "f59e0b").opacity(0.4), radius: 12, y: 4)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .shadow(color: Color(hex: "d4a017").opacity(0.35), radius: 14, y: 5)
                 }
                 .disabled(store.isLoading || store.product == nil)
 
                 if let err = store.purchaseError {
                     Text(err)
                         .font(.caption)
-                        .foregroundStyle(Color.red.opacity(0.8))
+                        .foregroundColor(.accentRed)
                         .multilineTextAlignment(.center)
                 }
             }
@@ -236,15 +258,15 @@ struct DropsPlusView: View {
                 Task { await store.restorePurchases() }
             } label: {
                 Text("Kauf wiederherstellen")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.white.opacity(0.38))
+                    .font(.system(size: 13))
+                    .foregroundColor(.textTertiary)
                     .underline()
             }
             .disabled(store.isLoading)
 
             Text("Einmalige Zahlung · Kein Abo · Keine Werbung")
-                .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.22))
+                .font(.system(size: 11))
+                .foregroundColor(.textTertiary)
                 .multilineTextAlignment(.center)
         }
     }
@@ -258,44 +280,46 @@ struct DropsPlusSuccessView: View {
 
     var body: some View {
         ZStack {
-            // Dezent abgedunkelter Hintergrund — Glow nur um das Icon, nicht ganzflächig
-            LinearGradient(
-                colors: [Color(hex: "0a0a0a"), Color(hex: "1c1200"), Color(hex: "0a0a0a")],
-                startPoint: .top, endPoint: .bottom
+            // ── Premium-Light Hintergrund ─────────────────────────────────
+            Color(UIColor.systemGroupedBackground).ignoresSafeArea()
+            RadialGradient(
+                colors: [Color(hex: "f59e0b").opacity(0.10), .clear],
+                center: .top,
+                startRadius: 0, endRadius: 360
             )
             .ignoresSafeArea()
 
             VStack(spacing: 24) {
-                // Icon mit engem Glow (reicht nicht bis zum Titel)
+                // Icon mit dezentem Glow
                 ZStack {
                     Circle()
                         .fill(
                             RadialGradient(
-                                colors: [Color(hex: "f59e0b").opacity(0.35), .clear],
+                                colors: [Color(hex: "f59e0b").opacity(0.22), .clear],
                                 center: .center,
-                                startRadius: 0, endRadius: 70
+                                startRadius: 0, endRadius: 60
                             )
                         )
                         .frame(width: 140, height: 140)
                     Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 80, weight: .semibold))
+                        .font(.system(size: 76, weight: .semibold))
                         .foregroundStyle(
                             LinearGradient(
-                                colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
+                                colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
                                 startPoint: .top, endPoint: .bottom
                             )
                         )
                 }
 
                 VStack(spacing: 10) {
-                    // Titel in Weiß für maximalen Kontrast — „Drops+" als goldener Akzent
-                    (Text("Willkommen bei ")
-                        .foregroundColor(.white)
-                     + Text("Drops+")
+                    // Titel dunkel + Plus-Zeichen in Gold
+                    (Text("Willkommen bei Drops")
+                        .foregroundColor(.textPrimary)
+                     + Text("+")
                         .foregroundStyle(
                             LinearGradient(
-                                colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
-                                startPoint: .leading, endPoint: .trailing
+                                colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                                startPoint: .top, endPoint: .bottom
                             )
                         )
                     )
@@ -304,7 +328,7 @@ struct DropsPlusSuccessView: View {
 
                     Text("Alle Premium-Features sind ab jetzt aktiv.\nDanke, dass du Drops unterstützt.")
                         .font(.system(size: 15))
-                        .foregroundColor(.white.opacity(0.75))
+                        .foregroundColor(.textSecondary)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -318,12 +342,14 @@ struct DropsPlusSuccessView: View {
                 }
                 .padding(18)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.white.opacity(0.06))
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Color(UIColor.secondarySystemGroupedBackground))
+                )
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color(hex: "f59e0b").opacity(0.35), lineWidth: 1)
+                        .stroke(Color(hex: "d4a017").opacity(0.15), lineWidth: 1)
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 16))
                 .padding(.horizontal, 24)
 
                 // Los-geht's-Button
@@ -333,17 +359,17 @@ struct DropsPlusSuccessView: View {
                 } label: {
                     Text("Los geht's")
                         .font(.system(size: 17, weight: .bold))
-                        .foregroundStyle(.black)
+                        .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
                         .frame(height: 54)
                         .background(
                             LinearGradient(
-                                colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
-                                startPoint: .leading, endPoint: .trailing
+                                colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
                             )
                         )
-                        .clipShape(RoundedRectangle(cornerRadius: 16))
-                        .shadow(color: Color(hex: "f59e0b").opacity(0.5), radius: 14, y: 4)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .shadow(color: Color(hex: "d4a017").opacity(0.35), radius: 14, y: 5)
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 4)
@@ -368,49 +394,58 @@ private struct PlusFeatureRow: View {
         HStack(alignment: .top, spacing: 14) {
             ZStack {
                 Image(systemName: icon)
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(
                         comingSoon
-                            ? AnyShapeStyle(Color.white.opacity(0.35))
+                            ? AnyShapeStyle(Color.textTertiary)
                             : AnyShapeStyle(LinearGradient(
-                                colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
+                                colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
                                 startPoint: .topLeading, endPoint: .bottomTrailing
                               ))
                     )
             }
-            .frame(width: 48, height: 48)
+            .frame(width: 44, height: 44)
             .background(
-                comingSoon ? Color.white.opacity(0.04) : Color(hex: "f59e0b").opacity(0.10)
+                comingSoon
+                    ? Color(UIColor.tertiarySystemGroupedBackground)
+                    : Color(hex: "f59e0b").opacity(0.10)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 13))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
 
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(title)
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(comingSoon ? .white.opacity(0.6) : .white)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(comingSoon ? .textSecondary : .textPrimary)
                     if comingSoon {
                         Text("BALD")
                             .font(.system(size: 9, weight: .bold))
                             .kerning(0.4)
-                            .foregroundColor(.black.opacity(0.7))
+                            .foregroundColor(.textTertiary)
                             .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(Color.white.opacity(0.55), in: Capsule())
+                            .background(Color.textTertiary.opacity(0.15), in: Capsule())
                     }
                 }
                 Text(description)
                     .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(comingSoon ? 0.4 : 0.72))
+                    .foregroundColor(comingSoon ? .textTertiary : .textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
         .padding(16)
-        .background(Color.white.opacity(comingSoon ? 0.02 : 0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(UIColor.secondarySystemGroupedBackground))
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.white.opacity(comingSoon ? 0.04 : 0.07), lineWidth: 1)
+                .stroke(
+                    comingSoon
+                        ? Color.textTertiary.opacity(0.08)
+                        : Color(hex: "d4a017").opacity(0.12),
+                    lineWidth: 1
+                )
         )
     }
 }
@@ -424,12 +459,17 @@ private struct SuccessFeatureLine: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Color(hex: "f59e0b"))
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                )
                 .frame(width: 24)
             Text(text)
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.white.opacity(0.85))
+                .foregroundColor(.textPrimary)
         }
     }
 }

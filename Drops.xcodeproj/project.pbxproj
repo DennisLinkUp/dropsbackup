@@ -513,7 +513,7 @@
 				CODE_SIGN_ENTITLEMENTS = Drops/Drops.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_ASSET_PATHS = "\"Drops/Preview Content\"";
 				DEVELOPMENT_TEAM = 63N54256Q7;
 				ENABLE_PREVIEWS = YES;
@@ -544,7 +544,7 @@
 				CODE_SIGN_ENTITLEMENTS = Drops/Drops.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_ASSET_PATHS = "\"Drops/Preview Content\"";
 				DEVELOPMENT_TEAM = 63N54256Q7;
 				ENABLE_PREVIEWS = YES;
