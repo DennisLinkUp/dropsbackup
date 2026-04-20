@@ -602,12 +602,12 @@ struct ReliabilityInfoSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var animateRing = false
 
-    // Tier-System: 4 Stufen mit Schwellenwerten
-    private let tiers: [(label: String, threshold: Double, color: Color)] = [
-        ("Dropout",         0,   .accentRed),
-        ("Drop-Entdecker",  60,  .accentOrange),
-        ("Stammgast",       80,  .onlineGreen),
-        ("Drop-Legende",    95,  .brand),
+    // Tier-System: 4 Stufen mit Schwellenwerten + passenden SF-Symbolen
+    private let tiers: [(label: String, threshold: Double, color: Color, icon: String)] = [
+        ("Dropout",         0,   .accentRed,     "exclamationmark.triangle.fill"),
+        ("Drop-Entdecker",  60,  .accentOrange,  "binoculars.fill"),
+        ("Stammgast",       80,  .onlineGreen,   "star.fill"),
+        ("Drop-Legende",    95,  .brand,         "crown.fill"),
     ]
     private var currentTierIndex: Int {
         tiers.indices.last(where: { score.score >= tiers[$0].threshold }) ?? 0
@@ -647,12 +647,15 @@ struct ReliabilityInfoSheet: View {
                                 .fill(score.color.opacity(0.07))
                                 .frame(width: 104, height: 104)
 
-                            VStack(spacing: 3) {
+                            VStack(spacing: 4) {
+                                Image(systemName: score.badgeIcon)
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(score.color)
                                 Text(score.displayText)
-                                    .font(.system(size: 30, weight: .black, design: .rounded))
+                                    .font(.system(size: 26, weight: .black, design: .rounded))
                                     .foregroundColor(score.color)
                                 Text(score.badge)
-                                    .font(.system(size: 11, weight: .semibold))
+                                    .font(.system(size: 10, weight: .semibold))
                                     .foregroundColor(.textSecondary)
                                     .tracking(0.3)
                             }
@@ -681,25 +684,25 @@ struct ReliabilityInfoSheet: View {
                                 let isPast = i < currentTierIndex
 
                                 HStack(spacing: 14) {
-                                    // Farb-Punkt mit Check oder leer
+                                    // Farb-Kreis mit Tier-Icon
                                     ZStack {
                                         Circle()
-                                            .fill((isPast || isNow) ? tier.color.opacity(0.18) : Color.white.opacity(0.05))
-                                            .frame(width: 34, height: 34)
-                                        if isPast {
-                                            Image(systemName: "checkmark")
-                                                .font(.system(size: 13, weight: .bold))
-                                                .foregroundColor(tier.color)
-                                        } else if isNow {
-                                            Circle()
-                                                .fill(tier.color)
-                                                .frame(width: 10, height: 10)
-                                        } else {
-                                            Circle()
-                                                .stroke(Color.white.opacity(0.15), lineWidth: 1.5)
-                                                .frame(width: 10, height: 10)
-                                        }
+                                            .fill((isPast || isNow) ? tier.color.opacity(0.18) : Color.textTertiary.opacity(0.08))
+                                            .frame(width: 36, height: 36)
+                                        Image(systemName: tier.icon)
+                                            .font(.system(size: 15, weight: .semibold))
+                                            .foregroundColor(
+                                                (isPast || isNow)
+                                                    ? tier.color
+                                                    : Color.textTertiary.opacity(0.6)
+                                            )
                                     }
+                                    .overlay(
+                                        // Aktuelles Tier: dezenter Pulse-Ring
+                                        Circle()
+                                            .stroke(tier.color.opacity(isNow ? 0.45 : 0), lineWidth: 2)
+                                            .frame(width: 40, height: 40)
+                                    )
 
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(tier.label)
