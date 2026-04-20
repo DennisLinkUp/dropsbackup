@@ -1,5 +1,6 @@
 import SwiftUI
 import MapKit
+import CoreBluetooth
 import FirebaseDatabase
 import FirebaseAuth
 import FirebaseStorage
@@ -790,6 +791,11 @@ class AppStore: ObservableObject {
     /// Eingehende Beitrittsanfragen für den eigenen Drop (Host-Ansicht)
     @Published var pendingJoinRequests: [IncomingJoinRequest] = []
 
+    /// Wahr wenn WEDER Standort NOCH Bluetooth autorisiert sind — dann blockt die App,
+    /// weil ohne beides kein Drop-Matching/-Erkennen funktioniert. MainTabView
+    /// rendert dann einen Permission-Gate-Sheet mit Settings-Link.
+    @Published var needsCorePermissions: Bool = false
+
 
     /// Viewers des eigenen aktiven Drops (Drops+ „wer hat geschaut"-Feature).
     /// Key = dropID.uuidString → Liste aller Viewer sortiert nach viewedAt (neueste zuerst).
@@ -1038,6 +1044,7 @@ class AppStore: ObservableObject {
     /// Wenn die Pause länger als `SessionTimeout.duration` war → ausloggen.
     func checkSessionTimeout() {
         let ud = UserDefaults.standard
+        evaluateCorePermissions()
         guard isAuthenticated,
               let ts = ud.object(forKey: UDKey.backgroundedAt) as? Double
         else {
@@ -1052,6 +1059,23 @@ class AppStore: ObservableObject {
             isSessionLocked = true
         }
         ud.removeObject(forKey: UDKey.backgroundedAt)
+    }
+
+    /// Prüft ob Standort- UND Bluetooth-Berechtigung verweigert sind.
+    /// Setzt `needsCorePermissions = true` wenn beide weg sind; sonst false.
+    /// MainTabView reagiert darauf mit einem blockierenden Settings-Sheet.
+    func evaluateCorePermissions() {
+        let locStatus = CLLocationManager().authorizationStatus
+        let locDenied = (locStatus == .denied || locStatus == .restricted)
+
+        // Bluetooth: .notDetermined → noch nicht gefragt (nicht blocken), .denied → blockieren
+        let btAuth = CBCentralManager.authorization
+        let btDenied = (btAuth == .denied || btAuth == .restricted)
+
+        let bothDenied = locDenied && btDenied
+        if needsCorePermissions != bothDenied {
+            needsCorePermissions = bothDenied
+        }
     }
 
     /// Prüft ob der Firebase-Account noch existiert (z.B. nach externer Löschung).

@@ -74,6 +74,11 @@ struct MainTabView: View {
         .fullScreenCover(isPresented: .constant(BetaConfig.cityRestrictionEnabled && cityGate.isOutsideCity)) {
             CityGateView()
         }
+        // Wenn WEDER Standort NOCH Bluetooth autorisiert sind, blockieren wir die
+        // App-Nutzung — Drops kann dann keine Ankunft erkennen und keine Umgebung zeigen.
+        .fullScreenCover(isPresented: $store.needsCorePermissions) {
+            PermissionGateView()
+        }
         .onAppear {
             cityGate.startChecking()
             if !hasSeenWelcome {
@@ -189,3 +194,70 @@ struct WelcomeSheet: View {
     }
 }
 
+
+// MARK: - Permission Gate
+
+/// Blockierender Sheet, wenn WEDER Standort NOCH Bluetooth verfügbar sind.
+/// Ohne mindestens eines davon kann Drops keine echten Begegnungen erkennen,
+/// daher werden die Haupt-Features gesperrt bis der User mindestens eine
+/// Berechtigung freigibt.
+struct PermissionGateView: View {
+    @EnvironmentObject var store: AppStore
+
+    var body: some View {
+        ZStack {
+            Color(UIColor.systemGroupedBackground).ignoresSafeArea()
+
+            VStack(spacing: 20) {
+                Spacer()
+                ZStack {
+                    Circle()
+                        .fill(Color.brand.opacity(0.12))
+                        .frame(width: 96, height: 96)
+                    Image(systemName: "location.slash.fill")
+                        .font(.system(size: 40, weight: .semibold))
+                        .foregroundColor(.brand)
+                }
+
+                VStack(spacing: 10) {
+                    Text("Drops braucht Zugriff")
+                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                        .foregroundColor(.textPrimary)
+
+                    Text("Damit Drops echte Begegnungen erkennen kann, brauchen wir mindestens eine dieser Berechtigungen:\n\n• Standort — um dich vor Ort zu erkennen\n• Bluetooth — um dich mit Drop-Teilnehmern zu verbinden")
+                        .font(.system(size: 15))
+                        .foregroundColor(.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 24)
+                }
+
+                Spacer()
+
+                Button {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                } label: {
+                    Text("Einstellungen öffnen")
+                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity).padding(.vertical, 17)
+                        .background(Capsule().fill(Color.brand))
+                }
+                .padding(.horizontal, 24)
+
+                Button {
+                    // Manuell nochmal prüfen (falls der User die Berechtigung im
+                    // anderen Tab bereits gegeben hat und zurückkommt).
+                    store.evaluateCorePermissions()
+                } label: {
+                    Text("Erneut prüfen")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.textSecondary)
+                }
+                .padding(.bottom, 36)
+            }
+        }
+    }
+}
