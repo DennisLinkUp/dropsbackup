@@ -76,6 +76,11 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         print("Drops FCM Token: \(token)")
         // Token im UserDefaults speichern → AppStore kann ihn für Notifications nutzen
         UserDefaults.standard.set(token, forKey: "fcmToken")
+        // Token nach Firebase schreiben, damit Cloud-Functions (z.B. Friendship-Push)
+        // den Empfänger gezielt adressieren können.
+        Task { @MainActor in
+            RealtimeDBManager.shared.setMyFCMToken(token)
+        }
         // Notification aussenden damit AppStore reagieren kann
         NotificationCenter.default.post(
             name: Notification.Name("FCMTokenDidRefresh"),

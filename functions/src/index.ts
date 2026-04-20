@@ -21,9 +21,11 @@
  */
 
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import { onValueCreated } from "firebase-functions/v2/database";
 import { logger } from "firebase-functions/v2";
 import { initializeApp } from "firebase-admin/app";
 import { getDatabase } from "firebase-admin/database";
+import { getMessaging } from "firebase-admin/messaging";
 import { getAuth } from "firebase-admin/auth";
 
 const DB_URL = "https://drops-858d1-default-rtdb.europe-west1.firebasedatabase.app";
@@ -190,3 +192,77 @@ async function deleteAuthAccountsForTombstones(auth: any, uids: string[]): Promi
     if (Object.keys(updates).length > 0) await db.ref().update(updates);
     return deleted;
 }
+
+// ── Friendship Push ────────────────────────────────────────────────────────
+
+/**
+ * Wenn friends/{recipientUID}/{adderUID} = true geschrieben wird → Push an
+ * recipientUID mit "{adderName} hat dich als Freund hinzugefügt".
+ *
+ * Voraussetzung: Der Empfänger hat seinen FCM-Token in users/{uid}/fcmToken
+ * hinterlegt (schreibt der iOS-Client beim Launch).
+ *
+ * Der iOS-Client schreibt die Freundschaft bidirektional — d.h. wenn A B als
+ * Freund hinzufügt, werden BEIDE Pfade (friends/A/B und friends/B/A) geschrieben.
+ * Wir schicken den Push nur an den Empfänger (der den Add nicht ausgelöst hat),
+ * damit der Adder keinen Push für seinen eigenen Add kriegt.
+ */
+export const onFriendshipAdded = onValueCreated(
+    { ref: "/friends/{recipientUID}/{adderUID}", region: "europe-west1" },
+    async (event) => {
+        const { recipientUID, adderUID } = event.params;
+        if (recipientUID === adderUID) return;
+
+        const db = getDatabase();
+
+        // Metadaten parallel laden — Token des Empfängers + Name des Adders
+        const [tokenSnap, adderSnap, markerSnap] = await Promise.all([
+            db.ref(`users/${recipientUID}/fcmToken`).once("value"),
+            db.ref(`users/${adderUID}/name`).once("value"),
+            db.ref(`friendshipPushSent/${recipientUID}/${adderUID}`).once("value"),
+        ]);
+
+        // Der iOS-Client schreibt beide Pfade — wir würden sonst zweimal pushen.
+        // Markerwert dedupliziert: der erste der beiden Trigger setzt den Marker,
+        // der zweite findet ihn und bricht ab.
+        if (markerSnap.exists()) {
+            logger.debug("onFriendshipAdded: already sent", { recipientUID, adderUID });
+            return;
+        }
+        await db.ref(`friendshipPushSent/${recipientUID}/${adderUID}`)
+            .set({ at: Date.now() });
+
+        const token = tokenSnap.val() as string | null;
+        if (!token) {
+            logger.info("onFriendshipAdded: no FCM token for recipient", { recipientUID });
+            return;
+        }
+        const adderName = (adderSnap.val() as string | null) ?? "Jemand";
+
+        try {
+            await getMessaging().send({
+                token,
+                notification: {
+                    title: "Neuer Freund",
+                    body: `${adderName} hat dich als Freund hinzugefügt.`,
+                },
+                apns: {
+                    payload: {
+                        aps: {
+                            sound: "default",
+                            category: "FRIENDSHIP_ADDED",
+                        },
+                    },
+                },
+                data: {
+                    type: "friendship_added",
+                    adderUID,
+                    adderName,
+                },
+            });
+            logger.info("onFriendshipAdded sent", { recipientUID, adderUID });
+        } catch (e: any) {
+            logger.warn("FCM send failed", { recipientUID, error: e?.message });
+        }
+    }
+);

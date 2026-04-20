@@ -869,6 +869,16 @@ class AppStore: ObservableObject {
                 RealtimeDBManager.shared.cleanupOrphanedDrops(ownerUID: cleanupUID, activeDropIDs: activeIDs)
             }
 
+            // FCM-Token sicherstellen — damit Cloud-Function-Pushes den User erreichen.
+            // AppDelegate schreibt bereits bei Token-Refresh, aber wenn der Token aus einer
+            // früheren Session gecacht ist und kein Refresh in dieser Session feuert, bleibt
+            // Firebase sonst ohne Token-Zuordnung.
+            if let uid = FirebaseAuth.Auth.auth().currentUser?.uid,
+               let token = UserDefaults.standard.string(forKey: "fcmToken"),
+               !token.isEmpty {
+                RealtimeDBManager.shared.setMyFCMToken(token, uid: uid)
+            }
+
             // Zusätzlich Firebase-Profil laden (Fallback + übrige Felder)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 guard let self = self else { return }
@@ -1836,19 +1846,13 @@ class AppStore: ObservableObject {
         friendsObserverInitialized = true
     }
 
-    /// Lokale Notification wenn eine neue Freundschaft erkannt wurde.
-    /// Bei App im Vordergrund zeigt iOS den Banner oben; bei Hintergrund als Push.
+    /// Die eigentliche Push-Benachrichtigung kommt vom Cloud-Function-Trigger
+    /// `onFriendshipAdded` — lokal machen wir nichts mehr, um Doppel-Pushes zu
+    /// vermeiden. Wenn die Cloud Function noch nicht deployed ist, sieht der User
+    /// den neuen Kontakt trotzdem sofort in der Liste (Live-Observer).
     private func notifyFriendshipAdded(name: String) {
-        let content = UNMutableNotificationContent()
-        content.title = "Neuer Freund"
-        content.body  = "\(name) hat dich als Freund hinzugefügt."
-        content.sound = .default
-        content.categoryIdentifier = "FRIENDSHIP_ADDED"
-        // Unique ID, damit mehrere gleichzeitig funktionieren
-        let id = "friendship-\(name)-\(UUID().uuidString)"
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
-        let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
-        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+        // Intentionally left blank — siehe functions/src/index.ts onFriendshipAdded
+        _ = name
     }
 
     func stopObservingDropIns() {

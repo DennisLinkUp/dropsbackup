@@ -943,6 +943,14 @@ class RealtimeDBManager: ObservableObject {
         db.child("users").child(uid).updateChildValues(["profileImageURL": urlString])
     }
 
+    /// Persistiert den FCM-Token unter `users/{uid}/fcmToken`, damit Cloud-Functions
+    /// (Friendship-Push u.ä.) den User adressieren können.
+    func setMyFCMToken(_ token: String, uid: String? = nil) {
+        let targetUID = uid ?? Auth.auth().currentUser?.uid
+        guard let u = targetUID, !token.isEmpty else { return }
+        db.child("users").child(u).updateChildValues(["fcmToken": token])
+    }
+
     /// Lädt eine Freundes-Liste EINMALIG — für Legacy-Aufrufer die nicht observe nutzen.
     func loadMyFriends(ownerUID: String) async -> [FriendSnapshot] {
         guard let friendsSnap = try? await db.child("friends").child(ownerUID).getData(),
