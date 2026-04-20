@@ -7,6 +7,23 @@ import FirebaseFirestore
 import UserNotifications
 import ActivityKit
 
+// MARK: - Timeout Guard (internal, für deleteAccount)
+
+/// Stellt sicher dass eine Continuation genau einmal resumt wird, egal ob die
+/// Operation oder der Timeout-Timer zuerst fertig ist.
+final class TimeoutGuard: @unchecked Sendable {
+    private var done = false
+    private let lock = NSLock()
+
+    func resume(_ block: () -> Void) {
+        lock.lock()
+        guard !done else { lock.unlock(); return }
+        done = true
+        lock.unlock()
+        block()
+    }
+}
+
 // MARK: - User
 
 struct User: Identifiable, Equatable {
@@ -1084,16 +1101,22 @@ class AppStore: ObservableObject {
         }
     }
 
-    /// Führt eine Void-async-Operation aus und bricht nach `seconds` ab,
-    /// damit die UI nicht ewig hängt wenn Firebase nicht antwortet.
+    /// Führt eine Void-async-Operation aus und bricht nach `seconds` ab.
+    /// WICHTIG: Nutzt Task.detached + NSLock statt withTaskGroup, weil
+    /// withTaskGroup auf ALLE Child-Tasks wartet (auch gecancelte). Firebase-
+    /// Async-APIs reagieren nicht auf Cancellation → würden sonst ewig hängen.
+    /// Mit diesem Pattern geht's weiter sobald Timer ODER Operation fertig ist.
     private static func withTimeout(seconds: Int, operation: @escaping @Sendable () async -> Void) async {
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { await operation() }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            let state = TimeoutGuard()
+            Task.detached {
+                await operation()
+                state.resume { cont.resume() }
             }
-            _ = await group.next()
-            group.cancelAll()
+            Task.detached {
+                try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+                state.resume { cont.resume() }
+            }
         }
     }
 
@@ -1102,15 +1125,16 @@ class AppStore: ObservableObject {
         seconds: Int, fallback: T,
         operation: @escaping @Sendable () async -> T
     ) async -> T {
-        await withTaskGroup(of: T?.self) { group in
-            group.addTask { await operation() }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
-                return nil
+        await withCheckedContinuation { (cont: CheckedContinuation<T, Never>) in
+            let state = TimeoutGuard()
+            Task.detached {
+                let result = await operation()
+                state.resume { cont.resume(returning: result) }
             }
-            let result = await group.next()
-            group.cancelAll()
-            return (result ?? nil) ?? fallback
+            Task.detached {
+                try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+                state.resume { cont.resume(returning: fallback) }
+            }
         }
     }
 

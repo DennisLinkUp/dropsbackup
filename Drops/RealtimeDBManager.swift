@@ -216,80 +216,47 @@ class RealtimeDBManager: ObservableObject {
 
     /// Löscht alle Nutzerdaten aus Realtime DB, Firestore und Storage.
     /// MUSS aufgerufen werden BEVOR der Auth-Account gelöscht wird — danach blockieren
-    /// die Security Rules jeglichen Zugriff. Der Caller muss awaiten.
+    /// die Security Rules jeglichen Zugriff.
+    ///
+    /// Bewusst NUR Direktpfade, keine Scans: Security Rules für `.read` auf Top-Level
+    /// Collections wie `drops` oder `encounters` sind i.d.R. per-Element definiert,
+    /// wodurch ein `getData()` auf die ganze Collection hängen oder scheitern kann.
+    /// Deshalb räumen wir hier nur Pfade ab, bei denen der User garantiert
+    /// Schreibrechte hat. Verwaiste Drop-/Encounter-Einträge werden durch den
+    /// Admin-Cleanup bzw. `cleanupOrphanedDrops` bereinigt.
     func deleteUserData(uid: String) async {
-        // 1. Eigene Drops (gespeichert unter UUID, nicht uid → scan nötig)
-        //    Mit-Löschung der verknüpften dropins und joinRequests für eigene Drops.
-        if let dropsSnap = try? await db.child("drops").getData() {
-            for child in dropsSnap.children {
-                guard let snap = child as? DataSnapshot,
-                      let dict = snap.value as? [String: Any],
-                      (dict["userID"] as? String) == uid else { continue }
-                try? await db.child("drops").child(snap.key).removeValue()
-                try? await db.child("dropins").child(snap.key).removeValue()
-                try? await db.child("joinRequests").child(snap.key).removeValue()
-            }
-        }
-
-        // 2. Eigene Beitritte/Anfragen zu fremden Drops
-        if let dropinsSnap = try? await db.child("dropins").getData() {
-            for child in dropinsSnap.children {
-                guard let dropSnap = child as? DataSnapshot else { continue }
-                try? await db.child("dropins").child(dropSnap.key).child(uid).removeValue()
-            }
-        }
-        if let reqSnap = try? await db.child("joinRequests").getData() {
-            for child in reqSnap.children {
-                guard let dropSnap = child as? DataSnapshot else { continue }
-                try? await db.child("joinRequests").child(dropSnap.key).child(uid).removeValue()
-            }
-        }
-
-        // 3. Begegnungen (scan nach partnerA/partnerB)
-        if let encSnap = try? await db.child("encounters").getData() {
-            for child in encSnap.children {
-                guard let snap = child as? DataSnapshot,
-                      let dict = snap.value as? [String: Any],
-                      (dict["partnerA"] as? String) == uid || (dict["partnerB"] as? String) == uid
-                else { continue }
-                try? await db.child("encounters").child(snap.key).removeValue()
-            }
-        }
-
-        // 4. Discovery-Indizes (phoneIndex + emailIndex)
-        if let phoneSnap = try? await db.child("phoneIndex").getData() {
-            for child in phoneSnap.children {
-                guard let s = child as? DataSnapshot,
-                      let dict = s.value as? [String: Any],
-                      (dict["uid"] as? String) == uid else { continue }
-                try? await db.child("phoneIndex").child(s.key).removeValue()
-            }
-        }
-        if let emailSnap = try? await db.child("emailIndex").getData() {
-            for child in emailSnap.children {
-                guard let s = child as? DataSnapshot,
-                      let dict = s.value as? [String: Any],
-                      (dict["uid"] as? String) == uid else { continue }
-                try? await db.child("emailIndex").child(s.key).removeValue()
-            }
-        }
-
-        // 5. Freundesliste und Profil
-        try? await db.child("friends").child(uid).removeValue()
+        // 1. RTDB: Profil, Freunde
         try? await db.child("users").child(uid).removeValue()
+        try? await db.child("friends").child(uid).removeValue()
 
-        // 6. Firestore-Profil (Reliability-Score, profileImageURL)
+        // 2. RTDB: eigenen Discovery-Index-Eintrag direkt entfernen (kein Scan nötig —
+        //    wir kennen Telefon aus UserDefaults und E-Mail aus Auth)
+        let savedPhone = UserDefaults.standard.string(forKey: UDKey.userPhone) ?? ""
+        if !savedPhone.isEmpty {
+            let normPhone = Self.normalizePhone(savedPhone)
+            if !normPhone.isEmpty {
+                try? await db.child("phoneIndex").child(normPhone).removeValue()
+            }
+        }
+        let authPhone = Auth.auth().currentUser?.phoneNumber ?? ""
+        if !authPhone.isEmpty {
+            let normAuth = Self.normalizePhone(authPhone)
+            if !normAuth.isEmpty && normAuth != Self.normalizePhone(savedPhone) {
+                try? await db.child("phoneIndex").child(normAuth).removeValue()
+            }
+        }
+        if let email = Auth.auth().currentUser?.email, !email.isEmpty {
+            let emailKey = email.lowercased()
+                .replacingOccurrences(of: ".", with: ",")
+                .replacingOccurrences(of: "@", with: "-at-")
+            try? await db.child("emailIndex").child(emailKey).removeValue()
+        }
+
+        // 3. Firestore: Profilergänzung (Reliability-Score, profileImageURL)
         try? await Firestore.firestore().collection("users").document(uid).delete()
 
-        // 7. Firebase Storage (Profilbild)
+        // 4. Firebase Storage: Profilbild
         try? await Storage.storage().reference().child("profileImages/\(uid).jpg").delete()
-
-        // 8. Soft-Delete-Fallback falls Profil-Löschung fehlschlug (z.B. Rules-Edge-Case)
-        if let snap = try? await db.child("users").child(uid).getData(), snap.exists() {
-            try? await db.child("users").child(uid).updateChildValues([
-                "isDeleted": true, "name": "[Gelöscht]", "email": ""
-            ])
-        }
     }
 
     /// Schreibt den Drops+ Status des aktuell eingeloggten Users nach Firebase.
