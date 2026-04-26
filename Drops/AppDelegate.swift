@@ -2,6 +2,7 @@ import UIKit
 import FirebaseCore
 import FirebaseAuth
 import FirebaseMessaging
+import FirebaseCrashlytics
 import UserNotifications
 
 // MARK: - AppDelegate
@@ -17,6 +18,26 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
     ) -> Bool {
         // Firebase so früh wie möglich konfigurieren – vor dem ersten SwiftUI-Frame.
         FirebaseApp.configure()
+
+        // Crashlytics aktivieren (wird automatisch durch FirebaseApp.configure() gestartet).
+        // In Debug-Builds unterdrücken wir das Senden von Crashes an Firebase,
+        // damit Entwicklungs-Crashes keine Production-Metriken verfälschen.
+        #if DEBUG
+        Crashlytics.crashlytics().setCrashlyticsCollectionEnabled(false)
+        #else
+        Crashlytics.crashlytics().setCrashlyticsCollectionEnabled(true)
+        #endif
+
+        // Falls beim letzten App-Start ein Crash war, frühzeitig loggen damit wir
+        // sehen welcher User betroffen war.
+        if Crashlytics.crashlytics().didCrashDuringPreviousExecution() {
+            Crashlytics.crashlytics().log("⚠️ Previous session ended with a crash")
+        }
+
+        // User-ID zuordnen sobald bekannt — Crashlytics kann dann pro User filtern.
+        if let uid = Auth.auth().currentUser?.uid {
+            Crashlytics.crashlytics().setUserID(uid)
+        }
 
         // FCM Delegate setzen
         Messaging.messaging().delegate = self

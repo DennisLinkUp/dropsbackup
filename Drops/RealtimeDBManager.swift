@@ -101,6 +101,7 @@ class RealtimeDBManager: ObservableObject {
         guard let uid = Auth.auth().currentUser?.uid else { completion(nil); return }
         db.child("users").child(uid).observeSingleEvent(of: .value) { snapshot in
             guard let dict = snapshot.value as? [String: Any] else { completion(nil); return }
+            let settings = dict["settings"] as? [String: Any] ?? [:]
             let profile = UserProfileSnapshot(
                 name:            dict["name"]            as? String,
                 email:           dict["email"]           as? String,
@@ -109,10 +110,51 @@ class RealtimeDBManager: ObservableObject {
                 isAdmin:         dict["isAdmin"]         as? Bool ?? false,
                 isBanned:        dict["isBanned"]        as? Bool ?? false,
                 isPlusUser:      dict["isPlusUser"]      as? Bool ?? false,
-                profileImageURL: nil  // wird aus Firestore geladen
+                profileImageURL: nil,  // wird aus Firestore geladen
+                settings:        UserSettingsSnapshot(
+                    radiusFilter:         settings["radiusFilter"]         as? Double,
+                    ageFilterMin:         settings["ageFilterMin"]         as? Int,
+                    ageFilterMax:         settings["ageFilterMax"]         as? Int,
+                    selectedAgeGroups:    settings["selectedAgeGroups"]    as? [String],
+                    userInterests:        settings["userInterests"]        as? [String],
+                    blockedUsers:         settings["blockedUsers"]         as? [String],
+                    unavailabilityReason: settings["unavailabilityReason"] as? String,
+                    genderFilterEnabled:  settings["genderFilterEnabled"]  as? Bool,
+                    activityCategoryFilter: settings["activityCategoryFilter"] as? String
+                )
             )
             completion(profile)
         }
+    }
+
+    /// Persistiert die Nutzer-Einstellungen (Radius, Filter etc.) in der Realtime DB,
+    /// damit sie einen Logout/Re-Login oder Gerätewechsel überleben.
+    /// Wird aus `AppStore.saveAll()` getriggert.
+    func saveUserSettings(
+        radiusFilter: Double,
+        ageFilterMin: Int,
+        ageFilterMax: Int,
+        selectedAgeGroups: [String],
+        userInterests: [String],
+        blockedUsers: [String],
+        unavailabilityReason: String,
+        genderFilterEnabled: Bool,
+        activityCategoryFilter: String
+    ) {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        let payload: [String: Any] = [
+            "radiusFilter":           radiusFilter,
+            "ageFilterMin":           ageFilterMin,
+            "ageFilterMax":           ageFilterMax,
+            "selectedAgeGroups":      selectedAgeGroups,
+            "userInterests":          userInterests,
+            "blockedUsers":           blockedUsers,
+            "unavailabilityReason":   unavailabilityReason,
+            "genderFilterEnabled":    genderFilterEnabled,
+            "activityCategoryFilter": activityCategoryFilter,
+            "updatedAt":              ServerValue.timestamp()
+        ]
+        db.child("users").child(uid).child("settings").updateChildValues(payload)
     }
 
     /// Aktualisiert den Namen im Realtime Database Profil.
@@ -124,7 +166,8 @@ class RealtimeDBManager: ObservableObject {
         db.child("users").child(uid).updateChildValues(data)
     }
 
-    /// Schreibt den Nutzer in phoneIndex und/oder emailIndex, damit andere ihn per Kontakt-Abgleich finden.
+    /// Schreibt den Nutzer in phoneIndex, emailIndex und usernameIndex, damit andere ihn
+    /// per Kontakt-Abgleich oder Invite-Link finden.
     /// Wird bei jedem Login aufgerufen — idempotent, schadet bei Mehrfachaufruf nicht.
     func registerInDiscoveryIndex(uid: String, name: String, phone: String?, email: String?) {
         let payload: [String: Any] = ["uid": uid, "name": name]
@@ -410,6 +453,11 @@ class RealtimeDBManager: ObservableObject {
         ]
         if !hostGender.isEmpty { payload["hostGender"] = hostGender }
         dropRef.setValue(payload)
+        // Auto-Cleanup bei App-Termination (Force-Quit, Deinstallation, Crash):
+        // Firebase löscht den Drop, sobald die Client-Verbindung abreißt.
+        // Hintergrund allein triggert das nicht — Connection bleibt bei
+        // backgroundeter App bestehen, Drop bleibt also sichtbar.
+        dropRef.onDisconnectRemoveValue()
     }
 
     /// Verlängert den Drop — aktualisiert nur das expiresAt-Feld in Firebase.
@@ -610,6 +658,37 @@ class RealtimeDBManager: ObservableObject {
         ]
         if let age = joinerAge { payload["age"] = age }
         joinRef.setValue(payload)
+        // Auto-Cleanup bei App-Termination — sonst bleiben Geister-Joiner hängen
+        joinRef.onDisconnectRemoveValue()
+    }
+
+    /// Aktualisiert die Live-Position eines Joiners — vom Joiner selbst geschrieben.
+    /// Der Host observiert diesen Pfad und rendert den Joiner-Pin an der neuen Stelle.
+    func updateJoinerLiveLocation(dropID: String, joinerID: String,
+                                  lat: Double, lng: Double) {
+        db.child("dropins").child(dropID).child(joinerID).updateChildValues([
+            "lat":      lat,
+            "lng":      lng,
+            "locTime":  ServerValue.timestamp()
+        ])
+    }
+
+    /// Host observiert Joiner-Positionen für seinen Drop — .childChanged + .childAdded.
+    /// Callback bekommt die aktuelle Joiner-UID + coordinate bei jedem Update.
+    @discardableResult
+    func observeJoinerLocations(dropID: String,
+                                onUpdate: @escaping (_ joinerID: String, _ lat: Double, _ lng: Double) -> Void) -> DatabaseHandle {
+        let ref = db.child("dropins").child(dropID)
+        return ref.observe(.childChanged) { snapshot in
+            guard let dict = snapshot.value as? [String: Any],
+                  let lat  = dict["lat"] as? Double,
+                  let lng  = dict["lng"] as? Double else { return }
+            DispatchQueue.main.async { onUpdate(snapshot.key, lat, lng) }
+        }
+    }
+
+    func removeJoinerLocationObserver(_ handle: DatabaseHandle, dropID: String) {
+        db.child("dropins").child(dropID).removeObserver(withHandle: handle)
     }
 
     /// Beobachtet neue DropIns für einen Drop (für den Host).
@@ -641,12 +720,15 @@ class RealtimeDBManager: ObservableObject {
 
     /// Joiner sendet Beitrittsanfrage — Status: "pending"
     func sendJoinRequest(dropID: String, joinerID: String, joinerName: String,
-                         joinerEmoji: String, joinerAge: Int?, profileImageURL: String?) {
+                         joinerEmoji: String, joinerAge: Int?, profileImageURL: String?,
+                         reliabilityPoints: Int = 100, isPlus: Bool = false) {
         var payload: [String: Any] = [
-            "name":        joinerName,
-            "emoji":       joinerEmoji,
-            "status":      "pending",
-            "requestedAt": ServerValue.timestamp()
+            "name":              joinerName,
+            "emoji":             joinerEmoji,
+            "status":            "pending",
+            "reliabilityPoints": reliabilityPoints,
+            "isPlus":            isPlus,
+            "requestedAt":       ServerValue.timestamp()
         ]
         if let age = joinerAge { payload["age"] = age }
         if let url = profileImageURL { payload["profileImageURL"] = url }
@@ -659,6 +741,8 @@ class RealtimeDBManager: ObservableObject {
                                      onNew: @escaping (_ joinerID: String, _ name: String,
                                                        _ emoji: String, _ age: Int?,
                                                        _ imageURL: String?,
+                                                       _ reliabilityPoints: Int,
+                                                       _ isPlus: Bool,
                                                        _ requestedAt: Date) -> Void) -> DatabaseHandle {
         db.child("joinRequests").child(dropID).observe(.childAdded) { snap in
             guard let dict   = snap.value as? [String: Any],
@@ -668,9 +752,11 @@ class RealtimeDBManager: ObservableObject {
             let emoji    = dict["emoji"]          as? String ?? ""
             let age      = dict["age"]            as? Int
             let imageURL = dict["profileImageURL"] as? String
+            let points   = dict["reliabilityPoints"] as? Int ?? 100
+            let isPlus   = dict["isPlus"]            as? Bool ?? false
             let ts       = (dict["requestedAt"]   as? Double ?? 0) / 1000
             let date     = ts > 0 ? Date(timeIntervalSince1970: ts) : Date()
-            DispatchQueue.main.async { onNew(snap.key, name, emoji, age, imageURL, date) }
+            DispatchQueue.main.async { onNew(snap.key, name, emoji, age, imageURL, points, isPlus, date) }
         }
     }
 
@@ -748,6 +834,7 @@ class RealtimeDBManager: ObservableObject {
                     id:           uid,
                     name:         data["name"]         as? String ?? "–",
                     email:        data["email"]        as? String ?? "–",
+                    phoneNumber:  data["phoneNumber"]  as? String ?? "",
                     createdAt:    (data["createdAt"]   as? Double).map { Date(timeIntervalSince1970: $0 / 1000) },
                     isAdmin:      data["isAdmin"]      as? Bool ?? false,
                     isBanned:     data["isBanned"]     as? Bool ?? false,
@@ -882,11 +969,110 @@ class RealtimeDBManager: ObservableObject {
             group.leave()
         }
 
+        var openReports = 0
+        group.enter()
+        db.child("reports").observeSingleEvent(of: .value) { snapshot in
+            for child in snapshot.children {
+                guard let snap = child as? DataSnapshot,
+                      let dict = snap.value as? [String: Any] else { continue }
+                let status = dict["status"] as? String ?? "open"
+                if status == "open" { openReports += 1 }
+            }
+            group.leave()
+        }
+
         group.notify(queue: .main) {
             completion(AdminStats(totalUsers: total, bannedUsers: banned,
                                   verifiedUsers: 0, adminUsers: admins,
-                                  activeDrops: activeDropCount))
+                                  activeDrops: activeDropCount,
+                                  openReports: openReports))
         }
+    }
+
+    /// Lädt alle Reports — neueste zuerst. Für's Admin-Panel.
+    func adminFetchReports(completion: @escaping ([AdminReportEntry]) -> Void) {
+        db.child("reports").observeSingleEvent(of: .value) { snapshot in
+            var entries: [AdminReportEntry] = []
+            for child in snapshot.children {
+                guard let snap = child as? DataSnapshot,
+                      let dict = snap.value as? [String: Any] else { continue }
+                let createdMs = dict["createdAt"] as? Double ?? 0
+                let entry = AdminReportEntry(
+                    id:           snap.key,
+                    reporterUID:  dict["reporterUID"]  as? String ?? "",
+                    reportedUID:  dict["reportedUID"]  as? String ?? "",
+                    reportedName: dict["reportedName"] as? String ?? "",
+                    reason:       dict["reason"]       as? String ?? "",
+                    details:      dict["details"]      as? String ?? "",
+                    createdAt:    Date(timeIntervalSince1970: createdMs / 1000),
+                    status:       dict["status"]       as? String ?? "open"
+                )
+                entries.append(entry)
+            }
+            entries.sort { $0.createdAt > $1.createdAt }
+            DispatchQueue.main.async { completion(entries) }
+        }
+    }
+
+    /// Lädt alle **aktiven** Drops für's Admin-Panel. Neueste zuerst.
+    func adminFetchActiveDrops(completion: @escaping ([AdminDropEntry]) -> Void) {
+        db.child("drops").observeSingleEvent(of: .value) { snapshot in
+            var entries: [AdminDropEntry] = []
+            let now = Date().timeIntervalSince1970
+            for child in snapshot.children {
+                guard let snap = child as? DataSnapshot,
+                      let dict = snap.value as? [String: Any] else { continue }
+                let expiresAt = dict["expiresAt"] as? Double ?? 0
+                // Nur wirklich aktive (expiresAt in der Zukunft)
+                if expiresAt > 0 && expiresAt < now { continue }
+                let entry = AdminDropEntry(
+                    id:            snap.key,
+                    hostUID:       dict["userID"]       as? String ?? "",
+                    hostName:      dict["displayName"]  as? String ?? "—",
+                    emoji:         dict["emoji"]        as? String ?? "🔵",
+                    activityName:  dict["activityName"] as? String ?? "",
+                    latitude:      dict["latitude"]     as? Double ?? 0,
+                    longitude:     dict["longitude"]    as? Double ?? 0,
+                    participants:  (dict["participants"] as? [String: Any])?.count ?? 1,
+                    createdAt:     Date(timeIntervalSince1970: (dict["timestamp"] as? Double ?? 0) / 1000),
+                    expiresAt:     Date(timeIntervalSince1970: expiresAt)
+                )
+                entries.append(entry)
+            }
+            entries.sort { $0.createdAt > $1.createdAt }
+            DispatchQueue.main.async { completion(entries) }
+        }
+    }
+
+    /// Drop **aus der Admin-Perspektive** löschen: unpublished + dropins/joinRequests weg.
+    /// Optionaler Push an den Host mit dem Grund.
+    func adminDeleteDrop(dropID: String, hostUID: String?, reason: String?) {
+        let updates: [String: Any] = [
+            "drops/\(dropID)":        NSNull(),
+            "dropins/\(dropID)":      NSNull(),
+            "joinRequests/\(dropID)": NSNull()
+        ]
+        db.updateChildValues(updates)
+
+        // Wenn Host-UID bekannt → Nachricht in users/{uid}/adminNotices ablegen.
+        // Cloud Function kann daraus einen Push machen (Struktur für später).
+        if let uid = hostUID, !uid.isEmpty {
+            let noticeID = String(Int(Date().timeIntervalSince1970 * 1000))
+            db.child("users").child(uid).child("adminNotices").child(noticeID).setValue([
+                "type":    "drop_removed",
+                "dropID":  dropID,
+                "reason":  reason ?? "Verstoß gegen die Nutzungsbedingungen",
+                "at":      ServerValue.timestamp()
+            ])
+        }
+    }
+
+    /// Setzt den Status eines Reports (open / resolved / dismissed).
+    func adminSetReportStatus(reportID: String, status: String) {
+        db.child("reports").child(reportID).updateChildValues([
+            "status":     status,
+            "resolvedAt": Int(Date().timeIntervalSince1970 * 1000)
+        ])
     }
 
     /// Prüft beim Login ob der User gebannt ist
@@ -915,7 +1101,9 @@ class RealtimeDBManager: ObservableObject {
     }
 
 
-    /// Fügt gegenseitige Freundschaft in Firebase hinzu.
+    /// **Deprecated** — direkter bidirektionaler Add wird nur noch intern
+    /// vom Accept-Flow genutzt. Neue Client-Aufrufe gehen über
+    /// `sendFriendRequest` → der Empfänger muss annehmen.
     func addFriend(theirUID: String) {
         guard let myUID = Auth.auth().currentUser?.uid else { return }
         db.child("friends").child(myUID).child(theirUID).setValue(true)
@@ -929,11 +1117,93 @@ class RealtimeDBManager: ObservableObject {
         db.child("friends").child(theirUID).child(myUID).removeValue()
     }
 
+    // MARK: - Friend Requests
+
+    /// Schickt eine Freundschaftsanfrage von mir an `theirUID`.
+    /// Schreibt nach `friendRequests/{theirUID}/{myUID}` mit meinem Profil
+    /// als Payload — damit Empfänger sofort Name + Avatar sehen kann ohne
+    /// extra Lookup. Cloud Function `onFriendRequestCreated` sendet Push.
+    func sendFriendRequest(theirUID: String, myName: String, myProfileImageURL: String?) {
+        guard let myUID = Auth.auth().currentUser?.uid else { return }
+        guard myUID != theirUID else { return }   // Kein Selbst-Add
+        var payload: [String: Any] = [
+            "fromName":  myName,
+            "createdAt": ServerValue.timestamp()
+        ]
+        if let url = myProfileImageURL, !url.isEmpty {
+            payload["fromImageURL"] = url
+        }
+        db.child("friendRequests").child(theirUID).child(myUID).setValue(payload)
+    }
+
+    /// Nimmt eine Freundschaftsanfrage von `fromUID` an:
+    /// — setzt `friends/{myUID}/{fromUID}` + `friends/{fromUID}/{myUID}`
+    /// — löscht `friendRequests/{myUID}/{fromUID}`
+    /// Cloud Function `onFriendshipAdded` sendet Push an fromUID.
+    func acceptFriendRequest(fromUID: String) {
+        guard let myUID = Auth.auth().currentUser?.uid else { return }
+        let updates: [String: Any] = [
+            "friends/\(myUID)/\(fromUID)": true,
+            "friends/\(fromUID)/\(myUID)": true,
+            "friendRequests/\(myUID)/\(fromUID)": NSNull()
+        ]
+        db.updateChildValues(updates)
+    }
+
+    /// Lehnt eine Freundschaftsanfrage ab — löscht sie kommentarlos.
+    /// Kein Push an den Sender (sonst wäre es Druck, eine Erklärung zu geben).
+    func rejectFriendRequest(fromUID: String) {
+        guard let myUID = Auth.auth().currentUser?.uid else { return }
+        db.child("friendRequests").child(myUID).child(fromUID).removeValue()
+    }
+
+    /// Live-Observer auf eingehende Freundschaftsanfragen.
+    /// Feuert bei jeder Änderung (neue Anfrage, angenommen, abgelehnt).
+    @discardableResult
+    func observeIncomingFriendRequests(onUpdate: @escaping ([FriendRequestSnapshot]) -> Void) -> DatabaseHandle? {
+        guard let myUID = Auth.auth().currentUser?.uid else { return nil }
+        let ref = db.child("friendRequests").child(myUID)
+        return ref.observe(.value) { snapshot in
+            var list: [FriendRequestSnapshot] = []
+            for child in snapshot.children {
+                guard let c = child as? DataSnapshot,
+                      let dict = c.value as? [String: Any] else { continue }
+                let fromUID = c.key
+                let name    = dict["fromName"] as? String ?? "Unbekannt"
+                let url     = dict["fromImageURL"] as? String
+                let createdAtMs = dict["createdAt"] as? TimeInterval
+                let createdAt: Date = createdAtMs.map {
+                    Date(timeIntervalSince1970: $0 > 10_000_000_000 ? $0 / 1000 : $0)
+                } ?? Date()
+                list.append(FriendRequestSnapshot(
+                    fromUID:         fromUID,
+                    fromName:        name,
+                    fromImageURL:    url,
+                    createdAt:       createdAt
+                ))
+            }
+            // Neueste zuerst
+            list.sort { $0.createdAt > $1.createdAt }
+            DispatchQueue.main.async { onUpdate(list) }
+        }
+    }
+
+    func removeFriendRequestsObserver(_ handle: DatabaseHandle) {
+        guard let myUID = Auth.auth().currentUser?.uid else { return }
+        db.child("friendRequests").child(myUID).removeObserver(withHandle: handle)
+    }
+
     /// Snapshot eines Freundes — minimal ausgefüllt aus `users/{uid}` für die Freunde-Liste.
     struct FriendSnapshot {
         let uid: String
         let name: String
         let profileImageURL: String?
+        /// Unix-Timestamp (Sekunden) des letzten App-Heartbeats dieses Users.
+        /// Wird für die Online-Status-Anzeige genutzt (online = letzte 5 Min).
+        let lastActiveAt: TimeInterval?
+        /// Aktuelle Reliability-Punkte des Users (Start = 100, mit Events veränderlich).
+        /// Fallback auf `startingPoints` wenn der User noch nie Punkte persistiert hat.
+        let reliabilityPoints: Int
     }
 
     /// Schreibt die eigene Profilbild-URL nach `users/{uid}/profileImageURL` in RTDB.
@@ -943,12 +1213,95 @@ class RealtimeDBManager: ObservableObject {
         db.child("users").child(uid).updateChildValues(["profileImageURL": urlString])
     }
 
+    /// Spiegelt den aktuellen Reliability-Score nach `users/{uid}/reliabilityPoints`.
+    /// Firestore ist die authoritative Quelle für alle Score-Felder, aber RTDB
+    /// bekommt die **kompakte Gesamtpunktzahl** damit Freunde-Observer und
+    /// Drop-Pin-Badges den Score ohne Firestore-Call lesen können.
+    func setMyReliabilityPoints(_ points: Int) {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        db.child("users").child(uid).updateChildValues([
+            "reliabilityPoints": points
+        ])
+    }
+
+    /// Schreibt einen "online"-Heartbeat nach `users/{uid}/lastActiveAt` mit
+    /// dem Server-Timestamp. Freunde-Observer lesen diesen Wert und zeigen
+    /// den User als online wenn der Timestamp < 5 Minuten alt ist.
+    /// Wird aus der App getriggert: beim Login + bei jedem Foreground-Enter.
+    func markOnlineHeartbeat() {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        db.child("users").child(uid).updateChildValues([
+            "lastActiveAt": ServerValue.timestamp()
+        ])
+    }
+
+    /// Liest die eigene Profilbild-URL aus der Realtime DB.
+    /// Fallback falls Firestore nach Re-Login noch keinen Token durchgerouted hat.
+    func loadMyProfileImageURL(completion: @escaping (String?) -> Void) {
+        guard let uid = Auth.auth().currentUser?.uid else { completion(nil); return }
+        db.child("users").child(uid).child("profileImageURL").observeSingleEvent(of: .value) { snap in
+            let url = snap.value as? String
+            DispatchQueue.main.async { completion(url) }
+        }
+    }
+
     /// Persistiert den FCM-Token unter `users/{uid}/fcmToken`, damit Cloud-Functions
     /// (Friendship-Push u.ä.) den User adressieren können.
     func setMyFCMToken(_ token: String, uid: String? = nil) {
         let targetUID = uid ?? Auth.auth().currentUser?.uid
         guard let u = targetUID, !token.isEmpty else { return }
         db.child("users").child(u).updateChildValues(["fcmToken": token])
+    }
+
+    /// Schreibt +10 App-Invite-Bonus direkt auf das Konto des Einladenden (UID).
+    /// Wird aufgerufen wenn ein Neuling via `/invite/{uid}` Onboarding abschließt.
+    func creditAppInviteBonus(inviterUID: String) {
+        guard !inviterUID.isEmpty else { return }
+        let ref = db.child("users").child(inviterUID).child("reliabilityAppInviteBonus")
+        ref.runTransactionBlock { currentData in
+            let current = currentData.value as? Int ?? 0
+            currentData.value = current + 10
+            return .success(withValue: currentData)
+        }
+    }
+
+    /// Schreibt +5 Drop-Invite-Bonus auf das Konto des Drop-Erstellers.
+    /// Wird aufgerufen wenn ein via Invite-Link gejointer User vor Ort war.
+    func creditDropInviteBonus(hostUID: String) {
+        guard !hostUID.isEmpty else { return }
+        let ref = db.child("users").child(hostUID).child("reliabilityInviteBonus")
+        ref.runTransactionBlock { currentData in
+            let current = currentData.value as? Int ?? 0
+            currentData.value = current + 5
+            return .success(withValue: currentData)
+        }
+    }
+
+    /// Prüft einmalig ob der gegebene User Drops+ Status hat — für UI-Anzeige
+    /// (z.B. Plus-Badge im MiniProfileSheet von Freunden/Teilnehmern).
+    func fetchPlusStatus(uid: String, completion: @escaping (Bool) -> Void) {
+        guard !uid.isEmpty else { completion(false); return }
+        db.child("users").child(uid).child("isPlusUser").observeSingleEvent(of: .value) { snap in
+            let isPlus = snap.value as? Bool ?? false
+            DispatchQueue.main.async { completion(isPlus) }
+        }
+    }
+
+    /// Schreibt eine Nutzer-Meldung nach `reports/{autoID}`.
+    /// Admin-Panel kann diese Liste auswerten (offene/bearbeitete Reports).
+    func submitReport(reportedUID: String?, reportedName: String, reason: String, details: String) {
+        guard let reporterUID = Auth.auth().currentUser?.uid else { return }
+        let ref = db.child("reports").childByAutoId()
+        let payload: [String: Any] = [
+            "reporterUID":   reporterUID,
+            "reportedUID":   reportedUID ?? "",
+            "reportedName":  reportedName,
+            "reason":        reason,
+            "details":       details,
+            "createdAt":     Int(Date().timeIntervalSince1970 * 1000),
+            "status":        "open"
+        ]
+        ref.setValue(payload)
     }
 
     /// Lädt eine Freundes-Liste EINMALIG — für Legacy-Aufrufer die nicht observe nutzen.
@@ -973,7 +1326,18 @@ class RealtimeDBManager: ObservableObject {
             let name = (dict["name"] as? String) ?? ""
             guard !name.isEmpty else { continue }
             let url = dict["profileImageURL"] as? String
-            results.append(FriendSnapshot(uid: uid, name: name, profileImageURL: url))
+            // lastActiveAt kann als ServerValue.timestamp (Millisekunden) oder
+            // als Sekunden abgelegt sein — beide Varianten hier normalisieren.
+            var lastActive: TimeInterval? = nil
+            if let rawMs = dict["lastActiveAt"] as? TimeInterval {
+                lastActive = rawMs > 10_000_000_000 ? rawMs / 1000 : rawMs
+            }
+            // Reliability-Punkte: wenn noch nicht gesetzt → Start-Wert (100)
+            let points = (dict["reliabilityPoints"] as? Int) ?? ReliabilityScore.startingPoints
+            results.append(FriendSnapshot(uid: uid, name: name,
+                                          profileImageURL: url,
+                                          lastActiveAt: lastActive,
+                                          reliabilityPoints: points))
         }
         return results.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
@@ -1008,6 +1372,18 @@ struct AdminStats {
     var verifiedUsers: Int
     var adminUsers:    Int
     var activeDrops:   Int = 0
+    var openReports:   Int = 0
+}
+
+struct AdminReportEntry: Identifiable {
+    let id:           String
+    let reporterUID:  String
+    let reportedUID:  String
+    let reportedName: String
+    let reason:       String
+    let details:      String
+    let createdAt:    Date
+    let status:       String
 }
 
 // MARK: - User Profile Snapshot
@@ -1021,6 +1397,30 @@ struct UserProfileSnapshot {
     var isBanned:        Bool = false
     var isPlusUser:      Bool = false
     var profileImageURL: String?
+    var settings:        UserSettingsSnapshot = UserSettingsSnapshot()
+}
+
+/// Snapshot einer eingehenden Freundschaftsanfrage.
+struct FriendRequestSnapshot: Identifiable, Equatable {
+    var id: String { fromUID }
+    let fromUID:      String
+    let fromName:     String
+    let fromImageURL: String?
+    let createdAt:    Date
+}
+
+/// Benutzerspezifische Einstellungen, die beim Re-Login restauriert werden sollen.
+/// Alle Felder optional — nil bedeutet "nicht in Firebase gesetzt → lokalen Default behalten".
+struct UserSettingsSnapshot {
+    var radiusFilter:           Double?
+    var ageFilterMin:           Int?
+    var ageFilterMax:           Int?
+    var selectedAgeGroups:      [String]?
+    var userInterests:          [String]?
+    var blockedUsers:           [String]?
+    var unavailabilityReason:   String?
+    var genderFilterEnabled:    Bool?
+    var activityCategoryFilter: String?
 }
 
 // MARK: - Admin User Entry
@@ -1028,6 +1428,7 @@ struct AdminUserEntry: Identifiable {
     let id: String          // Firebase UID
     var name:         String
     var email:        String
+    var phoneNumber:  String = ""          // für Admin-Suche
     var createdAt:    Date?
     var isAdmin:      Bool
     var isBanned:     Bool
@@ -1035,6 +1436,26 @@ struct AdminUserEntry: Identifiable {
     var hasActiveDrop:      Bool    = false
     var activeDropActivity: String? = nil   // z.B. "☕️ Kaffee"
     var activeDropID:       String? = nil   // Firebase-Key des laufenden Drops
+}
+
+// MARK: - Admin Drop Entry (Live-Monitoring)
+struct AdminDropEntry: Identifiable {
+    let id: String               // Firebase-Drop-Key
+    let hostUID: String
+    let hostName: String
+    let emoji: String
+    let activityName: String
+    let latitude: Double
+    let longitude: Double
+    let participants: Int
+    let createdAt: Date
+    let expiresAt: Date
+
+    /// Liefert die Service-Stadt in der der Drop liegt — für UI-Filter.
+    var cityName: String {
+        let coord = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        return ServiceCities.city(for: coord)?.name ?? "—"
+    }
 }
 
 // MARK: - Datenmodell für Fremde Drops aus DB

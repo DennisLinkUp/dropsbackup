@@ -1097,7 +1097,7 @@
   <div class="hero-content">
     <div class="hero-badge">
       <span class="live-dot"></span>
-      iOS Beta · München · Drops+ verfügbar
+      iOS Beta · München · Kostenlos
     </div>
     <h1>Sei dabei,<br>wenn's <span class="accent">passiert</span></h1>
     <p class="hero-sub">
@@ -1274,7 +1274,7 @@
   <path d="M15 8h4M15 12h2" stroke="#22c55e" stroke-width="1.6" stroke-linecap="round" opacity=".4"/>
 </svg></div>
         <h3>Altersgruppen-Filter</h3>
-        <p>Stell selbst ein, welche Altersgruppen du sehen willst — von 18–24 bis 60+. Dein eigenes Alter bleibt dabei privat.</p>
+        <p>Stell selbst ein, welche Altersgruppen du sehen willst — von 18–24 bis 60+. Dein Alter ist auf deinem Profil und an deinem Drop-Pin sichtbar, damit andere wissen mit wem sie sich treffen.</p>
         <span class="feat-tag">Individuell</span>
       </div>
       <div class="feat-card wide reveal">
@@ -1290,215 +1290,6 @@
   </div>
 </section>
 
-<!-- DROPS+ -->
-<style>
-  /* Premium-Light — synchron mit In-App-Paywall (cream + deep gold d4a017→a87408) */
-  #dropsplus {
-    padding: 100px 24px;
-    background:
-      radial-gradient(ellipse at top left, rgba(212,160,23,0.08) 0%, transparent 55%),
-      radial-gradient(ellipse at bottom right, rgba(252,211,77,0.06) 0%, transparent 50%),
-      #f5f3ef;
-    color: #111;
-    position: relative;
-    overflow: hidden;
-  }
-  .plus-container {
-    max-width: 1080px; margin: 0 auto; position: relative;
-  }
-  .plus-header {
-    text-align: center; margin-bottom: 48px;
-  }
-  .plus-badge {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 7px 14px; border-radius: 999px;
-    background: rgba(212,160,23,0.10);
-    border: 1px solid rgba(212,160,23,0.22);
-    font-size: 11px; font-weight: 700; letter-spacing: 0.10em;
-    color: #a87408; text-transform: uppercase;
-    margin-bottom: 20px;
-  }
-  .plus-title {
-    font-size: 46px; font-weight: 800; letter-spacing: -0.03em;
-    line-height: 1.05; margin-bottom: 16px;
-    color: #0a0a0a;
-  }
-  .plus-title .plus-accent {
-    background: linear-gradient(135deg, #d4a017 0%, #a87408 100%);
-    -webkit-background-clip: text; background-clip: text;
-    color: transparent;
-  }
-  .plus-sub {
-    font-size: 16px; color: rgba(0,0,0,0.55);
-    max-width: 520px; margin: 0 auto;
-  }
-  .plus-grid {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
-    margin-bottom: 24px;
-  }
-  .plus-soon-label {
-    font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: rgba(0,0,0,0.38);
-    text-align: center;
-    margin: 12px 0 14px;
-    display: flex; align-items: center; gap: 10px;
-    justify-content: center;
-  }
-  .plus-soon-label::before, .plus-soon-label::after {
-    content: ""; flex: 0 1 80px; height: 1px;
-    background: rgba(0,0,0,0.08);
-  }
-  .plus-grid-soon { margin-bottom: 40px; }
-  .plus-feature-soon {
-    opacity: 0.55;
-  }
-  .plus-feature-soon:hover {
-    opacity: 0.7;
-    border-color: rgba(0,0,0,0.10);
-    transform: none;
-  }
-  .plus-feature-soon h3 { color: rgba(0,0,0,0.55); }
-  .plus-feature-soon p { color: rgba(0,0,0,0.38); }
-  .plus-feature {
-    padding: 22px; border-radius: 16px;
-    background: #ffffff;
-    border: 1px solid rgba(212,160,23,0.12);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.03);
-    transition: border-color .25s, transform .25s, box-shadow .25s;
-  }
-  .plus-feature:hover {
-    border-color: rgba(212,160,23,0.35);
-    transform: translateY(-2px);
-    box-shadow: 0 8px 20px rgba(212,160,23,0.10);
-  }
-  .plus-feature-icon {
-    width: 44px; height: 44px;
-    border-radius: 12px;
-    background: rgba(212,160,23,0.10);
-    display: flex; align-items: center; justify-content: center;
-    margin-bottom: 14px;
-  }
-  .plus-feature h3 {
-    font-size: 15px; font-weight: 700; margin-bottom: 6px; color: #0a0a0a;
-  }
-  .plus-feature p {
-    font-size: 13px; color: rgba(0,0,0,0.58); line-height: 1.55;
-  }
-  .plus-cta {
-    text-align: center;
-  }
-  .plus-price {
-    font-size: 13px; color: rgba(0,0,0,0.5); margin-bottom: 14px;
-  }
-  .plus-btn {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 15px 30px; border-radius: 14px;
-    background: linear-gradient(135deg, #d4a017 0%, #a87408 100%);
-    color: #fff; font-weight: 700; font-size: 16px;
-    text-decoration: none;
-    box-shadow: 0 10px 28px rgba(212,160,23,0.28);
-    transition: transform .2s, box-shadow .2s;
-  }
-  .plus-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 14px 32px rgba(212,160,23,0.36);
-  }
-  .plus-footnote {
-    margin-top: 18px; font-size: 12px;
-    color: rgba(0,0,0,0.38);
-  }
-  @media (max-width: 768px) {
-    #dropsplus { padding: 80px 24px; }
-    .plus-title { font-size: 36px; }
-    .plus-grid { grid-template-columns: 1fr; gap: 10px; }
-  }
-</style>
-
-<section id="dropsplus">
-  <div class="plus-container">
-    <div class="plus-header reveal">
-      <div class="plus-badge">⚡ Drops+</div>
-      <h2 class="plus-title">Mehr Reichweite,<br><span class="plus-accent">weniger Limits</span></h2>
-      <p class="plus-sub">Einmal zahlen, für immer dabei — kein Abo, keine Werbung, einfach mehr aus Drops rausholen.</p>
-    </div>
-
-    <div class="plus-grid reveal">
-      <div class="plus-feature">
-        <div class="plus-feature-icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-            <path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z" stroke="#a87408" stroke-width="1.8" stroke-linejoin="round" fill="rgba(212,160,23,0.18)"/>
-          </svg>
-        </div>
-        <h3>Drop-Boost</h3>
-        <p>Goldener Rahmen auf der Karte — dein Drop wird zuerst gesehen.</p>
-      </div>
-      <div class="plus-feature">
-        <div class="plus-feature-icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-            <circle cx="12" cy="12" r="9" stroke="#a87408" stroke-width="1.8" fill="none"/>
-            <circle cx="12" cy="12" r="5" stroke="#a87408" stroke-width="1.8" fill="none"/>
-            <circle cx="12" cy="12" r="1.5" fill="#a87408"/>
-          </svg>
-        </div>
-        <h3>Größerer Radius</h3>
-        <p>Bis zu 25 km oder unbegrenzt stadtweit — Free-User sehen nur 2 km.</p>
-      </div>
-      <div class="plus-feature">
-        <div class="plus-feature-icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-            <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" stroke="#a87408" stroke-width="1.8" fill="rgba(212,160,23,0.14)"/>
-            <circle cx="12" cy="12" r="3" stroke="#a87408" stroke-width="1.8" fill="none"/>
-          </svg>
-        </div>
-        <h3>Wer hat geschaut</h3>
-        <p>Sieh welche Personen dein Drop geöffnet haben — mit Name, Alter und Zeitpunkt.</p>
-      </div>
-    </div>
-
-    <div class="plus-soon-label reveal">Bald verfügbar</div>
-    <div class="plus-grid plus-grid-soon reveal">
-      <div class="plus-feature plus-feature-soon">
-        <div class="plus-feature-icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-            <path d="M12 2l8 4v6c0 5-3.5 9-8 10-4.5-1-8-5-8-10V6l8-4z" stroke="rgba(255,255,255,0.45)" stroke-width="1.8" fill="none" stroke-linejoin="round"/>
-          </svg>
-        </div>
-        <h3>Score-Schutz</h3>
-        <p>Mal doch nicht erschienen? Dein Zuverlässigkeits-Score bleibt makellos.</p>
-      </div>
-      <div class="plus-feature plus-feature-soon">
-        <div class="plus-feature-icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-            <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" stroke="rgba(255,255,255,0.45)" stroke-width="1.8" stroke-linecap="round"/>
-            <circle cx="12" cy="12" r="3" stroke="rgba(255,255,255,0.45)" stroke-width="1.8" fill="none"/>
-          </svg>
-        </div>
-        <h3>Keine Cooldowns</h3>
-        <p>Verlängere deinen Drop so oft du willst — keine Wartezeit.</p>
-      </div>
-      <div class="plus-feature plus-feature-soon">
-        <div class="plus-feature-icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-            <rect x="3" y="14" width="3" height="7" rx="1" fill="rgba(255,255,255,0.45)"/>
-            <rect x="9" y="10" width="3" height="11" rx="1" fill="rgba(255,255,255,0.45)"/>
-            <rect x="15" y="6" width="3" height="15" rx="1" fill="rgba(255,255,255,0.45)"/>
-          </svg>
-        </div>
-        <h3>Statistiken</h3>
-        <p>Joins, Score-Verlauf und erstellte Drops auf einen Blick.</p>
-      </div>
-    </div>
-
-    <div class="plus-cta reveal">
-      <div class="plus-price">Einmalige Zahlung · Kein Abo · Keine Werbung</div>
-      <a class="plus-btn" href="https://testflight.apple.com/join/Bdagjses" target="_blank" rel="noopener">
-        ⚡ In der Beta testen
-      </a>
-      <div class="plus-footnote">Drops+ wird direkt in der App freigeschaltet — Zahlung über den App Store.</div>
-    </div>
-  </div>
-</section>
 
 <!-- APP STATUS / BETA -->
 <section id="status">
@@ -1575,7 +1366,6 @@
         <div class="check-item"><span class="check-tick">✓</span>Push-Benachrichtigungen bei Ablauf</div>
         <div class="check-item"><span class="check-tick">✓</span>Bluetooth Näherungs-Erkennung</div>
         <div class="check-item"><span class="check-tick">✓</span>Echtzeit-Synchronisation</div>
-        <div class="check-item"><span class="check-tick">✓</span>Drops+ Premium (Boost, größerer Radius, wer hat geschaut)</div>
         <div class="check-item"><span class="check-tick">✓</span>München Servicegebiet mit Geofencing</div>
       </div>
     </div>

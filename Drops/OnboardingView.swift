@@ -1,7 +1,6 @@
 import SwiftUI
 import MapKit
 import AuthenticationServices
-import LocalAuthentication
 import FirebaseAuth
 import UserNotifications
 import CoreLocation
@@ -756,38 +755,50 @@ struct OnboardingView: View {
                         wasDeleted = await RealtimeDBManager.shared.consumeDeletionTombstone(uid: uid)
                     }
                     if wasDeleted {
-                        // Frische Registrierung erzwingen
+                        print("[auth] Tombstone gefunden → fresh registration")
                         isLoginMode = false
                         withAnimation(.spring(response: 0.4)) { step = .profile }
                         return
                     }
 
-                    // Firebase weiß sicher ob der Account neu ist.
-                    // isNewUser = false → Account existiert definitiv → sofort einloggen.
-                    if !isNewUser {
+                    // ── Doppelter Sicherheitscheck ───────────────────────
+                    // Tombstone-Check kann fehlschlagen (RTDB-Permission,
+                    // Network-Race, eventual consistency). Bevor wir bei
+                    // isNewUser=false stumm einloggen, verifizieren wir
+                    // dass das Profil tatsächlich noch in RTDB existiert.
+                    // Falls nicht → Account wurde gelöscht, fresh registration.
+                    let profileExists: Bool = await withCheckedContinuation { cont in
+                        RealtimeDBManager.shared.hasExistingProfile { exists in
+                            cont.resume(returning: exists)
+                        }
+                    }
+
+                    if !isNewUser && profileExists {
+                        // Echter Bestandsuser mit intaktem Profil → einloggen
                         handleAppleSignInResult(exists: true)
                         return
                     }
-                    // Nur bei echten Neuzugängen: DB prüfen (mit Timeout als Netz-Absicherung)
-                    var appleCheckDone = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
-                        guard !appleCheckDone else { return }
-                        appleCheckDone = true
-                        try? Auth.auth().signOut()
-                        showNotFoundAlert = true
+
+                    if !isNewUser && !profileExists {
+                        // Firebase kennt den User, aber das Profil ist weg →
+                        // resurrektion nach Account-Löschung. Fresh registration.
+                        print("[auth] isNewUser=false aber kein Profil in RTDB → resurrection")
+                        isLoginMode = false
+                        withAnimation(.spring(response: 0.4)) { step = .profile }
+                        return
                     }
-                    RealtimeDBManager.shared.hasExistingProfile { exists in
-                        DispatchQueue.main.async {
-                            guard !appleCheckDone else { return }
-                            appleCheckDone = true
-                            handleAppleSignInResult(exists: exists)
-                        }
+
+                    // isNewUser=true → echte Neuregistrierung
+                    if profileExists {
+                        // Edge-Case: Firebase sagt "neu" aber Profil existiert (sollte
+                        // selten sein, z.B. Conflict zwischen Auth-Methoden) → einloggen.
+                        handleAppleSignInResult(exists: true)
+                    } else {
+                        handleAppleSignInResult(exists: false)
                     }
                 }
             },
             isLoginMode: $isLoginMode,
-            savedPhone: nil,
-            onQuickLogin: nil,
             onBetaLogin: nil
         )
         .onAppear { isLoginMode = hasOnboarded }
@@ -822,10 +833,17 @@ struct OnboardingView: View {
             // und Apple ihn uns beim initialen Login geliefert hat. Apple sendet
             // fullName nur beim ersten Sign-In, deshalb persistieren wir ihn in
             // UserDefaults (siehe FirebaseAuthManager) und lesen ihn hier zurück.
-            if userName.isEmpty,
-               let given = UserDefaults.standard.string(forKey: "ud_appleGivenName"),
-               !given.isEmpty {
-                userName = given
+            if userName.isEmpty {
+                if let given = UserDefaults.standard.string(forKey: "ud_appleGivenName"),
+                   !given.isEmpty {
+                    userName = given
+                } else if let display = Auth.auth().currentUser?.displayName,
+                          let firstWord = display.split(separator: " ").first,
+                          !firstWord.isEmpty {
+                    // Fallback: Firebase displayName (wird aus Apple-fullName gesetzt)
+                    userName = String(firstWord)
+                    UserDefaults.standard.set(String(firstWord), forKey: "ud_appleGivenName")
+                }
             }
         }
     }
@@ -835,7 +853,11 @@ struct OnboardingView: View {
             selected: $store.userInterests,
             onNext: {
                 store.saveAll()
-                withAnimation(.spring(response: 0.4)) { step = .intro }
+                // Permissions (Push + Location) direkt hier anfragen — der
+                // AppIntroStep ist entfernt, weil das MainTabView-WelcomeSheet
+                // bereits die Features zeigt.
+                requestOnboardingPermissions()
+                withAnimation(.spring(response: 0.4)) { step = .done }
             },
             onBack: { withAnimation(.spring(response: 0.4)) { step = .profile } }
         )
@@ -866,6 +888,25 @@ struct OnboardingView: View {
             store.genderFilterEnabled = false
             // Profil in Firebase speichern → Nutzer erscheint im Admin-Panel
             saveProfileToFirebase()
+            // FCM-Token in RTDB schreiben — der Token kam ggf. schon vor Auth (OnApp-Start),
+            // konnte aber mangels User-UID nicht persistiert werden. Jetzt nachholen.
+            if let token = UserDefaults.standard.string(forKey: "fcmToken"), !token.isEmpty {
+                RealtimeDBManager.shared.setMyFCMToken(token)
+            }
+            // App-Invite-Bonus: wenn der User via Einladungs-Link hergekommen ist,
+            // kriegt der Einladende (via Firebase-Transaction) +10 Punkte gutgeschrieben.
+            // pendingInviteUsername enthält die UID des Einladenden (aus /invite/{uid}).
+            if let inviterUID = store.pendingInviteUsername, !inviterUID.isEmpty {
+                RealtimeDBManager.shared.creditAppInviteBonus(inviterUID: inviterUID)
+                store.pendingInviteUsername = nil
+            }
+            // Freundes-Observer starten (noch keine Freunde, aber für zukünftige Adds)
+            if let uid = Auth.auth().currentUser?.uid {
+                store.startObservingFriends(ownerUID: uid)
+            }
+            // Online-Heartbeat — sonst sieht einen Freunde nicht als "online" bis
+            // zur ersten Background-Return.
+            RealtimeDBManager.shared.markOnlineHeartbeat()
             store.isAuthenticated = true
         }
     }
@@ -903,10 +944,58 @@ struct OnboardingView: View {
     /// Verarbeitet das Ergebnis des Apple-Sign-In Profil-Checks.
     private func handleAppleSignInResult(exists: Bool) {
         if exists {
-            // Bestehender Account — einloggen egal ob login- oder register-Modus
-            loadProfileFromFirebase()
-            hasOnboarded = true   // sicherstellen dass Onboarding nicht nochmal erscheint
-            store.isAuthenticated = true
+            // Bestehender Account — einloggen egal ob login- oder register-Modus.
+            //
+            // WICHTIG: `isAuthenticated = true` **erst** feuern, wenn die Firebase-
+            // Daten (Name, Radius, Altersfilter, Profilbild-URL) im Store liegen —
+            // sonst mountet MainTabView mit stalem State, rendert Glass-Cards mit
+            // der falschen Höhe, und nach dem Firebase-Update sitzt der Glass-
+            // Hintergrund versetzt (v.a. iOS 26 `glassEffect`, das die Shape
+            // beim Layout-Wechsel nicht sauber invalidiert).
+            isLoading = true
+            hasOnboarded = true
+            // Welcome-Sheet nur bei echter Neuregistrierung — Re-Login skipt ihn.
+            UserDefaults.standard.set(true, forKey: "hasSeenWelcome")
+            // FCM-Token nachziehen (Token kam ggf. vor Login → noch nicht persistiert)
+            if let token = UserDefaults.standard.string(forKey: "fcmToken"), !token.isEmpty {
+                RealtimeDBManager.shared.setMyFCMToken(token)
+            }
+            // Online-Heartbeat — markiert User als "online" für Freundes-Observer
+            RealtimeDBManager.shared.markOnlineHeartbeat()
+            // Profilbild-URL parallel zum Profil laden (beides hängt am selben UID-Token).
+            store.loadProfileImageURL()
+
+            // Safety: falls Firebase hängt, nach 3s trotzdem durchlassen —
+            // der User soll nicht auf einer Loading-Spinner-Insel festsitzen.
+            var didComplete = false
+            let finishAuth: () -> Void = {
+                guard !didComplete else { return }
+                didComplete = true
+                isLoading = false
+                store.isAuthenticated = true
+                // Freundes-Observer neu starten — `init()` läuft nur einmal,
+                // nach Logout ist er gestoppt. Ohne das bleibt die Freundes-
+                // liste bei Re-Login ohne App-Neustart leer.
+                if let uid = Auth.auth().currentUser?.uid {
+                    store.startObservingFriends(ownerUID: uid)
+                }
+                // Profilbild-Re-Retrigger falls die erste Runde kein URL hatte
+                // (z.B. Token-Race) — jetzt sollte Auth komplett durchgerouted sein.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [store] in
+                    if store.profileImageURL == nil || (store.profileImageURL?.isEmpty ?? true) {
+                        store.loadProfileImageURL()
+                    }
+                }
+            }
+            // Safety-Fallback: wenn Firebase unerwartet hängt, max 1.2s warten.
+            // Normal returnt RTDB unter 500ms — der Timeout ist nur für Edge-Cases
+            // (Netz weg, DB langsam) damit der User nicht auf dem Login-Screen
+            // festsitzt.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { finishAuth() }
+
+            loadProfileFromFirebase {
+                finishAuth()
+            }
         } else {
             if isLoginMode {
                 // Login-Modus aber kein Account gefunden
@@ -943,10 +1032,16 @@ struct OnboardingView: View {
             gender:    store.userGender.isEmpty ? nil : store.userGender
         )
         store.saveAll()
+        // Namen persistent für Quick-Login merken
+        if !store.currentUser.name.isEmpty {
+            UserDefaults.standard.set(store.currentUser.name, forKey: "ud_lastLoginName")
+        }
     }
 
     /// Lädt das Profil aus Firebase und befüllt den Store (z.B. nach Re-Login).
-    private func loadProfileFromFirebase() {
+    /// `completion` wird auf Main gefeuert, sobald die Daten (oder ein Fehler) verarbeitet
+    /// wurden — Aufrufer können so warten, bevor sie `isAuthenticated = true` setzen.
+    private func loadProfileFromFirebase(completion: (() -> Void)? = nil) {
         // Admin-Check per E-Mail (Bootstrap-Credentials siehe AdminConfig)
         let authEmail = (Auth.auth().currentUser?.email ?? "").lowercased()
         let storedApple = (UserDefaults.standard.string(forKey: "ud_appleEmail") ?? "").lowercased()
@@ -954,24 +1049,34 @@ struct OnboardingView: View {
             self.store.isAdmin = true
         }
         RealtimeDBManager.shared.loadUserProfile { profile in
+            defer {
+                DispatchQueue.main.async { completion?() }
+            }
             guard let p = profile else { return }
             if let name = p.name, !name.isEmpty {
                 self.store.currentUser.name = name
+                // Persistiert den Namen für den Quick-Login-Button auf
+                // dem Welcome-Screen — überlebt Logout (anders als UDKey.userName).
+                UserDefaults.standard.set(name, forKey: "ud_lastLoginName")
             }
             if let bd = p.birthdate             { self.store.userBirthdate = bd }
             if let gender = p.gender            { self.store.userGender = gender }
             if p.isAdmin                        { self.store.isAdmin = true }
 
+            // Benutzer-Einstellungen (Radius, Altersfilter, Interests, Blocklist …)
+            // aus Firebase wiederherstellen — sonst fallen die nach Logout auf Default.
+            self.store.applyRemoteUserSettings(p.settings)
         }
     }
 }
 
-// MARK: - Pulsing Dot Logo ("Dr[●]ps")
+// MARK: - Drops Logo ("Dr[●]ps")
+// Statisches Logo — Brand-Gradient (grün → cyan) im Punkt + Inner-Glow.
+// Die "Drop-Pulse"-Animation läuft im Aurora-Hintergrund, nicht im Logo.
 
 struct DropsLogo: View {
     var fontSize: CGFloat = 52
     var textColor: Color = .white
-    @State private var pulse = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 1) {
@@ -979,27 +1084,29 @@ struct DropsLogo: View {
                 .font(.system(size: fontSize, weight: .black, design: .rounded))
                 .foregroundColor(textColor)
 
-            // "o" als App-Icon-Punkt: grüner Kreis + konzentrische Ringe + weißes Zentrum
+            // "o" als App-Icon-Punkt: Gradient-Kreis (grün → cyan) + weißer Kern
             ZStack {
-                // Konzentrische Ripple-Ringe (wie App Icon)
-                ForEach(Array([0.88, 0.66, 0.50, 0.36].enumerated()), id: \.offset) { idx, ratio in
-                    Circle()
-                        .stroke(Color.brand.opacity(0.18 - Double(idx) * 0.03), lineWidth: 1)
-                        .frame(width: fontSize * ratio)
-                        .scaleEffect(pulse ? 1.05 : 0.96)
-                        .animation(
-                            .easeInOut(duration: 2.2 + Double(idx) * 0.35)
-                            .repeatForever(autoreverses: true)
-                            .delay(Double(idx) * 0.18),
-                            value: pulse
-                        )
-                }
-                // Grüner Haupt-Kreis
                 Circle()
-                    .fill(Color.brand)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.brand, Color(hex: "06B6D4")],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
                     .frame(width: fontSize * 0.38, height: fontSize * 0.38)
                     .shadow(color: Color.brand.opacity(0.5), radius: 8)
-                // Weißer Kern-Punkt (wie App Icon)
+                    .shadow(color: Color(hex: "06B6D4").opacity(0.35), radius: 12)
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [Color.white.opacity(0.4), .clear],
+                            center: .topLeading,
+                            startRadius: 0,
+                            endRadius: fontSize * 0.22
+                        )
+                    )
+                    .frame(width: fontSize * 0.38, height: fontSize * 0.38)
                 Circle()
                     .fill(Color.white)
                     .frame(width: fontSize * 0.13, height: fontSize * 0.13)
@@ -1010,7 +1117,6 @@ struct DropsLogo: View {
                 .font(.system(size: fontSize, weight: .black, design: .rounded))
                 .foregroundColor(textColor)
         }
-        .onAppear { pulse = true }
     }
 }
 
@@ -1075,8 +1181,6 @@ struct WelcomeStep: View {
     let onApple: (Bool, String?) -> Void  // isNewUser, appleEmail
     @AppStorage("appLanguage") private var appLanguage = "de"
     @Binding var isLoginMode: Bool
-    var savedPhone: String? = nil
-    var onQuickLogin: (() -> Void)? = nil
     var onBetaLogin: (() -> Void)? = nil   // Beta-Bypass: anonym einloggen
 
     @Environment(\.colorScheme) var systemColorScheme
@@ -1084,16 +1188,26 @@ struct WelcomeStep: View {
     @State private var typedSlogan = ""
     @State private var showCursor = false
     @State private var typewriterTask: Task<Void, Never>? = nil
-    @State private var biometricError: String? = nil
     @StateObject private var appleAuth = AppleSignInManager()
 
-    private var biometricType: LABiometryType {
-        let ctx = LAContext()
-        _ = ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
-        return ctx.biometryType
+    // Quick-Login: wenn der letzte User im UserDefaults persistiert ist,
+    // zeigen wir oberhalb der Standard-Apple-Buttons einen großen "Weiter
+    // als X"-Button mit Avatar + Name. Tap löst sofort Apple Sign In aus
+    // (Face ID übernimmt in ~1-2s, keine weitere Eingabe nötig).
+    @State private var showAlternativeLogin = false
+    private var lastLoginName: String {
+        UserDefaults.standard.string(forKey: "ud_lastLoginName") ?? ""
     }
-    private var biometricAvailable: Bool {
-        LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+    private var lastLoginImageURL: String? {
+        let url = UserDefaults.standard.string(forKey: "ud_lastProfileImageURL") ?? ""
+        return url.isEmpty ? nil : url
+    }
+    /// Quick-Login sichtbar, sobald ein Name persistiert ist. Bleibt auch
+    /// sichtbar wenn der User "Anderes Konto verwenden" wählt — er sieht
+    /// dann beide Optionen gleichzeitig (Quick-Login oben + alternative
+    /// Apple-Sign-In/Sign-Up unten).
+    private var hasQuickLogin: Bool {
+        !lastLoginName.isEmpty
     }
 
     private let fullSlogan = "Join real life."
@@ -1125,142 +1239,139 @@ struct WelcomeStep: View {
 
             // ── Inhalt ───────────────────────────────────────────────
             VStack(spacing: 0) {
-                    Spacer()
+                    Spacer(minLength: screenH < 700 ? 30 : 60)
 
-                    // ── Logo-Block (Mitte) ─────────────────────────────
-                    VStack(spacing: 0) {
-                        // Icon-artiger Container — wirkt wie App-Icon auf Screen
+                    // ── Logo + Hero ────────────────────────────────────
+                    VStack(spacing: screenH < 700 ? 18 : 26) {
+                        // Logo mit großzügigem Glow
                         ZStack {
-                            // Großes Glow hinter dem Logo
+                            // Doppelter Glow — grüner Brand-Halo + cyan Akzent
                             Circle()
-                                .fill(Color.brand.opacity(isLight ? 0.08 : 0.12))
-                                .frame(width: 200, height: 200)
-                                .blur(radius: 40)
+                                .fill(Color.brand.opacity(isLight ? 0.10 : 0.16))
+                                .frame(width: 240, height: 240)
+                                .blur(radius: 48)
+                            Circle()
+                                .fill(Color(hex: "06B6D4").opacity(isLight ? 0.06 : 0.10))
+                                .frame(width: 180, height: 180)
+                                .blur(radius: 38)
+                                .offset(x: 30, y: 20)
 
                             DropsLogo(fontSize: logoSize, textColor: textPrimary)
                         }
-                        .padding(.bottom, 18)
 
-                        // Slogan Typewriter
-                        HStack(spacing: 0) {
-                            Text(typedSlogan)
-                                .font(.system(size: 16, weight: .semibold, design: .rounded))
-                                .foregroundColor(textPrimary.opacity(isLight ? 0.55 : 0.50))
-                                .kerning(0.3)
-                            if typedSlogan.count < fullSlogan.count {
-                                Text(tr("onboard.pipe"))
-                                    .font(.system(size: 16, weight: .semibold, design: .rounded))
-                                    .foregroundColor(textPrimary.opacity(0.30))
-                                    .opacity(showCursor ? 1 : 0)
-                                    .animation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true), value: showCursor)
-                            }
+                        // Hauptbotschaft — groß, fett, zwei Zeilen
+                        VStack(spacing: 6) {
+                            Text("Echte Treffen.")
+                                .font(.system(size: screenH < 700 ? 28 : 32, weight: .bold, design: .rounded))
+                                .foregroundColor(textPrimary)
+                            Text("Spontan. In deiner Nähe.")
+                                .font(.system(size: screenH < 700 ? 17 : 19, weight: .medium, design: .rounded))
+                                .foregroundColor(textPrimary.opacity(isLight ? 0.55 : 0.55))
                         }
+                        .multilineTextAlignment(.center)
                     }
                     .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 24)
 
-                    Spacer()
+                    Spacer(minLength: 20)
 
                     // ── Buttons ───────────────────────────────────────
                     VStack(spacing: screenH < 700 ? 8 : 10) {
 
-                        // Schnellzugriff — gespeicherte Nummer (nur im Login-Modus)
-                        if isLoginMode, let phone = savedPhone, let quickLogin = onQuickLogin {
-                            Button {
-                                biometricError = nil
-                                if biometricAvailable {
-                                    loginWithBiometrics(onSuccess: quickLogin)
-                                } else {
-                                    quickLogin()
-                                }
-                            } label: {
-                                HStack(spacing: 10) {
-                                    if biometricAvailable {
-                                        Image(systemName: biometricType == .faceID ? "faceid" : "touchid")
-                                            .font(.system(size: 18, weight: .medium))
-                                    } else {
-                                        Image(systemName: "bolt.fill").font(.system(size: 14))
+                        // Quick-Login bleibt immer oben sichtbar wenn ein Name
+                        // persistiert ist — auch wenn der User "Anderes Konto
+                        // verwenden" klickt (dann sieht er beide Optionen).
+                        if hasQuickLogin {
+                            quickLoginButton
+
+                            if !showAlternativeLogin {
+                                // Noch nicht aufgeklappt → zeig den Link zum Alternativ-Flow
+                                Button(action: {
+                                    withAnimation(.easeInOut(duration: 0.25)) {
+                                        showAlternativeLogin = true
                                     }
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(tr("onboard.continue_as_phone").replacingOccurrences(of: "{phone}", with: phone))
-                                            .font(.system(size: screenH < 700 ? 13 : 14, weight: .semibold, design: .rounded))
-                                        Text(biometricAvailable
-                                             ? (biometricType == .faceID ? tr("onboard.continue_face_id") : tr("onboard.continue_touch_id"))
-                                             : tr("onboard.saved_number"))
-                                            .font(.system(size: 10))
-                                            .opacity(0.7)
-                                    }
-                                    Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .opacity(0.6)
+                                }) {
+                                    Text("Anderes Konto verwenden")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(textSecondary.opacity(0.7))
+                                        .underline()
                                 }
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 18).padding(.vertical, 12)
-                                .background(
-                                    Capsule()
-                                        .fill(Color.brand.opacity(0.85))
-                                        .shadow(color: Color.brand.opacity(0.3), radius: 10, y: 4)
-                                )
+                                .buttonStyle(.plain)
+                                .padding(.top, 6)
+                            } else {
+                                // Sichtbarer Trenner zwischen Quick-Login und Alternativ-Flow
+                                HStack(spacing: 8) {
+                                    Rectangle().fill(textSecondary.opacity(0.15)).frame(height: 1)
+                                    Text("oder")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(textSecondary.opacity(0.5))
+                                    Rectangle().fill(textSecondary.opacity(0.15)).frame(height: 1)
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        }
+
+                        // Alternative Apple-Sign-In/Sign-Up-Buttons:
+                        // — wenn Quick-Login NICHT verfügbar ist (Erstinstall) → immer anzeigen
+                        // — wenn Quick-Login verfügbar ist → nur wenn User "Anderes Konto" geklickt hat
+                        if !hasQuickLogin || showAlternativeLogin {
+                            // ── Standard Apple Sign In / Sign Up ──────
+                            // Zwei native Buttons (type ist nach init nicht änderbar),
+                            // immer nur einer sichtbar. Verhindert .id()-Reuse-Problem.
+                            ZStack {
+                                // Login-Button (.signIn → "Mit Apple ID anmelden")
+                                AppleSignInButtonView(
+                                    type: .signIn,
+                                    style: appleButtonStyle == .black ? .black : .white,
+                                    cornerRadius: screenH < 700 ? 22 : 25
+                                ) {
+                                    appleAuth.signIn { success, isNewUser in
+                                        if success { onApple(isNewUser, appleAuth.lastAppleEmail) }
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, minHeight: screenH < 700 ? 44 : 50, maxHeight: screenH < 700 ? 44 : 50)
+                                .disabled(appleAuth.isLoading)
+                                .opacity(isLoginMode ? 1 : 0)
+
+                                // Registrieren-Button (.signUp → "Mit Apple ID registrieren")
+                                AppleSignInButtonView(
+                                    type: .signUp,
+                                    style: appleButtonStyle == .black ? .black : .white,
+                                    cornerRadius: screenH < 700 ? 22 : 25
+                                ) {
+                                    appleAuth.signIn { success, isNewUser in
+                                        if success { onApple(isNewUser, appleAuth.lastAppleEmail) }
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, minHeight: screenH < 700 ? 44 : 50, maxHeight: screenH < 700 ? 44 : 50)
+                                .disabled(appleAuth.isLoading)
+                                .opacity(isLoginMode ? 0 : 1)
+
+                                if appleAuth.isLoading {
+                                    Capsule().fill(.black.opacity(0.3))
+                                        .frame(maxWidth: .infinity, minHeight: screenH < 700 ? 44 : 50, maxHeight: screenH < 700 ? 44 : 50)
+                                    ProgressView().tint(.white)
+                                }
+                            }
+
+                            // Toggle Login ↔ Registrieren
+                            Button(action: {
+                                withAnimation(.easeInOut(duration: 0.2)) { isLoginMode.toggle() }
+                            }) {
+                                HStack(spacing: 4) {
+                                    Text(isLoginMode ? tr("onboard.no_account_question") : tr("onboard.already_registered"))
+                                        .foregroundColor(textSecondary.opacity(0.7))
+                                    Text(isLoginMode ? tr("onboard.register_now") : tr("common.sign_in"))
+                                        .foregroundColor(Color.brand)
+                                        .fontWeight(.semibold)
+                                }
+                                .font(.system(size: 13))
                             }
                             .buttonStyle(.plain)
-
-                            if let err = biometricError {
-                                Text(err)
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.accentRed)
-                                    .multilineTextAlignment(.center)
-                                    .transition(.opacity.combined(with: .move(edge: .top)))
-                            }
-
-                            HStack {
-                                Rectangle().fill(textSecondary.opacity(0.2)).frame(height: 1)
-                                Text(tr("common.or"))
-                                    .font(.system(size: 11))
-                                    .foregroundColor(textSecondary.opacity(0.5))
-                                    .padding(.horizontal, 8)
-                                Rectangle().fill(textSecondary.opacity(0.2)).frame(height: 1)
-                            }
+                            .padding(.top, 4)
                         }
 
-                        // Sign in with Apple — zwei native Buttons (type ist nach init nicht änderbar),
-                        // immer nur einer sichtbar. Verhindert .id()-Reuse-Problem mit UIViewRepresentable.
-                        ZStack {
-                            // Login-Button (.signIn → "Mit Apple ID anmelden")
-                            AppleSignInButtonView(
-                                type: .signIn,
-                                style: appleButtonStyle == .black ? .black : .white,
-                                cornerRadius: screenH < 700 ? 22 : 25
-                            ) {
-                                appleAuth.signIn { success, isNewUser in
-                                    if success { onApple(isNewUser, appleAuth.lastAppleEmail) }
-                                }
-                            }
-                            .frame(maxWidth: .infinity, minHeight: screenH < 700 ? 44 : 50, maxHeight: screenH < 700 ? 44 : 50)
-                            .disabled(appleAuth.isLoading)
-                            .opacity(isLoginMode ? 1 : 0)
-
-                            // Registrieren-Button (.signUp → "Mit Apple ID registrieren")
-                            AppleSignInButtonView(
-                                type: .signUp,
-                                style: appleButtonStyle == .black ? .black : .white,
-                                cornerRadius: screenH < 700 ? 22 : 25
-                            ) {
-                                appleAuth.signIn { success, isNewUser in
-                                    if success { onApple(isNewUser, appleAuth.lastAppleEmail) }
-                                }
-                            }
-                            .frame(maxWidth: .infinity, minHeight: screenH < 700 ? 44 : 50, maxHeight: screenH < 700 ? 44 : 50)
-                            .disabled(appleAuth.isLoading)
-                            .opacity(isLoginMode ? 0 : 1)
-
-                            if appleAuth.isLoading {
-                                Capsule().fill(.black.opacity(0.3))
-                                    .frame(maxWidth: .infinity, minHeight: screenH < 700 ? 44 : 50, maxHeight: screenH < 700 ? 44 : 50)
-                                ProgressView().tint(.white)
-                            }
-                        }
-
-                        // Apple-Fehler anzeigen
+                        // Apple-Fehler anzeigen (für beide Varianten)
                         if let appleErr = appleAuth.errorMessage {
                             Text(appleErr)
                                 .font(.system(size: 12))
@@ -1268,22 +1379,6 @@ struct WelcomeStep: View {
                                 .multilineTextAlignment(.center)
                                 .transition(.opacity.combined(with: .move(edge: .top)))
                         }
-
-                        // Toggle Login ↔ Registrieren
-                        Button(action: {
-                            withAnimation(.easeInOut(duration: 0.2)) { isLoginMode.toggle() }
-                        }) {
-                            HStack(spacing: 4) {
-                                Text(isLoginMode ? tr("onboard.no_account_question") : tr("onboard.already_registered"))
-                                    .foregroundColor(textSecondary.opacity(0.7))
-                                Text(isLoginMode ? tr("onboard.register_now") : tr("common.sign_in"))
-                                    .foregroundColor(Color.brand)
-                                    .fontWeight(.semibold)
-                            }
-                            .font(.system(size: 13))
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.top, 4)
 
                         // AGB nur bei Registrierung — opacity statt if, verhindert Layout-Shift
                         Text(tr("onboard.tos_notice"))
@@ -1304,32 +1399,88 @@ struct WelcomeStep: View {
         }
         .onAppear {
             appeared = true
-            showCursor = true
-            startTypewriter()
         }
     }
 
-    // MARK: Biometrie
-    private func loginWithBiometrics(onSuccess: @escaping () -> Void) {
-        let context = LAContext()
-        let reason = biometricType == .faceID
-            ? tr("onboard.faceid_reason")
-            : tr("onboard.touchid_reason")
-        context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics,
-                               localizedReason: reason) { success, error in
-            DispatchQueue.main.async {
-                if success {
-                    biometricError = nil
-                    onSuccess()
-                } else {
-                    if let laErr = error as? LAError, laErr.code != .userCancel {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            biometricError = tr("onboard.biometric_failed")
-                        }
+    // MARK: Quick-Login-Button
+    /// Großer Button "Weiter als [Name]" mit Avatar. Wenn Firebase noch
+    /// eine gültige Auth-Session hat (was beim normalen Logout der Fall
+    /// ist), wird das Apple-System-Sheet **übersprungen** und direkt
+    /// re-authentifiziert. Sonst Fallback auf Apple Sign In mit Face ID.
+    @ViewBuilder private var quickLoginButton: some View {
+        Button(action: {
+            // Silent re-auth wenn Firebase-Session noch lebt (kein Apple-Sheet)
+            if Auth.auth().currentUser != nil {
+                onApple(false, nil)   // exists=true Pfad in handleAppleSignInResult
+                return
+            }
+            // Fallback: Firebase-Session weg → Apple Sign In nötig
+            appleAuth.signIn { success, isNewUser in
+                if success { onApple(isNewUser, appleAuth.lastAppleEmail) }
+            }
+        }) {
+            HStack(spacing: 12) {
+                // Avatar (letztes Profilbild aus UserDefaults, sonst Fallback-Emoji)
+                ZStack {
+                    Circle()
+                        .fill(isLight ? Color.white.opacity(0.9) : Color.white.opacity(0.12))
+                        .frame(width: 40, height: 40)
+                    if let urlStr = lastLoginImageURL {
+                        RemoteProfileImage(
+                            url: urlStr,
+                            fallbackEmoji: "👋",
+                            size: 40,
+                            strokeColor: .clear
+                        )
+                        .clipShape(Circle())
+                    } else {
+                        Text("👋").font(.system(size: 22))
                     }
                 }
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Weiter als")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(textSecondary.opacity(0.8))
+                    Text(lastLoginName)
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .foregroundColor(textPrimary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                // Apple-Logo rechts — signalisiert "Apple Sign In"
+                Image(systemName: "apple.logo")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(textPrimary.opacity(0.85))
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(textSecondary.opacity(0.5))
             }
+            .padding(.horizontal, 14)
+            .frame(height: screenH < 700 ? 52 : 58)
+            .background(
+                Capsule()
+                    .fill(isLight ? Color.white.opacity(0.75) : Color.white.opacity(0.08))
+            )
+            .overlay(
+                Capsule()
+                    .stroke(Color.brand.opacity(0.35), lineWidth: 1.2)
+            )
+            .shadow(color: Color.brand.opacity(0.15), radius: 12, y: 4)
         }
+        .buttonStyle(.plain)
+        .disabled(appleAuth.isLoading)
+        .overlay(
+            Group {
+                if appleAuth.isLoading {
+                    Capsule().fill(.black.opacity(0.3))
+                    ProgressView().tint(.white)
+                }
+            }
+        )
     }
 
     // MARK: Typewriter
@@ -2207,8 +2358,6 @@ struct LoginView: View {
     @State private var appeared = false
     @State private var selectedCountry = countryCodes[0]
     @State private var showCountryPicker = false
-    @State private var biometricError: String? = nil
-
     @Environment(\.colorScheme) var systemColorScheme
 
     enum LoginStep { case phone, code }
@@ -2236,17 +2385,6 @@ struct LoginView: View {
     private var formSpacing: CGFloat { screenH < 700 ? 10 : 14 }
     private var formFontSize: CGFloat { screenH < 700 ? 15 : 16 }
     private var logoSize: CGFloat { screenH < 700 ? 52 : 68 }
-
-    // Biometrie-Typ ermitteln
-    private var biometricType: LABiometryType {
-        let ctx = LAContext()
-        _ = ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
-        return ctx.biometryType
-    }
-
-    private var biometricAvailable: Bool {
-        LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
-    }
 
     var body: some View {
         ZStack {
@@ -2334,31 +2472,6 @@ struct LoginView: View {
                             .animation(.easeInOut(duration: 0.2), value: phoneNumber.count >= 6)
                             .transition(.opacity.combined(with: .scale(scale: 0.98)))
 
-                            // ── Biometrie ────────────────────────────────
-                            if biometricAvailable {
-                                HStack(spacing: 10) {
-                                    Rectangle().fill(textSecondaryColor.opacity(0.15)).frame(height: 1)
-                                    Text(tr("common.or"))
-                                        .font(.system(size: 12))
-                                        .foregroundColor(textSecondaryColor.opacity(0.6))
-                                    Rectangle().fill(textSecondaryColor.opacity(0.15)).frame(height: 1)
-                                }
-
-                                Button(action: { loginWithBiometrics() }) {
-                                    HStack(spacing: 10) {
-                                        Image(systemName: biometricType == .faceID ? "faceid" : "touchid")
-                                            .font(.system(size: 20))
-                                        Text(biometricType == .faceID ? "Mit Face ID anmelden" : "Mit Touch ID anmelden")
-                                            .font(.system(size: 15, weight: .semibold))
-                                    }
-                                    .foregroundColor(textPrimaryColor)
-                                    .frame(maxWidth: .infinity).padding(.vertical, buttonPadV - 1)
-                                    .background(fieldTint, in: Capsule())
-                                    .overlay(Capsule().stroke(fieldStroke, lineWidth: 1))
-                                }
-                                .buttonStyle(.plain)
-                                .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                            }
 
                         } else {
                             // Code-Eingabe
@@ -2415,7 +2528,7 @@ struct LoginView: View {
                             .transition(.opacity)
                         }
 
-                        if let err = errorMessage ?? biometricError {
+                        if let err = errorMessage {
                             Text(err).font(.system(size: 12)).foregroundColor(.accentRed)
                                 .multilineTextAlignment(.center)
                         }
@@ -2457,33 +2570,12 @@ struct LoginView: View {
         }
     }
 
-    private func loginWithBiometrics() {
-        let context = LAContext()
-        let reason = biometricType == .faceID
-            ? "Mit Face ID in Drops einloggen"
-            : "Mit Touch ID in Drops einloggen"
-        context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics,
-                               localizedReason: reason) { success, error in
-            DispatchQueue.main.async {
-                if success {
-                    biometricError = nil
-                    store.isAuthenticated = true
-                } else {
-                    // Fehler nur zeigen wenn nicht abgebrochen (LAError.userCancel = -2)
-                    if let laErr = error as? LAError, laErr.code != .userCancel {
-                        biometricError = "Biometrie fehlgeschlagen – bitte mit SMS einloggen."
-                    }
-                }
-            }
-        }
-    }
-
     private func sendLoginSMS() {
         guard phoneNumber.count >= 6 else {
             errorMessage = "Bitte gib eine gültige Nummer ein."
             return
         }
-        isLoading = true; errorMessage = nil; biometricError = nil
+        isLoading = true; errorMessage = nil
         let fullNumber = selectedCountry.dial + phoneNumber
         Task {
             await auth.sendVerificationCode(to: fullNumber)

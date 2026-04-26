@@ -15,6 +15,12 @@ final class ProfileImageCache {
         lock.lock(); defer { lock.unlock() }
         cache[url] = image
     }
+    /// Komplett leeren — wird beim Logout/Account-Löschen aufgerufen,
+    /// damit altes Profilbild nicht beim Re-Login wieder auftaucht.
+    func clear() {
+        lock.lock(); defer { lock.unlock() }
+        cache.removeAll()
+    }
 }
 
 // MARK: - Remote Profile Image View
@@ -70,6 +76,31 @@ struct AppAuroraBackground: View {
 
     private var light: Bool { isLight ?? (cs == .light) }
 
+    /// Drop-Pulse: jeder Aurora-Kreis leuchtet nacheinander stärker auf
+    /// (wie ein "Drop", der durch die Farben rippt). Voller Loop in 10s,
+    /// also 2s pro Kreis. Boost = +60% Opacity am Peak, glättet sich mit
+    /// sin-Kurve aus.
+    private static let pulseCycle: Double = 10.0
+    private static let circleCount: Int = 5
+    private static let pulseBoost: Double = 0.6   // 0=aus, 1=verdoppelt
+
+    /// Berechnet 0..1 wie stark Kreis `i` gerade gepulst ist.
+    /// Spitze bei `(i + 0.5) * stepDuration`, sin²-Glättung.
+    private static func pulse(forCircle i: Int, at elapsed: Double) -> Double {
+        let step = pulseCycle / Double(circleCount)
+        let phase = elapsed.truncatingRemainder(dividingBy: pulseCycle)
+        let center = (Double(i) + 0.5) * step
+        // Distanz zum Peak (mit Wrap-around damit der letzte Kreis am
+        // Ende+Anfang nicht abrupt cuttet)
+        var dist = abs(phase - center)
+        if dist > pulseCycle / 2 { dist = pulseCycle - dist }
+        let halfWidth = step * 0.85
+        if dist > halfWidth { return 0 }
+        // sin² → smooth peak, klingt sauber an den Rändern aus
+        let t = (1 - dist / halfWidth)  // 1 am Peak, 0 am Rand
+        return sin(.pi * 0.5 * t) * sin(.pi * 0.5 * t)
+    }
+
     var body: some View {
         ZStack {
             // Basisfarbe füllt den gesamten Bildschirm inkl. Safe Areas
@@ -77,47 +108,60 @@ struct AppAuroraBackground: View {
                 .ignoresSafeArea()
 
             // Aurora-Kreise: GeometryReader mit ignoresSafeArea liest den
-            // vollen Bildschirm (inkl. Status-Bar + Home-Indicator).
-            // Die Kreise werden exakt am Bildschirm-Mittelpunkt verankert,
-            // damit kein kahler Rand oben/unten bleibt.
-            // .clipped() auf dem ZStack verhindert horizontalen Overflow.
+            // vollen Bildschirm. Die Kreise werden exakt am Bildschirm-
+            // Mittelpunkt verankert. .clipped() verhindert Overflow.
             GeometryReader { _ in
-                ZStack {
-                    Circle()
-                        .fill(Color(hex: "34D36E").opacity(light ? 0.58 : 0.42))
-                        .frame(width: 520)
-                        .offset(x: a ? -130 : -80, y: a ? -370 : -320)
-                        .blur(radius: 90)
-                    Circle()
-                        .fill(Color(hex: "A78BFA").opacity(light ? 0.48 : 0.36))
-                        .frame(width: 460)
-                        .offset(x: a ? 160 : 110, y: a ? -350 : -300)
-                        .blur(radius: 85)
-                    Circle()
-                        .fill(Color(hex: "2DD4BF").opacity(light ? 0.40 : 0.30))
-                        .frame(width: 420)
-                        .offset(x: a ? -150 : -100, y: a ? 420 : 370)
-                        .blur(radius: 80)
-                    Circle()
-                        .fill(Color(hex: "FBBF24").opacity(light ? 0.34 : 0.26))
-                        .frame(width: 380)
-                        .offset(x: a ? 140 : 90, y: a ? 400 : 350)
-                        .blur(radius: 75)
-                    Circle()
-                        .fill(Color(hex: "34D36E").opacity(light ? 0.26 : 0.18))
-                        .frame(width: 260)
-                        .offset(x: a ? 20 : -20, y: a ? 40 : 80)
-                        .blur(radius: 60)
+                TimelineView(.animation) { timeline in
+                    let elapsed = timeline.date.timeIntervalSinceReferenceDate
+                    // Per-Kreis Pulse-Intensität 0..1 berechnen
+                    let p0 = Self.pulse(forCircle: 0, at: elapsed)
+                    let p1 = Self.pulse(forCircle: 1, at: elapsed)
+                    let p2 = Self.pulse(forCircle: 2, at: elapsed)
+                    let p3 = Self.pulse(forCircle: 3, at: elapsed)
+                    let p4 = Self.pulse(forCircle: 4, at: elapsed)
+
+                    ZStack {
+                        // Kreis 1 — grün (top-left)
+                        Circle()
+                            .fill(Color(hex: "34D36E").opacity((light ? 0.78 : 0.62) * (1 + Self.pulseBoost * p0)))
+                            .frame(width: 520 * (1 + 0.06 * p0))
+                            .offset(x: a ? -130 : -80, y: a ? -370 : -320)
+                            .blur(radius: 90)
+                        // Kreis 2 — violet (top-right)
+                        Circle()
+                            .fill(Color(hex: "A78BFA").opacity((light ? 0.68 : 0.54) * (1 + Self.pulseBoost * p1)))
+                            .frame(width: 460 * (1 + 0.06 * p1))
+                            .offset(x: a ? 160 : 110, y: a ? -350 : -300)
+                            .blur(radius: 85)
+                        // Kreis 3 — teal (bottom-left)
+                        Circle()
+                            .fill(Color(hex: "2DD4BF").opacity((light ? 0.58 : 0.46) * (1 + Self.pulseBoost * p2)))
+                            .frame(width: 420 * (1 + 0.06 * p2))
+                            .offset(x: a ? -150 : -100, y: a ? 420 : 370)
+                            .blur(radius: 80)
+                        // Kreis 4 — amber (bottom-right)
+                        Circle()
+                            .fill(Color(hex: "FBBF24").opacity((light ? 0.52 : 0.42) * (1 + Self.pulseBoost * p3)))
+                            .frame(width: 380 * (1 + 0.06 * p3))
+                            .offset(x: a ? 140 : 90, y: a ? 400 : 350)
+                            .blur(radius: 75)
+                        // Kreis 5 — grün (center)
+                        Circle()
+                            .fill(Color(hex: "34D36E").opacity((light ? 0.42 : 0.30) * (1 + Self.pulseBoost * p4)))
+                            .frame(width: 260 * (1 + 0.06 * p4))
+                            .offset(x: a ? 20 : -20, y: a ? 40 : 80)
+                            .blur(radius: 60)
+                    }
+                    .frame(
+                        width: UIScreen.main.bounds.width,
+                        height: UIScreen.main.bounds.height
+                    )
+                    .position(
+                        x: UIScreen.main.bounds.width / 2,
+                        y: UIScreen.main.bounds.height / 2
+                    )
+                    .clipped()
                 }
-                .frame(
-                    width: UIScreen.main.bounds.width,
-                    height: UIScreen.main.bounds.height
-                )
-                .position(
-                    x: UIScreen.main.bounds.width / 2,
-                    y: UIScreen.main.bounds.height / 2
-                )
-                .clipped()
             }
             .ignoresSafeArea() // GeometryReader bekommt vollen Bildschirm, NICHT nur Safe-Area
         }

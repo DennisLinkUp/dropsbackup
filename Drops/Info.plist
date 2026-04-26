@@ -22,7 +22,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -35,29 +35,23 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Drops nutzt Bluetooth um Treffen mit anderen Nutzer:innen automatisch zu erkennen und deinen Zuverlässigkeits-Score zu aktualisieren — ganz ohne manuelle Bestätigung.</string>
-	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>Drops nutzt Bluetooth um Treffen automatisch zu bestätigen.</string>
+	<string>Drops nutzt Bluetooth nur während eines aktiven Drops, um deine Ankunft am Treffpunkt automatisch zu erkennen und andere Teilnehmer zu bestätigen.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Drops nutzt die Kamera für dein Profil-Selfie.</string>
+	<string>Drops nutzt die Kamera nur wenn du ein neues Profilbild aufnehmen möchtest.</string>
 	<key>NSContactsUsageDescription</key>
-	<string>Drops kann Kontakte importieren damit du Freunde einfach hinzufügen kannst.</string>
-	<key>NSFaceIDUsageDescription</key>
-	<string>Drops kann Face ID zur schnellen Anmeldung nutzen.</string>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Drops nutzt deinen Standort im Hintergrund um Freunde zu benachrichtigen.</string>
+	<string>Drops gleicht deine Kontakte mit anderen Drops-Nutzern ab, damit du Freunde per Telefonnummer hinzufügen kannst. Kontaktdaten werden nicht gespeichert.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Drops nutzt deinen Standort für die Live Karte.</string>
+	<string>Drops zeigt dir Drops in deiner Nähe auf der Live-Karte und teilt deinen Standort ausschließlich während eines aktiven Drops mit den Teilnehmern.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Drops benötigt Zugriff auf deine Fotos für dein Profilbild.</string>
+	<string>Drops greift auf deine Fotos zu wenn du ein Profilbild aus der Fotomediathek auswählen möchtest.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSUserNotificationsUsageDescription</key>
-	<string>Drops benachrichtigt dich wenn Freunde in der Nähe einen Drop starten.</string>
+	<string>Drops benachrichtigt dich wenn Freunde in der Nähe einen Drop starten oder jemand deinem Drop beitritt.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

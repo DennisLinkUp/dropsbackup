@@ -52,7 +52,10 @@ struct FeedView: View {
     }
 
     private func showFriendProfile(_ friend: User) {
-        profileParticipant = DropParticipant(name: friend.name, emoji: friend.emoji, reliabilityScore: 88)
+        profileParticipant = DropParticipant(name: friend.name, emoji: friend.emoji,
+                                             reliabilityScore: friend.reliabilityPoints,
+                                             profileImageURL: friend.profileImageURL,
+                                             firebaseUID: friend.firebaseUID)
         profileCanBlock = false
         profileSubtitle = friend.isAvailable ? tr("feed.available_now") : (friend.statusMessage.isEmpty ? tr("feed.unavailable") : friend.statusMessage)
         profileAccent = Color.brand
@@ -92,6 +95,16 @@ struct FeedView: View {
     // Aktivitäts-Filter blendet Drops raus deren Kategorie nicht gewählt ist.
     private var strangerAnnotations: [MapAnnotationItem] {
         var base = store.allMapAnnotations.filter { $0.isStranger }
+        // Stadt-Filter: Umgebungs-Feed zeigt nur Drops aus der Stadt, in der
+        // sich der User gerade befindet. Berlin-User sieht keine München-Drops
+        // und umgekehrt. Wenn User außerhalb aller 5 Städte ist → leerer Feed
+        // (greift eh das CityGate dann).
+        if let myCity = ServiceCities.city(for: store.currentUser.coordinate) {
+            base = base.filter { myCity.contains($0.coordinate) }
+        } else if let myCityNear = ServiceCities.cityNear(store.currentUser.coordinate) {
+            // User im Vorort (40km-Buffer) → zeig Drops aus der nächstgelegenen Stadt
+            base = base.filter { myCityNear.contains($0.coordinate) }
+        }
         if store.genderFilterEnabled && store.userGender == "weiblich" {
             base = base.filter { ($0.hostGender?.lowercased() ?? "") == "weiblich" }
         }
@@ -366,38 +379,9 @@ struct FeedView: View {
                                 .padding(.top, 48)
                         }
 
-                        // ── Nicht verfügbare Freunde ──
-                        if !store.friends.filter({ !$0.isAvailable }).isEmpty {
-                            offlineFriendsHeader
-                            ForEach(store.friends.filter { !$0.isAvailable }) { friend in
-                                Button { showFriendProfile(friend) } label: {
-                                    HStack(spacing: 12) {
-                                        if let url = friend.profileImageURL, !url.isEmpty {
-                                            RemoteProfileImage(url: url,
-                                                               fallbackEmoji: friend.emoji,
-                                                               size: 38)
-                                        } else {
-                                            AvatarBadge(emoji: friend.emoji, size: 38)
-                                        }
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(friend.name)
-                                                .font(.system(size: 14, weight: .semibold))
-                                                .foregroundColor(.textPrimary)
-                                            Text(friend.statusMessage)
-                                                .font(.system(size: 12))
-                                                .foregroundColor(.textSecondary)
-                                        }
-                                        Spacer()
-                                        Image(systemName: "chevron.right")
-                                            .font(.system(size: 11))
-                                            .foregroundColor(.textTertiary)
-                                    }
-                                    .padding(12).liquidGlass(cornerRadius: 14)
-                                }
-                                .buttonStyle(.plain)
-                                .padding(.horizontal, 14).padding(.bottom, 8).opacity(0.45)
-                            }
-                        }
+                        // "Nicht verfügbar"-Sektion ist aus dem Umgebungs-Feed raus —
+                        // offline Freunde sieht man im Freunde-Tab (dort dediziert).
+                        // Im Feed geht's darum was JETZT passiert, daher irrelevant.
 
                         Spacer(minLength: 24)
                     }
@@ -417,9 +401,11 @@ struct FeedView: View {
                             selfie: p.selfie,
                             profileImageURL: p.profileImageURL,
                             reliabilityScore: p.reliabilityScore,
+                            totalCommits: p.reliabilityCommits,
                             subtitle: profileSubtitle,
                             accentColor: profileAccent,
                             isVerified: p.isVerified,
+                            userUID: p.firebaseUID,
                             canBlock: profileCanBlock
                         ) { profileParticipant = nil }
                             .environmentObject(store)
@@ -706,7 +692,9 @@ struct StrangerDropFeedCard: View {
         return auroraColors[index]
     }
     private var alreadyJoined: Bool { store.hasJoinedDrop(dropID: item.id) }
-    private var isVerified: Bool { store.isIdVerified }
+    /// Im Feed (Umgebung) ist alles lesbar — Name, Emoji, Aktivität. Nur auf der
+    /// Karte bleibt der genaue Standort bei Fremden-Drops verschwommen (isFuzzy).
+    private var isVerified: Bool { true }
 
     var body: some View {
         ZStack {

@@ -328,6 +328,23 @@ class AppleSignInManager: NSObject, ObservableObject,
                 }
                 let result = try await Auth.auth().signIn(with: credential)
                 let isNew = result.additionalUserInfo?.isNewUser ?? false
+                // Fallback-Namenserfassung: Apple sendet fullName nur beim allerersten
+                // Sign-In. Falls wir ihn dort nicht bekommen haben, ziehen wir als
+                // Notnagel Firebase's displayName (wird aus Apple fullName gesetzt wenn
+                // vorhanden) oder den PersonNameComponents.formatted String.
+                let existingGiven = UserDefaults.standard.string(forKey: "ud_appleGivenName") ?? ""
+                if existingGiven.isEmpty {
+                    if let display = result.user.displayName,
+                       let firstWord = display.split(separator: " ").first,
+                       !firstWord.isEmpty {
+                        UserDefaults.standard.set(String(firstWord), forKey: "ud_appleGivenName")
+                    } else if let components = appleIDCredential.fullName {
+                        let formatted = PersonNameComponentsFormatter.localizedString(from: components, style: .default)
+                        if let firstWord = formatted.split(separator: " ").first, !firstWord.isEmpty {
+                            UserDefaults.standard.set(String(firstWord), forKey: "ud_appleGivenName")
+                        }
+                    }
+                }
                 await MainActor.run {
                     self.currentController = nil
                     self.isLoading = false

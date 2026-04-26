@@ -418,54 +418,157 @@ struct ReliabilityScore {
     var totalCommits: Int
     var showUps: Int
     var noShows: Int
+    /// Zähler für Host-Erfolge (Drop gehostet und kam zustande — min. 1 Teilnehmer zusätzlich).
+    var hostSuccesses: Int = 0
+    /// Akkumulierte Bonus-Punkte.
+    var streakBonusPoints: Int = 0       // +20 nach 5 Drops in Folge ohne No-Show
+    var firstArrivalPoints: Int = 0      // +5 pro Mal als Erster vor Ort
+    var dropInvitesPoints: Int = 0       // +5 pro Einladung die gejoint ist (Drop-Einladung)
+    var newcomerHostPoints: Int = 0      // +3 pro neuem User (Drop-Entdecker) bei deinem Drop
+    var appInvitesPoints: Int = 0        // +10 pro Freund der Drops neu installiert & onboarded hat
+    /// Aktueller Show-Up-Streak (Anzahl Drops in Folge ohne No-Show).
+    /// Jeder 5er-Block löst +20 Streak-Bonus aus; Counter läuft danach weiter (alle 5 erneut).
+    var currentStreak: Int = 0
     var appLanguage: String = "de"
 
-    var score: Double {
-        guard totalCommits > 0 else { return 100 }
-        return Double(showUps) / Double(totalCommits) * 100
+    // MARK: - Punktesystem
+    // Start 100 · Joinen+vor Ort +15 · Hosten+klappt +8 · No-Show -25
+    // Boni: Streak +20, Erster +5, Drop-Einladung +5, Neuling-Host +3, App-Einladung +10
+    static let startingPoints       = 100
+    static let pointsPerShowUp      = 15
+    static let pointsPerHostSuccess = 8
+    static let pointsPerNoShow      = -25
+
+    /// Gesamtpunktzahl — aus Ereignissen und Boni.
+    /// showUps enthält historisch ALLE Anwesenheiten (Joiner + Host). hostSuccesses trennt
+    /// die Host-Ankünfte raus damit sie korrekt mit 8 statt 15 Punkten verrechnet werden.
+    var points: Int {
+        let joinArrivals = max(0, showUps - hostSuccesses)
+        return Self.startingPoints
+            + joinArrivals * Self.pointsPerShowUp
+            + hostSuccesses * Self.pointsPerHostSuccess
+            + noShows * Self.pointsPerNoShow
+            + bonusPoints
     }
-    /// Langtext-Label — deckungsgleich mit den Tier-Bezeichnungen aus `badge`,
-    /// damit überall in der App dieselben 4 Stufen auftauchen
-    /// (Drop-Legende / Stammgast / Drop-Entdecker / Dropout).
+
+    var bonusPoints: Int {
+        streakBonusPoints + firstArrivalPoints + dropInvitesPoints + newcomerHostPoints + appInvitesPoints
+    }
+
+    /// Deckungsgleich mit badge — damit überall die gleiche Stufe erscheint.
     var label: String { badge }
+
     var color: Color {
-        guard totalCommits > 0 else { return .accentOrange }
-        switch score {
-        case 95...100: return .brand
-        case 80..<95:  return .onlineGreen
-        case 60..<80:  return .accentOrange
-        default:       return .accentRed
-        }
-    }
-    var badge: String {
-        // Neue User starten als „Drop-Entdecker" — erst mit einer realen Commit-Historie
-        // werden die höheren Tiers vergeben.
-        guard totalCommits > 0 else { return "Drop-Entdecker" }
-        switch score {
-        case 95...100: return "Drop-Legende"
-        case 80..<95:  return "Stammgast"
-        case 60..<80:  return "Drop-Entdecker"
-        default:       return "Dropout"
+        switch points {
+        case ..<0:      return .accentRed
+        case 0..<50:    return .accentOrange
+        case 50..<200:  return Color(hex: "f59e0b")
+        case 200..<500: return .onlineGreen
+        default:        return .brand
         }
     }
 
-    /// SF-Symbol passend zum Tier — wird neben dem Badge gerendert.
-    var badgeIcon: String {
-        guard totalCommits > 0 else { return "binoculars.fill" }  // Entdecker-Look für neue User
-        switch score {
-        case 95...100: return "crown.fill"           // Legende
-        case 80..<95:  return "star.fill"            // Stammgast
-        case 60..<80:  return "binoculars.fill"      // Drop-Entdecker
-        default:       return "exclamationmark.triangle.fill"  // Dropout
+    var badge: String {
+        switch points {
+        case ..<0:      return "Dropout"
+        case 0..<50:    return "Neustart"
+        case 50..<200:  return "Drop-Entdecker"
+        case 200..<500: return "Stammgast"
+        default:        return "Drop-Legende"
         }
     }
-    /// Human-readable score — shows "Neu" for users with no commit history yet.
-    var displayText: String {
-        totalCommits == 0 ? "Neu" : "\(Int(score))%"
+
+    /// SF-Symbol passend zum Tier.
+    var badgeIcon: String {
+        switch points {
+        case ..<0:      return "exclamationmark.triangle.fill"
+        case 0..<50:    return "leaf.fill"
+        case 50..<200:  return "binoculars.fill"
+        case 200..<500: return "star.fill"
+        default:        return "crown.fill"
+        }
     }
-    /// Show "–" label for new users without any drops yet.
+
+    /// Punktzahl als String fürs Hero-Label.
+    var displayText: String { "\(points)" }
+
+    /// Sekundär-Label.
     var displayLabel: String {
-        totalCommits == 0 ? "Noch keine Drops" : label
+        totalCommits == 0 ? "Willkommen bei Drops" : badge
+    }
+
+    /// Wie viele Punkte bis zum nächsten Tier. nil = höchstes erreicht.
+    var pointsToNextTier: Int? {
+        switch points {
+        case ..<0:      return -points
+        case 0..<50:    return 50 - points
+        case 50..<200:  return 200 - points
+        case 200..<500: return 500 - points
+        default:        return nil
+        }
+    }
+
+    var nextTierName: String? {
+        switch points {
+        case ..<0:      return "Neustart"
+        case 0..<50:    return "Drop-Entdecker"
+        case 50..<200:  return "Stammgast"
+        case 200..<500: return "Drop-Legende"
+        default:        return nil
+        }
+    }
+
+    /// Fortschritt (0–1) innerhalb des aktuellen Tiers bis zur nächsten Schwelle.
+    var tierProgress: Double {
+        switch points {
+        case ..<0:      return 0
+        case 0..<50:    return Double(points) / 50.0
+        case 50..<200:  return Double(points - 50) / 150.0
+        case 200..<500: return Double(points - 200) / 300.0
+        default:        return 1.0
+        }
+    }
+
+    // MARK: - Static helpers (ohne Event-Daten, nur aus Punktzahl)
+
+    static func badge(forPoints points: Int) -> String {
+        switch points {
+        case ..<0:      return "Dropout"
+        case 0..<50:    return "Neustart"
+        case 50..<200:  return "Drop-Entdecker"
+        case 200..<500: return "Stammgast"
+        default:        return "Drop-Legende"
+        }
+    }
+
+    static func color(forPoints points: Int) -> Color {
+        switch points {
+        case ..<0:      return .accentRed
+        case 0..<50:    return .accentOrange
+        case 50..<200:  return Color(hex: "f59e0b")
+        case 200..<500: return .onlineGreen
+        default:        return .brand
+        }
+    }
+
+    static func badgeIcon(forPoints points: Int) -> String {
+        switch points {
+        case ..<0:      return "exclamationmark.triangle.fill"
+        case 0..<50:    return "leaf.fill"
+        case 50..<200:  return "binoculars.fill"
+        case 200..<500: return "star.fill"
+        default:        return "crown.fill"
+        }
+    }
+
+    static func tierProgress(forPoints points: Int) -> Double {
+        switch points {
+        case ..<0:      return 0
+        case 0..<50:    return Double(points) / 50.0
+        case 50..<200:  return Double(points - 50) / 150.0
+        case 200..<500: return Double(points - 200) / 300.0
+        default:        return 1.0
+        }
     }
 }
 
@@ -475,20 +578,16 @@ struct ReliabilityBadgeView: View {
     var body: some View {
         HStack(spacing: 10) {
             ZStack {
-                Circle().stroke(score.color.opacity(0.15), lineWidth: 3).frame(width: 40, height: 40)
-                Circle()
-                    .trim(from: 0, to: CGFloat(score.score / 100))
-                    .stroke(score.color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .frame(width: 40, height: 40).rotationEffect(.degrees(-90))
-                Text("\(Int(score.score))")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                Circle().fill(score.color.opacity(0.15)).frame(width: 40, height: 40)
+                Image(systemName: score.badgeIcon)
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(score.color)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(score.badge)
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .foregroundColor(.textPrimary)
-                Text("\(score.showUps) von \(score.totalCommits) Drops erschienen")
+                Text("\(score.points) Pkt · \(score.showUps) Drops")
                     .font(.system(size: 11)).foregroundColor(.textSecondary)
             }
         }
@@ -593,237 +692,290 @@ extension View {
 
 
 
-// MARK: - Reliability Info Sheet
+// MARK: - Reliability Info Sheet (Premium Redesign)
+// Modernes Layout: Hero-Punktekarte mit Gradient + Progress zur nächsten Stufe,
+// Punkte-Events-Tabelle mit Werten, Bonus-Liste, Stufen-Übersicht, Stats.
 
 struct ReliabilityInfoSheet: View {
     let score: ReliabilityScore
     @Environment(\.dismiss) private var dismiss
-    @State private var animateRing = false
+    @State private var animateProgress = false
 
-    // Tier-System: 4 Stufen mit Schwellenwerten + passenden SF-Symbolen
-    private let tiers: [(label: String, threshold: Double, color: Color, icon: String)] = [
-        ("Dropout",         0,   .accentRed,     "exclamationmark.triangle.fill"),
-        ("Drop-Entdecker",  60,  .accentOrange,  "binoculars.fill"),
-        ("Stammgast",       80,  .onlineGreen,   "star.fill"),
-        ("Drop-Legende",    95,  .brand,         "crown.fill"),
+    private let tiers: [(label: String, threshold: Int, color: Color, icon: String)] = [
+        ("Dropout",         -999, .accentRed,              "exclamationmark.triangle.fill"),
+        ("Neustart",         0,   .accentOrange,           "leaf.fill"),
+        ("Drop-Entdecker",   50,  Color(hex: "f59e0b"),    "binoculars.fill"),
+        ("Stammgast",        200, .onlineGreen,            "star.fill"),
+        ("Drop-Legende",     500, .brand,                  "crown.fill"),
     ]
+
     private var currentTierIndex: Int {
-        tiers.indices.last(where: { score.score >= tiers[$0].threshold }) ?? 0
+        tiers.indices.last(where: { score.points >= tiers[$0].threshold }) ?? 0
     }
 
     var body: some View {
-        ZStack {
-            AppAuroraBackground().ignoresSafeArea()
-
+        NavigationStack {
             ScrollView(showsIndicators: false) {
-                VStack(spacing: 20) {
-
-                    // ── Hero ────────────────────────────────────────────
-                    VStack(spacing: 16) {
-                        // Großer Score-Ring
-                        ZStack {
-                            // Hintergrund-Ring
-                            Circle()
-                                .stroke(score.color.opacity(0.12), lineWidth: 14)
-                                .frame(width: 130, height: 130)
-
-                            // Fortschritts-Ring
-                            Circle()
-                                .trim(from: 0, to: animateRing ? CGFloat(min(score.score, 100) / 100) : 0)
-                                .stroke(
-                                    LinearGradient(colors: [score.color.opacity(0.7), score.color],
-                                                   startPoint: .topLeading, endPoint: .bottomTrailing),
-                                    style: StrokeStyle(lineWidth: 14, lineCap: .round)
-                                )
-                                .frame(width: 130, height: 130)
-                                .rotationEffect(.degrees(-90))
-                                .animation(.spring(response: 1.1, dampingFraction: 0.72).delay(0.15),
-                                           value: animateRing)
-
-                            // Innerer Glow
-                            Circle()
-                                .fill(score.color.opacity(0.07))
-                                .frame(width: 104, height: 104)
-
-                            VStack(spacing: 4) {
-                                Image(systemName: score.badgeIcon)
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .foregroundColor(score.color)
-                                Text(score.displayText)
-                                    .font(.system(size: 26, weight: .black, design: .rounded))
-                                    .foregroundColor(score.color)
-                                Text(score.badge)
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundColor(.textSecondary)
-                                    .tracking(0.3)
-                            }
-                        }
-
-                        // Status-Label
-                        Text(score.displayLabel)
-                            .font(.system(size: 16, weight: .semibold, design: .rounded))
-                            .foregroundColor(.textPrimary)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 28)
-                    .liquidGlass(cornerRadius: 24)
-
-                    // ── Tier-Leiste ─────────────────────────────────────
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Stufen")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.textSecondary)
-                            .padding(.horizontal, 4)
-
-                        VStack(spacing: 0) {
-                            ForEach(tiers.indices, id: \.self) { i in
-                                let tier   = tiers[i]
-                                let isNow  = i == currentTierIndex
-                                let isPast = i < currentTierIndex
-
-                                HStack(spacing: 14) {
-                                    // Farb-Kreis mit Tier-Icon
-                                    ZStack {
-                                        Circle()
-                                            .fill((isPast || isNow) ? tier.color.opacity(0.18) : Color.textTertiary.opacity(0.08))
-                                            .frame(width: 36, height: 36)
-                                        Image(systemName: tier.icon)
-                                            .font(.system(size: 15, weight: .semibold))
-                                            .foregroundColor(
-                                                (isPast || isNow)
-                                                    ? tier.color
-                                                    : Color.textTertiary.opacity(0.6)
-                                            )
-                                    }
-                                    .overlay(
-                                        // Aktuelles Tier: dezenter Pulse-Ring
-                                        Circle()
-                                            .stroke(tier.color.opacity(isNow ? 0.45 : 0), lineWidth: 2)
-                                            .frame(width: 40, height: 40)
-                                    )
-
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(tier.label)
-                                            .font(.system(size: 14, weight: isNow ? .bold : .medium))
-                                            .foregroundColor(isNow ? tier.color : (isPast ? .textPrimary : .textTertiary))
-                                        Text("ab \(Int(tier.threshold))%")
-                                            .font(.system(size: 11))
-                                            .foregroundColor(.textTertiary)
-                                    }
-
-                                    Spacer()
-
-                                    if isNow {
-                                        Text("Du")
-                                            .font(.system(size: 11, weight: .semibold))
-                                            .foregroundColor(tier.color)
-                                            .padding(.horizontal, 9).padding(.vertical, 4)
-                                            .background(tier.color.opacity(0.15), in: Capsule())
-                                    }
-                                }
-                                .padding(.horizontal, 16).padding(.vertical, 11)
-
-                                if i < tiers.count - 1 {
-                                    Divider().padding(.leading, 64)
-                                }
-                            }
-                        }
-                        .liquidGlass(cornerRadius: 18)
-                    }
-
-                    // ── Stat-Karten ─────────────────────────────────────
-                    HStack(spacing: 12) {
-                        rsStatPill(value: "\(score.showUps)",      label: "Erschienen",  icon: "checkmark.circle.fill", color: .onlineGreen)
-                        rsStatPill(value: "\(score.noShows)",      label: "No-Shows",    icon: "xmark.circle.fill",     color: .accentRed)
-                        rsStatPill(value: "\(score.totalCommits)", label: "Gesamt",      icon: "person.2.fill",          color: .brand)
-                    }
-
-                    // ── So funktioniert's ────────────────────────────────
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("So funktioniert der Score")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.textSecondary)
-                            .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
-
-                        VStack(spacing: 0) {
-                            rsRuleRow(icon: "checkmark.circle.fill", color: .onlineGreen,
-                                      title: "Erscheinen lohnt sich",
-                                      sub: "Jeder Drop bei dem du auftauchst verbessert deinen Score")
-                            Divider().padding(.leading, 66)
-                            rsRuleRow(icon: "xmark.circle.fill", color: .accentRed,
-                                      title: "No-Shows kosten Punkte",
-                                      sub: "Nicht auftauchen ohne Absage senkt deinen Score")
-                            Divider().padding(.leading, 66)
-                            rsRuleRow(icon: "eye.fill", color: .accentOrange,
-                                      title: "Andere sehen deinen Score",
-                                      sub: "Vor dem Beitreten sehen Leute wie zuverlässig du bist")
-                            Divider().padding(.leading, 66)
-                            rsRuleRow(icon: "arrow.triangle.2.circlepath", color: .brand,
-                                      title: "Score erholt sich",
-                                      sub: "Regelmäßiges Erscheinen bringt den Score schnell wieder hoch")
-                        }
-                    }
-                    .liquidGlass(cornerRadius: 18)
-
-                    // Fertig-Button
-                    Button {
-                        dismiss()
-                    } label: {
-                        Text("Fertig")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 15)
-                            .background(Color.brand, in: RoundedRectangle(cornerRadius: 16))
-                    }
-                    .padding(.top, 4).padding(.bottom, 8)
+                VStack(spacing: 14) {
+                    heroCard
+                    progressCard
+                    pointsEventsCard
+                    bonusCard
+                    tiersCard
+                    statsRow
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 24)
-                .padding(.bottom, 16)
+                .padding(.horizontal, 18)
+                .padding(.top, 4)
+                .padding(.bottom, 32)
+            }
+            .background(Color(UIColor.systemGroupedBackground).ignoresSafeArea())
+            .navigationTitle("Zuverlässigkeit")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Fertig") { dismiss() }.fontWeight(.semibold)
+                }
             }
         }
-        .onAppear { animateRing = true }
+        .onAppear { withAnimation(.easeOut(duration: 0.9).delay(0.15)) { animateProgress = true } }
         .presentationDragIndicator(.visible)
-        .sheetBackground()
+    }
+
+    // MARK: Hero — Punkte, Tier-Icon, Gradient-Karte
+
+    private var heroCard: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                Circle().fill(score.color.opacity(0.14)).frame(width: 62, height: 62)
+                Image(systemName: score.badgeIcon)
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundColor(score.color)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(score.badge)
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .foregroundColor(.textPrimary)
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    Text("\(score.points)")
+                        .font(.system(size: 20, weight: .heavy, design: .rounded))
+                        .foregroundColor(score.color)
+                    Text("Pkt")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.textSecondary)
+                }
+            }
+            Spacer()
+        }
+        .padding(16)
+        .background(Color(UIColor.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    // MARK: Fortschritt zur nächsten Stufe
+
+    @ViewBuilder private var progressCard: some View {
+        if let remaining = score.pointsToNextTier, let next = score.nextTierName {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Noch \(remaining) Pkt bis \(next)")
+                        .font(.system(size: 13))
+                        .foregroundColor(.textSecondary)
+                    Spacer()
+                }
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.textTertiary.opacity(0.15))
+                            .frame(height: 6)
+                        Capsule()
+                            .fill(score.color)
+                            .frame(width: geo.size.width * (animateProgress ? CGFloat(score.tierProgress) : 0),
+                                   height: 6)
+                    }
+                }
+                .frame(height: 6)
+            }
+            .padding(14)
+            .background(Color(UIColor.secondarySystemGroupedBackground),
+                        in: RoundedRectangle(cornerRadius: 16))
+        } else {
+            HStack(spacing: 10) {
+                Image(systemName: "crown.fill").foregroundColor(.brand)
+                Text("Höchste Stufe erreicht")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.textPrimary)
+                Spacer()
+            }
+            .padding(14)
+            .background(Color(UIColor.secondarySystemGroupedBackground),
+                        in: RoundedRectangle(cornerRadius: 16))
+        }
+    }
+
+    // MARK: Punkte-Events
+
+    private var pointsEventsCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("So sammelst du Punkte")
+            VStack(spacing: 0) {
+                eventRow(icon: "figure.walk.circle.fill", color: .onlineGreen,
+                         title: "Drop beitreten + vor Ort", value: "+15")
+                Divider().padding(.leading, 56)
+                eventRow(icon: "plus.circle.fill", color: Color(hex: "06b6d4"),
+                         title: "Drop hosten + kommt zustande", value: "+8")
+                Divider().padding(.leading, 56)
+                eventRow(icon: "xmark.circle.fill", color: .accentRed,
+                         title: "No-Show (nicht erschienen)", value: "-25",
+                         negative: true)
+            }
+        }
+        .background(Color(UIColor.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    // MARK: Boni
+
+    private var bonusCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("Extras & Boni")
+            VStack(spacing: 0) {
+                eventRow(icon: "flame.fill", color: .accentOrange,
+                         title: "5× in Folge ohne No-Show", value: "+20")
+                Divider().padding(.leading, 56)
+                eventRow(icon: "bolt.fill", color: Color(hex: "f59e0b"),
+                         title: "Als Erster vor Ort", value: "+5")
+                Divider().padding(.leading, 56)
+                eventRow(icon: "paperplane.fill", color: .brand,
+                         title: "Eingeladener joint deinen Drop", value: "+5")
+                Divider().padding(.leading, 56)
+                eventRow(icon: "sparkles", color: Color(hex: "8b5cf6"),
+                         title: "Neuling bei deinem Drop", value: "+3")
+                Divider().padding(.leading, 56)
+                eventRow(icon: "person.badge.plus.fill", color: Color(hex: "ec4899"),
+                         title: "Freund installiert Drops neu", value: "+10")
+            }
+        }
+        .background(Color(UIColor.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    // MARK: Stufen
+
+    private var tiersCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("Stufen")
+            VStack(spacing: 0) {
+                ForEach(tiers.indices, id: \.self) { i in
+                    let tier = tiers[i]
+                    let isNow = i == currentTierIndex
+                    HStack(spacing: 12) {
+                        ZStack {
+                            Circle().fill(tier.color.opacity(isNow ? 0.22 : 0.10))
+                                .frame(width: 34, height: 34)
+                            Image(systemName: tier.icon)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(tier.color)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(tier.label)
+                                .font(.system(size: 14, weight: isNow ? .bold : .medium))
+                                .foregroundColor(isNow ? tier.color : .textPrimary)
+                            Text(tierRangeText(i))
+                                .font(.system(size: 11))
+                                .foregroundColor(.textTertiary)
+                        }
+                        Spacer()
+                        if isNow {
+                            Text("Du")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(tier.color)
+                                .padding(.horizontal, 9).padding(.vertical, 3)
+                                .background(tier.color.opacity(0.15), in: Capsule())
+                        }
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    if i < tiers.count - 1 {
+                        Divider().padding(.leading, 56)
+                    }
+                }
+            }
+        }
+        .background(Color(UIColor.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func tierRangeText(_ i: Int) -> String {
+        switch i {
+        case 0: return "unter 0 Pkt"
+        case 1: return "0 – 49 Pkt"
+        case 2: return "50 – 199 Pkt"
+        case 3: return "200 – 499 Pkt"
+        case 4: return "ab 500 Pkt"
+        default: return ""
+        }
+    }
+
+    // MARK: Stats-Zeile
+
+    private var statsRow: some View {
+        HStack(spacing: 10) {
+            rsStatPill(value: "\(score.showUps)", label: "Erschienen",
+                       icon: "checkmark.circle.fill", color: .onlineGreen)
+            rsStatPill(value: "\(score.noShows)", label: "No-Shows",
+                       icon: "xmark.circle.fill", color: .accentRed)
+            rsStatPill(value: "+\(score.bonusPoints)", label: "Boni",
+                       icon: "star.fill", color: Color(hex: "f59e0b"))
+        }
+    }
+
+    // MARK: Helper
+
+    private func sectionHeader(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.textSecondary)
+            .tracking(0.5)
+            .textCase(.uppercase)
+            .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 10)
+    }
+
+    private func eventRow(icon: String, color: Color, title: String,
+                          value: String, negative: Bool = false) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle().fill(color.opacity(0.14)).frame(width: 34, height: 34)
+                Image(systemName: icon).font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(color)
+            }
+            Text(title)
+                .font(.system(size: 14))
+                .foregroundColor(.textPrimary)
+            Spacer()
+            Text(value)
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .foregroundColor(negative ? .accentRed : color)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 11)
     }
 }
 
 private func rsStatPill(value: String, label: String, icon: String, color: Color) -> some View {
-    VStack(spacing: 6) {
+    VStack(spacing: 4) {
         Image(systemName: icon)
-            .font(.system(size: 18))
+            .font(.system(size: 15))
             .foregroundColor(color)
         Text(value)
-            .font(.system(size: 22, weight: .black, design: .rounded))
+            .font(.system(size: 18, weight: .bold, design: .rounded))
             .foregroundColor(.textPrimary)
         Text(label)
-            .font(.system(size: 10, weight: .medium))
+            .font(.system(size: 10))
             .foregroundColor(.textSecondary)
             .multilineTextAlignment(.center)
     }
     .frame(maxWidth: .infinity)
-    .padding(.vertical, 16)
-    .liquidGlass(cornerRadius: 16)
-    .overlay(RoundedRectangle(cornerRadius: 16).stroke(color.opacity(0.2), lineWidth: 1))
+    .padding(.vertical, 12)
+    .background(Color(UIColor.secondarySystemGroupedBackground),
+                in: RoundedRectangle(cornerRadius: 12))
 }
 
-private func rsRuleRow(icon: String, color: Color, title: String, sub: String) -> some View {
-    HStack(alignment: .top, spacing: 14) {
-        ZStack {
-            Circle().fill(color.opacity(0.12)).frame(width: 36, height: 36)
-            Image(systemName: icon).font(.system(size: 16)).foregroundColor(color)
-        }
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.textPrimary)
-            Text(sub)
-                .font(.system(size: 12))
-                .foregroundColor(.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        Spacer()
-    }
-    .padding(.horizontal, 16).padding(.vertical, 13)
-}

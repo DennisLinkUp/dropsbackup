@@ -15,6 +15,8 @@ struct AdminPanelView: View {
     @State private var confirmAction: ConfirmAction? = nil
     @State private var selectedUser: AdminUserEntry? = nil
     @State private var auroraAnimate = false
+    @State private var showReports = false
+    @State private var showDropsMonitor = false
 
     enum UserFilter { case all, banned, active, plus }
 
@@ -38,7 +40,9 @@ struct AdminPanelView: View {
         let q = searchText.lowercased()
         return base.filter {
             $0.name.lowercased().contains(q) ||
-            $0.email.lowercased().contains(q)
+            $0.email.lowercased().contains(q) ||
+            $0.phoneNumber.lowercased().contains(q) ||
+            $0.id.lowercased().hasPrefix(q)        // UID-Prefix-Match
         }
     }
 
@@ -91,6 +95,79 @@ struct AdminPanelView: View {
                             }
                         }
                         .padding(.horizontal, 20)
+
+                        // Meldungen — öffnet separates Sheet
+                        Button {
+                            showReports = true
+                        } label: {
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .fill(Color.accentOrange.opacity(0.15))
+                                        .frame(width: 40, height: 40)
+                                    Image(systemName: "flag.fill")
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundColor(.accentOrange)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 6) {
+                                        Text("Meldungen")
+                                            .font(.system(size: 15, weight: .semibold))
+                                            .foregroundColor(.textPrimary)
+                                        if s.openReports > 0 {
+                                            Text("\(s.openReports)")
+                                                .font(.system(size: 11, weight: .bold))
+                                                .foregroundColor(.white)
+                                                .padding(.horizontal, 7).padding(.vertical, 2)
+                                                .background(Capsule().fill(Color.accentRed))
+                                        }
+                                    }
+                                    Text(s.openReports == 0 ? "Keine offenen Meldungen" : "\(s.openReports) offen")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.textSecondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(.textTertiary)
+                            }
+                            .padding(12)
+                            .liquidGlass(cornerRadius: 14)
+                            .padding(.horizontal, 20)
+                        }
+                        .buttonStyle(.plain)
+
+                        // Live Drops Monitor — öffnet Sheet
+                        Button {
+                            showDropsMonitor = true
+                        } label: {
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .fill(Color.brand.opacity(0.15))
+                                        .frame(width: 40, height: 40)
+                                    Image(systemName: "dot.radiowaves.left.and.right")
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundColor(.brand)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Live Drops Monitor")
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundColor(.textPrimary)
+                                    Text("Aktuelle Drops anschauen & moderieren")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.textSecondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(.textTertiary)
+                            }
+                            .padding(12)
+                            .liquidGlass(cornerRadius: 14)
+                            .padding(.horizontal, 20)
+                        }
+                        .buttonStyle(.plain)
                     }
 
                     // ── Suchfeld ──────────────────────────────────────────
@@ -98,7 +175,7 @@ struct AdminPanelView: View {
                         Image(systemName: "magnifyingglass")
                             .foregroundColor(.textTertiary)
                             .font(.system(size: 15))
-                        TextField("Name, Telefon oder E-Mail", text: $searchText)
+                        TextField("Name, Telefon, E-Mail oder UID", text: $searchText)
                             .font(.system(size: 15))
                             .foregroundColor(.textPrimary)
                             .autocorrectionDisabled()
@@ -300,6 +377,12 @@ struct AdminPanelView: View {
             withAnimation(.easeInOut(duration: 6).repeatForever(autoreverses: true)) {
                 auroraAnimate = true
             }
+        }
+        .sheet(isPresented: $showReports, onDismiss: { loadData() }) {
+            AdminReportsSheet()
+        }
+        .sheet(isPresented: $showDropsMonitor, onDismiss: { loadData() }) {
+            AdminDropsMonitorSheet()
         }
     }
 
@@ -619,5 +702,436 @@ private struct AdminBadge: View {
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .background(color.opacity(0.12), in: Capsule())
+    }
+}
+
+// MARK: - Admin Reports Sheet
+// Listet alle Nutzer-Meldungen — neueste zuerst. Admin kann jeden Eintrag als
+// erledigt / abgewiesen markieren. Bei "Nutzer bannen" wird direkt der Ban gesetzt.
+
+struct AdminReportsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var reports: [AdminReportEntry] = []
+    @State private var isLoading = true
+    @State private var filter: Filter = .open
+
+    enum Filter: String, CaseIterable { case open = "Offen", all = "Alle", resolved = "Erledigt" }
+
+    private var filtered: [AdminReportEntry] {
+        switch filter {
+        case .open:     return reports.filter { $0.status == "open" }
+        case .resolved: return reports.filter { $0.status != "open" }
+        case .all:      return reports
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Picker("Filter", selection: $filter) {
+                    ForEach(Filter.allCases, id: \.self) { f in
+                        Text(f.rawValue).tag(f)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16).padding(.vertical, 10)
+
+                if isLoading {
+                    Spacer()
+                    ProgressView().tint(.brand)
+                    Spacer()
+                } else if filtered.isEmpty {
+                    Spacer()
+                    VStack(spacing: 10) {
+                        Image(systemName: "flag.slash")
+                            .font(.system(size: 36))
+                            .foregroundColor(.textTertiary)
+                        Text(filter == .open ? "Keine offenen Meldungen" : "Keine Meldungen")
+                            .font(.system(size: 14))
+                            .foregroundColor(.textSecondary)
+                    }
+                    Spacer()
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 10) {
+                            ForEach(filtered) { report in
+                                AdminReportCard(
+                                    report: report,
+                                    onSetStatus: { newStatus in
+                                        RealtimeDBManager.shared.adminSetReportStatus(
+                                            reportID: report.id, status: newStatus
+                                        )
+                                        if let idx = reports.firstIndex(where: { $0.id == report.id }) {
+                                            let updated = reports[idx]
+                                            reports[idx] = AdminReportEntry(
+                                                id: updated.id,
+                                                reporterUID: updated.reporterUID,
+                                                reportedUID: updated.reportedUID,
+                                                reportedName: updated.reportedName,
+                                                reason: updated.reason,
+                                                details: updated.details,
+                                                createdAt: updated.createdAt,
+                                                status: newStatus
+                                            )
+                                        }
+                                    },
+                                    onBanUser: {
+                                        guard !report.reportedUID.isEmpty else { return }
+                                        // Erst bannen, dann Report als resolved markieren
+                                        RealtimeDBManager.shared.adminSetBan(uid: report.reportedUID, banned: true)
+                                        RealtimeDBManager.shared.adminSetReportStatus(
+                                            reportID: report.id, status: "resolved"
+                                        )
+                                        if let idx = reports.firstIndex(where: { $0.id == report.id }) {
+                                            let updated = reports[idx]
+                                            reports[idx] = AdminReportEntry(
+                                                id: updated.id,
+                                                reporterUID: updated.reporterUID,
+                                                reportedUID: updated.reportedUID,
+                                                reportedName: updated.reportedName,
+                                                reason: updated.reason,
+                                                details: updated.details,
+                                                createdAt: updated.createdAt,
+                                                status: "resolved"
+                                            )
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                        .padding(.horizontal, 16).padding(.vertical, 8)
+                    }
+                }
+            }
+            .navigationTitle("Meldungen")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Schließen") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        isLoading = true
+                        loadReports()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+            }
+        }
+        .onAppear { loadReports() }
+    }
+
+    private func loadReports() {
+        RealtimeDBManager.shared.adminFetchReports { result in
+            reports = result
+            isLoading = false
+        }
+    }
+}
+
+private struct AdminReportCard: View {
+    let report: AdminReportEntry
+    let onSetStatus: (String) -> Void
+    let onBanUser: () -> Void
+    @State private var showBanConfirm = false
+
+    private static let df: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "de_DE")
+        f.dateFormat = "dd.MM.yy HH:mm"
+        return f
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(report.reportedName.isEmpty ? "Unbekannt" : report.reportedName)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.textPrimary)
+                    Text(report.reason)
+                        .font(.system(size: 13))
+                        .foregroundColor(.accentOrange)
+                }
+                Spacer()
+                statusBadge
+            }
+
+            if !report.details.isEmpty {
+                Text(report.details)
+                    .font(.system(size: 13))
+                    .foregroundColor(.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 6) {
+                Image(systemName: "clock").font(.system(size: 10))
+                Text(Self.df.string(from: report.createdAt)).font(.system(size: 11))
+                Spacer()
+                if !report.reportedUID.isEmpty {
+                    Text("UID: \(String(report.reportedUID.prefix(8)))…")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.textTertiary)
+                }
+            }
+            .foregroundColor(.textTertiary)
+
+            if report.status == "open" {
+                HStack(spacing: 8) {
+                    Button {
+                        onSetStatus("resolved")
+                    } label: {
+                        Label("Erledigt", systemImage: "checkmark")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.brand)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(Color.brand.opacity(0.12), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        onSetStatus("dismissed")
+                    } label: {
+                        Label("Abweisen", systemImage: "xmark")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.textSecondary)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(Color.textSecondary.opacity(0.12), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    Spacer()
+
+                    if !report.reportedUID.isEmpty {
+                        Button {
+                            showBanConfirm = true
+                        } label: {
+                            Label("Bannen", systemImage: "hand.raised.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.accentRed)
+                                .padding(.horizontal, 10).padding(.vertical, 6)
+                                .background(Color.accentRed.opacity(0.12), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .liquidGlass(cornerRadius: 14)
+        .alert("Nutzer bannen?", isPresented: $showBanConfirm) {
+            Button("Abbrechen", role: .cancel) {}
+            Button("Bannen", role: .destructive) { onBanUser() }
+        } message: {
+            Text("\(report.reportedName.isEmpty ? "Dieser Nutzer" : report.reportedName) wird gesperrt. Die Meldung wird automatisch als erledigt markiert.")
+        }
+    }
+
+    @ViewBuilder private var statusBadge: some View {
+        switch report.status {
+        case "resolved":
+            label(text: "Erledigt", color: .brand, icon: "checkmark.seal.fill")
+        case "dismissed":
+            label(text: "Abgewiesen", color: .textTertiary, icon: "xmark.seal.fill")
+        default:
+            label(text: "Offen", color: .accentOrange, icon: "flag.fill")
+        }
+    }
+
+    private func label(text: String, color: Color, icon: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 9, weight: .semibold))
+            Text(text).font(.system(size: 10, weight: .semibold))
+        }
+        .foregroundColor(color)
+        .padding(.horizontal, 7).padding(.vertical, 3)
+        .background(color.opacity(0.12), in: Capsule())
+    }
+}
+
+// MARK: - Admin Live Drops Monitor Sheet
+// Zeigt alle aktuell laufenden Drops mit Stadt-Filter + Lösch-Button für
+// Content-Moderation. Drops werden beim Löschen auch aus dropins/joinRequests
+// entfernt + es wird ein Admin-Notice unter users/{host}/adminNotices abgelegt
+// (Cloud-Function-Hook für Push an Host mit dem Lösch-Grund).
+
+struct AdminDropsMonitorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var drops: [AdminDropEntry] = []
+    @State private var isLoading = true
+    @State private var cityFilter: String = "Alle"
+    @State private var pendingDelete: AdminDropEntry? = nil
+    @State private var deleteReason: String = ""
+
+    private var cities: [String] {
+        ["Alle"] + ServiceCities.all.map { $0.name } + ["—"]
+    }
+
+    private var filtered: [AdminDropEntry] {
+        if cityFilter == "Alle" { return drops }
+        return drops.filter { $0.cityName == cityFilter }
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                // Stadt-Filter (horizontal scrollable chips)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(cities, id: \.self) { city in
+                            let active = cityFilter == city
+                            Button(city) {
+                                withAnimation(.spring(response: 0.25)) { cityFilter = city }
+                            }
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(active ? .white : .textPrimary)
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .background(active ? Color.brand : Color(UIColor.systemGray5),
+                                        in: Capsule())
+                        }
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                }
+
+                if isLoading {
+                    Spacer()
+                    ProgressView().tint(.brand)
+                    Spacer()
+                } else if filtered.isEmpty {
+                    Spacer()
+                    VStack(spacing: 10) {
+                        Image(systemName: "dot.radiowaves.left.and.right")
+                            .font(.system(size: 36))
+                            .foregroundColor(.textTertiary)
+                        Text(cityFilter == "Alle"
+                             ? "Keine aktiven Drops"
+                             : "Keine Drops in \(cityFilter)")
+                            .font(.system(size: 14))
+                            .foregroundColor(.textSecondary)
+                    }
+                    Spacer()
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 10) {
+                            ForEach(filtered) { drop in
+                                AdminDropCard(drop: drop) {
+                                    pendingDelete = drop
+                                    deleteReason = ""
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 16).padding(.vertical, 8)
+                    }
+                }
+            }
+            .navigationTitle("Live Drops")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Schließen") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        isLoading = true
+                        loadDrops()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+            }
+            // Delete-Confirm Alert mit Grund
+            .alert("Drop entfernen?", isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            )) {
+                TextField("Grund (optional)", text: $deleteReason)
+                Button("Abbrechen", role: .cancel) { pendingDelete = nil }
+                Button("Löschen", role: .destructive) {
+                    if let drop = pendingDelete {
+                        RealtimeDBManager.shared.adminDeleteDrop(
+                            dropID: drop.id,
+                            hostUID: drop.hostUID,
+                            reason: deleteReason.isEmpty ? nil : deleteReason
+                        )
+                        drops.removeAll { $0.id == drop.id }
+                    }
+                    pendingDelete = nil
+                }
+            } message: {
+                Text("„\(pendingDelete?.emoji ?? "") \(pendingDelete?.activityName ?? "")" +
+                     " von \(pendingDelete?.hostName ?? "")" +
+                     "\" wird entfernt. Der Host erhält einen Hinweis.")
+            }
+        }
+        .onAppear { loadDrops() }
+    }
+
+    private func loadDrops() {
+        RealtimeDBManager.shared.adminFetchActiveDrops { result in
+            drops = result
+            isLoading = false
+        }
+    }
+}
+
+private struct AdminDropCard: View {
+    let drop: AdminDropEntry
+    let onDelete: () -> Void
+
+    private static let df: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "de_DE")
+        f.dateFormat = "dd.MM. HH:mm"
+        return f
+    }()
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(drop.emoji).font(.system(size: 28))
+                .frame(width: 44, height: 44)
+                .background(Color.brand.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(drop.activityName.isEmpty ? "Drop" : drop.activityName)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.textPrimary)
+                    .lineLimit(1)
+                HStack(spacing: 8) {
+                    Text(drop.hostName)
+                        .font(.system(size: 12))
+                        .foregroundColor(.textSecondary)
+                    Text("·").foregroundColor(.textTertiary)
+                    Text(drop.cityName)
+                        .font(.system(size: 12))
+                        .foregroundColor(.textSecondary)
+                    Text("·").foregroundColor(.textTertiary)
+                    Label("\(drop.participants)", systemImage: "person.2.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.textTertiary)
+                }
+                HStack(spacing: 8) {
+                    Image(systemName: "clock").font(.system(size: 10))
+                    Text("erstellt \(Self.df.string(from: drop.createdAt))")
+                        .font(.system(size: 11))
+                    Text("→ läuft bis \(Self.df.string(from: drop.expiresAt))")
+                        .font(.system(size: 11))
+                }
+                .foregroundColor(.textTertiary)
+            }
+
+            Spacer()
+
+            Button(action: onDelete) {
+                Image(systemName: "trash")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.accentRed)
+                    .frame(width: 36, height: 36)
+                    .background(Color.accentRed.opacity(0.12), in: Circle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(14)
+        .liquidGlass(cornerRadius: 14)
     }
 }

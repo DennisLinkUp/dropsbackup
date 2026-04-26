@@ -5,8 +5,72 @@ import FirebaseDatabase
 import FirebaseAuth
 import FirebaseStorage
 import FirebaseFirestore
+import FirebaseCrashlytics
 import UserNotifications
 import ActivityKit
+
+// MARK: - Feature Flags
+
+/// Zentrale Feature-Flags. Auf `false` setzen blendet alle UI-Touchpoints
+/// für ein Feature aus, ohne Code zu löschen — so kann das Feature später
+/// einfach wieder aktiviert werden.
+enum FeatureFlags {
+    /// Drops+ (Premium-Tier) ist für den initialen Launch deaktiviert.
+    /// Wenn `true`: Settings-Banner, Boost-Option, Paywall-Trigger,
+    /// Plus-Avatar-Ring etc. werden angezeigt. Sonst überall hidden.
+    static let dropsPlusEnabled: Bool = false
+}
+
+// MARK: - Crash Reporter
+
+/// Thin wrapper um FirebaseCrashlytics — zentrale Stelle für Logging, Custom Keys
+/// und nicht-fatale Errors. Liegt bewusst hier statt in eigener Datei, damit kein
+/// manuelles Xcode-Target-Hinzufügen nötig ist.
+enum CrashReporter {
+
+    /// Breadcrumb-Log — taucht im Crashlytics-Report als „Logs"-Zeile auf.
+    static func log(_ message: String) {
+        Crashlytics.crashlytics().log(message)
+    }
+
+    /// Custom-Value pro Session — z.B. Feature-Flags, Drop-Status, Plus-Status.
+    static func setValue(_ value: Any, forKey key: String) {
+        Crashlytics.crashlytics().setCustomValue(value, forKey: key)
+    }
+
+    /// Nicht-fatale Fehler — App crasht NICHT, aber Firebase trackt Häufigkeit
+    /// und Stack-Traces.
+    static func record(_ error: Error, file: String = #file, line: Int = #line) {
+        let userInfo: [String: Any] = [
+            "file": (file as NSString).lastPathComponent,
+            "line": line
+        ]
+        let ns = NSError(domain: (error as NSError).domain,
+                         code: (error as NSError).code,
+                         userInfo: userInfo.merging((error as NSError).userInfo) { $1 })
+        Crashlytics.crashlytics().record(error: ns)
+    }
+
+    /// User-ID für Session-Tracking — nach Login / Session-Restore setzen.
+    static func setUser(uid: String?) {
+        if let uid = uid {
+            Crashlytics.crashlytics().setUserID(uid)
+            setValue(uid, forKey: "uid")
+        } else {
+            Crashlytics.crashlytics().setUserID("")
+        }
+    }
+
+    /// Kontext-Snapshot beim App-Start.
+    static func recordSessionContext(isPlus: Bool, hasActiveDrop: Bool) {
+        setValue(isPlus, forKey: "is_plus")
+        setValue(hasActiveDrop, forKey: "has_active_drop")
+        let bundle = Bundle.main.infoDictionary
+        if let v = bundle?["CFBundleShortVersionString"] as? String { setValue(v, forKey: "app_version") }
+        if let b = bundle?["CFBundleVersion"] as? String { setValue(b, forKey: "build_number") }
+        if let uid = FirebaseAuth.Auth.auth().currentUser?.uid { setUser(uid: uid) }
+    }
+}
 
 // MARK: - Timeout Guard (internal, für deleteAccount)
 
@@ -39,17 +103,22 @@ struct User: Identifiable, Equatable {
     /// Firebase Auth UID des Users — stabiler Dedup-Key über alle Pfade hinweg
     /// (Contact-Match, Observer-Hydration, Direct-Add).
     var firebaseUID: String? = nil
+    /// Reliability-Punkte des Users — Default ist der Start-Score (100).
+    /// Wird bei Freunden aus RTDB (`users/{uid}/reliabilityPoints`) hydriert.
+    var reliabilityPoints: Int = ReliabilityScore.startingPoints
 
     init(id: UUID = UUID(), name: String, emoji: String,
          isAvailable: Bool, statusMessage: String,
          coordinate: CLLocationCoordinate2D = CLLocationCoordinate2D(latitude: 48.1371, longitude: 11.5754),
          profileImageURL: String? = nil,
-         firebaseUID: String? = nil) {
+         firebaseUID: String? = nil,
+         reliabilityPoints: Int = ReliabilityScore.startingPoints) {
         self.id = id; self.name = name; self.emoji = emoji
         self.isAvailable = isAvailable; self.statusMessage = statusMessage
         self.coordinate = coordinate
         self.profileImageURL = profileImageURL
         self.firebaseUID = firebaseUID
+        self.reliabilityPoints = reliabilityPoints
     }
     static func == (lhs: User, rhs: User) -> Bool { lhs.id == rhs.id }
 }
@@ -192,6 +261,11 @@ struct IncomingJoinRequest: Identifiable {
     let joinerEmoji: String
     let joinerAge: Int?
     let joinerProfileImageURL: String?
+    var joinerReliabilityPoints: Int = 100
+    var joinerIsPlus: Bool = false
+    /// Entfernung in Metern vom Drop-Standort — wird vom Host berechnet
+    /// sobald Joiner-Live-Position in Firebase steht.
+    var joinerDistanceMeters: Double? = nil
     let requestedAt: Date
 
     /// Nach 5 Min Auto-Accept wenn Host nicht reagiert
@@ -209,10 +283,11 @@ struct DropParticipant: Identifiable {
     let name: String
     let emoji: String
     var selfie: UIImage? = nil
-    var reliabilityScore: Int = 85
+    var reliabilityScore: Int = 100
     /// Anzahl der Commit-Einträge — wird gebraucht, um neue User (totalCommits=0)
     /// als „Drop-Entdecker" statt „Drop-Legende" korrekt zu markieren.
-    var reliabilityCommits: Int = 20
+    /// Default 0 = „neuer User / unbekannt" → zeigt Drop-Entdecker-Tier.
+    var reliabilityCommits: Int = 0
     var age: Int? = nil
     var isVerified: Bool = false
     var statusMessage: String = ""
@@ -223,6 +298,8 @@ struct DropParticipant: Identifiable {
     /// Aktueller Live-Standort des Teilnehmers (simuliert; in Produktion: echter GPS-Stream).
     var liveCoordinate: CLLocationCoordinate2D? = nil
     var profileImageURL: String? = nil
+    /// Firebase Auth UID — für Plus-Badge-Lookup und Report-Funktion.
+    var firebaseUID: String? = nil
 }
 
 // MARK: - Munich City Boundary
@@ -335,6 +412,8 @@ struct MapAnnotationItem: Identifiable {
     /// Geschlecht des Hosts — für optionalen Geschlechts-Filter ("männlich" | "weiblich" | "divers" | nil)
     var hostGender: String? = nil
     var isBoosted: Bool = false     // Drops+ Boost: goldener Rand auf der Karte
+    /// Firebase UID des Hosts — für Drop-Invite-Bonus (+5 an Host wenn via Link gejoint).
+    var hostUID: String? = nil
     var isStranger: Bool { type == .stranger }
     var isFull: Bool { participants.count >= maxParticipants }
     var spotsLeft: Int { max(0, maxParticipants - participants.count) }
@@ -558,6 +637,13 @@ private enum UDKey {
     static let reliabilityTotal     = "ud_reliabilityTotal"
     static let reliabilityShows     = "ud_reliabilityShows"
     static let reliabilityNoShows   = "ud_reliabilityNoShows"
+    static let reliabilityHostOK    = "ud_reliabilityHostOK"
+    static let reliabilityStreakB   = "ud_reliabilityStreakB"
+    static let reliabilityFirstB    = "ud_reliabilityFirstB"
+    static let reliabilityInviteB   = "ud_reliabilityInviteB"
+    static let reliabilityNewcB     = "ud_reliabilityNewcB"
+    static let reliabilityAppInvB   = "ud_reliabilityAppInvB"
+    static let reliabilityStreak    = "ud_reliabilityStreak"
     static let firebaseUID          = "ud_firebaseUID"   // Stabile UID für Drop-Filter
     static let appleEmail           = "ud_appleEmail"    // Apple relay E-Mail (nur beim 1. Login verfügbar)
     static let isAdmin              = "ud_isAdmin"       // Admin-Flag lokal cachen
@@ -691,7 +777,9 @@ class AppStore: ObservableObject {
     // MARK: - Bluetooth Auto-Confirmation
     /// Erkennt andere Drop-Teilnehmer automatisch via BLE-Proximity.
     /// Treffen werden bestätigt, sobald beide ≥ 20 Sek. in Reichweite waren.
-    let bluetoothMeetup = BluetoothMeetupManager()
+    /// Lazy, damit der BLE-Permission-Dialog NICHT beim App-Start erscheint —
+    /// erst beim ersten Drop (create/join) wird CBCentralManager instanziert.
+    lazy var bluetoothMeetup: BluetoothMeetupManager = BluetoothMeetupManager()
 
     @Published var radiusFilter: Double = 2000   // Free-Default: 2km
     @Published var userGender: String = ""   // "männlich" | "weiblich" | "divers"
@@ -741,6 +829,216 @@ class AppStore: ObservableObject {
     ]
     private var strangerDropsCache: [MapAnnotationItem] = []
     private var strangerDropsPlaced = false
+    /// True wenn der Demo-Seed aktiv ist — verhindert dass `placeStrangerDrops`
+    /// den Cache beim ersten GPS-Update wegwischt.
+    private var isDemoSeedActive = false
+
+    // MARK: - Demo Data für App-Store-Screenshots
+    //
+    // Trigger: starte die App mit Launch-Argument `DROPS_DEMO_SEED`
+    // (in Xcode: Edit Scheme → Run → Arguments → + "DROPS_DEMO_SEED").
+    // Oder setze UserDefault: `UserDefaults.standard.set(true, forKey: "dropsDemoSeed")`.
+    //
+    // Daten sind NUR lokal — keine Firebase-Writes. Screenshots zeigen das
+    // echte App-UI mit realistischer Density, ohne Produktions-Daten zu pollen.
+
+    /// Demo-Seed: injiziert realistische Fake-Drops verteilt über alle 5 Städte
+    /// + 3 Fake-Freunde mit Avataren. Löscht vorher bestehende Seeds.
+    func seedDemoData() {
+        // Demo-Seed-Flag setzen → verhindert dass `placeStrangerDrops`
+        // den Cache beim ersten GPS-Update wipet.
+        isDemoSeedActive = true
+        strangerDropsPlaced = true   // blockiert auch reguläre Place-Logik
+
+        // Clear any previous seeds
+        strangerDropsCache = []
+
+        // Basis-Zeit: wir stagger'n Created-At ein paar Minuten bis Stunden zurück
+        let now = Date()
+
+        // Drop-Blueprint: (emoji, activity, name, age, offset-from-city-center, ageGroup)
+        typealias DropBlueprint = (emoji: String, activity: String, name: String, age: Int,
+                                   latOff: Double, lonOff: Double, minutesAgo: Int)
+        let blueprintsPerCity: [String: [DropBlueprint]] = [
+            "berlin": [
+                ("🍜", "Ramen", "Tim", 19, -0.0259, +0.0302, 150),
+                ("🌊", "See", "Laura", 18, -0.0440, -0.0359, 80),
+                ("🍺", "Feierabend", "Julia", 33, -0.0075, -0.0065, 25),
+                ("☕️", "Kaffee", "Julian", 41, -0.0149, -0.0439, 35),
+                ("🥐", "Frühstück", "Emma", 20, +0.0325, +0.0132, 5),
+                ("🚶", "Spaziergang", "Noah", 26, +0.0049, +0.0420, 100),
+                ("🎬", "Kino", "Sara", 26, -0.0425, -0.0347, 25),
+                ("🍣", "Sushi", "Andrea", 51, -0.0208, +0.0173, 35),
+                ("🏃", "Laufen", "Lena", 29, +0.0189, +0.0234, 10),
+                ("🏃", "Laufen", "Max", 27, -0.0035, -0.0293, 150),
+                ("♟️", "Schach", "Niklas", 24, +0.0251, -0.0566, 5),
+                ("🎲", "Brettspiele", "Anna", 28, +0.0386, +0.0086, 200),
+                ("🎲", "Brettspiele", "Sophie", 21, +0.0360, +0.0182, 15),
+                ("🎾", "Tennis", "Sarah", 22, -0.0222, +0.0108, 100),
+                ("🎤", "Karaoke", "Clara", 33, -0.0006, +0.0326, 10),
+                ("🍰", "Kuchen", "Ali", 34, -0.0408, -0.0151, 60),
+                ("🐕", "Hunderunde", "Finn", 24, +0.0414, +0.0230, 10),
+                ("🌊", "See", "Jessica", 40, -0.0363, -0.0083, 60),
+                ("☕️", "Kaffee", "Rolf", 65, +0.0007, -0.0502, 150),
+                ("🎮", "Zocken", "Lisa", 44, -0.0282, -0.0161, 15),
+            ],
+            "hamburg": [
+                ("🌊", "See", "Dieter", 60, +0.0084, -0.0015, 10),
+                ("🎬", "Kino", "Jochen", 48, -0.0376, +0.0514, 10),
+                ("🍣", "Sushi", "Jessica", 36, +0.0406, +0.0044, 15),
+                ("🍝", "Pasta", "Daniel", 37, -0.0200, +0.0507, 45),
+                ("🧘", "Yoga", "Sandra", 56, -0.0160, +0.0673, 150),
+                ("🎬", "Kino", "David", 32, -0.0322, -0.0374, 35),
+                ("🍺", "Feierabend", "Lena", 34, -0.0238, -0.0583, 150),
+                ("🍕", "Pizza", "Finn", 18, +0.0306, -0.0584, 20),
+                ("🏀", "Basketball", "Katrin", 43, -0.0313, +0.0592, 100),
+                ("🎸", "Jam Session", "Moritz", 32, +0.0261, -0.0421, 10),
+                ("💃", "Tanzen", "Marie", 32, +0.0309, -0.0606, 150),
+                ("🥐", "Frühstück", "Sophie", 20, +0.0256, -0.0531, 20),
+                ("🥾", "Wandern", "Tom", 31, -0.0269, -0.0051, 10),
+                ("🌳", "Park", "Andreas", 36, -0.0382, +0.0679, 5),
+                ("🍣", "Sushi", "Silke", 47, -0.0080, -0.0025, 45),
+                ("🍕", "Pizza", "Felix", 21, -0.0200, +0.0386, 60),
+                ("🏊", "Schwimmen", "Ali", 32, -0.0293, -0.0276, 5),
+                ("🍦", "Eis", "Sebastian", 40, -0.0376, +0.0114, 80),
+                ("🐕", "Hunderunde", "Hanna", 18, +0.0299, -0.0587, 10),
+                ("⚽", "Fußball", "Clara", 34, +0.0080, +0.0162, 45),
+            ],
+            "muenchen": [
+                ("🍦", "Eis", "Clara", 29, -0.0176, +0.0202, 20),
+                ("🎾", "Tennis", "Julia", 29, -0.0025, +0.0401, 10),
+                ("☕️", "Kaffee", "Jan", 26, -0.0254, -0.0268, 25),
+                ("🍝", "Pasta", "Andrea", 59, -0.0152, -0.0201, 60),
+                ("🌊", "See", "Lisa", 43, -0.0293, +0.0296, 25),
+                ("🥐", "Frühstück", "Sandra", 49, -0.0229, -0.0367, 80),
+                ("🍰", "Kuchen", "Hanna", 19, +0.0129, -0.0277, 150),
+                ("🎾", "Tennis", "Max", 25, -0.0243, -0.0071, 25),
+                ("🍷", "Wein", "Sarah", 19, +0.0082, -0.0223, 200),
+                ("🌳", "Park", "David", 33, -0.0292, -0.0397, 200),
+                ("🍰", "Kuchen", "Marie", 34, +0.0031, -0.0066, 5),
+                ("🎮", "Zocken", "Lukas", 30, -0.0173, -0.0234, 10),
+                ("🎭", "Theater", "Tobias", 44, +0.0148, +0.0398, 20),
+                ("🏃", "Laufen", "Horst", 73, -0.0283, +0.0221, 35),
+                ("📸", "Fotografieren", "Jessica", 38, -0.0139, +0.0269, 10),
+                ("🎵", "Konzert", "Monika", 48, -0.0179, +0.0391, 35),
+                ("🎮", "Zocken", "Katrin", 38, -0.0283, -0.0287, 35),
+                ("🏀", "Basketball", "Ralf", 50, +0.0084, -0.0094, 80),
+                ("🎨", "Malen", "Thomas", 59, +0.0280, -0.0301, 25),
+                ("🍷", "Wein", "Jonas", 20, +0.0136, -0.0174, 100),
+            ],
+            "koeln": [
+                ("🎳", "Bowling", "Finn", 22, -0.0211, -0.0387, 45),
+                ("☕️", "Kaffee", "Ali", 33, +0.0127, +0.0374, 200),
+                ("🥾", "Wandern", "Anna", 30, +0.0084, +0.0139, 10),
+                ("🎮", "Zocken", "Julia", 31, -0.0118, +0.0168, 80),
+                ("🍝", "Pasta", "Paul", 21, +0.0121, +0.0342, 100),
+                ("🎸", "Jam Session", "Nina", 25, -0.0133, -0.0246, 100),
+                ("🎲", "Brettspiele", "David", 28, +0.0008, +0.0250, 200),
+                ("🏃", "Laufen", "Stefan", 43, +0.0111, +0.0101, 10),
+                ("⚽", "Fußball", "Katrin", 38, -0.0240, -0.0386, 60),
+                ("🍔", "Burger", "Moritz", 28, +0.0148, -0.0099, 45),
+                ("⚽", "Fußball", "Ben", 18, +0.0267, +0.0306, 10),
+                ("💃", "Tanzen", "Sarah", 22, -0.0024, +0.0049, 10),
+                ("🚶", "Spaziergang", "Laura", 23, +0.0021, +0.0050, 35),
+                ("🌳", "Park", "Sara", 31, +0.0225, +0.0041, 15),
+                ("🏛️", "Museum", "Max", 29, +0.0181, +0.0018, 150),
+                ("⚽", "Fußball", "Emma", 23, -0.0146, -0.0194, 35),
+                ("🌊", "See", "Lea", 19, -0.0080, -0.0295, 20),
+                ("🍔", "Burger", "Lena", 33, -0.0023, -0.0372, 45),
+                ("🎵", "Konzert", "Monika", 56, -0.0327, +0.0324, 100),
+                ("🎵", "Konzert", "Clara", 29, +0.0172, +0.0300, 45),
+            ],
+            "frankfurt": [
+                ("🌊", "See", "Daniel", 44, +0.0237, -0.0011, 25),
+                ("💃", "Tanzen", "Noah", 30, +0.0100, +0.0279, 200),
+                ("🏃", "Laufen", "Julian", 44, +0.0020, +0.0380, 100),
+                ("🎸", "Jam Session", "Nadine", 41, -0.0217, -0.0036, 5),
+                ("🎾", "Tennis", "Lena", 32, -0.0103, +0.0244, 45),
+                ("🏀", "Basketball", "Lisa", 39, +0.0199, -0.0028, 200),
+                ("🌊", "See", "Mia", 19, +0.0089, +0.0263, 150),
+                ("🍷", "Wein", "Maya", 38, +0.0202, +0.0113, 20),
+                ("🍝", "Pasta", "Anna", 34, +0.0266, -0.0033, 25),
+                ("🎬", "Kino", "Paul", 23, +0.0130, +0.0260, 15),
+                ("🎮", "Zocken", "Felix", 20, +0.0045, +0.0382, 45),
+                ("🎤", "Karaoke", "Sandra", 46, +0.0055, +0.0309, 20),
+                ("🥐", "Frühstück", "Eva", 44, +0.0182, +0.0277, 100),
+                ("🍷", "Wein", "Nina", 30, -0.0256, +0.0138, 5),
+                ("📸", "Fotografieren", "Katrin", 41, +0.0274, +0.0127, 60),
+                ("🍰", "Kuchen", "Ali", 29, +0.0069, +0.0392, 60),
+                ("🚶", "Spaziergang", "Moritz", 29, -0.0106, -0.0238, 10),
+                ("🏀", "Basketball", "Jochen", 57, -0.0021, +0.0103, 45),
+                ("🎨", "Malen", "Laura", 19, -0.0007, -0.0136, 25),
+                ("🎨", "Malen", "Sarah", 23, +0.0226, +0.0052, 80),
+            ],
+        ]
+
+        for city in ServiceCities.all {
+            guard let bps = blueprintsPerCity[city.id] else { continue }
+            for bp in bps {
+                let coord = CLLocationCoordinate2D(
+                    latitude:  city.center.latitude  + bp.latOff,
+                    longitude: city.center.longitude + bp.lonOff
+                )
+                let ageGroup = AgeGroup.group(for: bp.age)
+                let host = DropParticipant(
+                    name: bp.name, emoji: bp.emoji,
+                    reliabilityScore: 100 + Int.random(in: -30...60),
+                    reliabilityCommits: Int.random(in: 3...25),
+                    age: bp.age
+                )
+                let item = MapAnnotationItem(
+                    id: UUID(),
+                    name: bp.name,
+                    emoji: bp.emoji,
+                    activity: bp.activity,
+                    coordinate: coord,
+                    type: .stranger,
+                    dropDescription: nil,
+                    scheduledTime: "Jetzt",
+                    participants: [host],
+                    createdAt: now.addingTimeInterval(-Double(bp.minutesAgo) * 60),
+                    maxParticipants: Int.random(in: 4...10),
+                    durationMinutes: 120,
+                    dropLocationType: .current,
+                    isFuzzy: false,
+                    creatorAgeGroup: ageGroup,
+                    creatorAge: bp.age,
+                    locationTitle: city.name,
+                    realCoordinate: nil,
+                    hostGender: nil,
+                    isBoosted: false,
+                    hostUID: nil
+                )
+                strangerDropsCache.append(item)
+            }
+        }
+
+        // Fake-Freunde (3 Stück, online & offline gemischt)
+        friends = [
+            User(name: "Sophie", emoji: "☕️",
+                 isAvailable: true, statusMessage: "Ist verfügbar",
+                 coordinate: ServiceCities.all[0].center,
+                 firebaseUID: "demo_friend_1",
+                 reliabilityPoints: 185),
+            User(name: "Max",    emoji: "🏃",
+                 isAvailable: true, statusMessage: "Ist verfügbar",
+                 coordinate: ServiceCities.all[0].center,
+                 firebaseUID: "demo_friend_2",
+                 reliabilityPoints: 230),
+            User(name: "Lena",   emoji: "🎨",
+                 isAvailable: false, statusMessage: "Offline",
+                 coordinate: ServiceCities.all[0].center,
+                 firebaseUID: "demo_friend_3",
+                 reliabilityPoints: 95),
+        ]
+        knownFriendUIDs = Set(friends.compactMap { $0.firebaseUID })
+
+        // strangerDropsCache ist privat (nicht @Published) → View-Refresh manuell
+        // triggern damit die Pins auf der Karte sofort erscheinen.
+        objectWillChange.send()
+
+        print("[demo] Seed geladen: \(strangerDropsCache.count) Drops + \(friends.count) Freunde")
+    }
     private var expiryTimer: Timer?
 
     @Published var friends: [User] = []
@@ -751,6 +1049,9 @@ class AppStore: ObservableObject {
     @Published var pendingInviteUsername: String? = nil // Universal Link → Freund hinzufügen
     @Published var selfieImage: UIImage? = nil
     @Published var profileImageURL: String? = nil
+    /// Cached Live-Activity-Filename des Host-Profilbilds (von Firebase vorab gedownloaded).
+    /// Wird beim App-Start asynchron befüllt damit der Drop-Start nicht auf einen Download wartet.
+    @Published var cachedLAProfileImageFilename: String = ""
     /// Optionale Handynummer für Kontakt-Suche (z.B. "+4915712345678")
     @Published var userPhone: String = ""
     @Published var activeJoinedDropID: UUID? = nil
@@ -775,8 +1076,6 @@ class AppStore: ObservableObject {
     var isDropsPlusActive: Bool {
         isPlusUser || DropsStoreManager.shared.isPlusUser
     }
-    /// Wird beim App-Start gehalten damit ARC den Manager nicht sofort freigibt
-    private var earlyLocationManager: CLLocationManager?
     @Published var selectedAgeGroups: [AgeGroup] = AgeGroup.allCases
     @Published var ageFilterMin: Int = 18
     @Published var ageFilterMax: Int = 99
@@ -819,6 +1118,14 @@ class AppStore: ObservableObject {
     private var knownFriendUIDs: Set<String> = []
     /// Erste Observer-Feuerung initialisiert nur die Baseline — ohne Push.
     private var friendsObserverInitialized = false
+
+    // MARK: - Friend Requests
+    /// Eingehende Freundschaftsanfragen — werden im Freunde-Tab als Section
+    /// ganz oben mit Annehmen/Ablehnen-Buttons angezeigt.
+    @Published var incomingFriendRequests: [FriendRequestSnapshot] = []
+    private var friendRequestsObserverHandle: DatabaseHandle?
+    private var friendRequestsObserverInitialized = false
+
     /// Sheet: aktuell angezeigte Anfrage
     @Published var activeIncomingRequest: IncomingJoinRequest? = nil
 
@@ -832,12 +1139,41 @@ class AppStore: ObservableObject {
     // MARK: - Init
 
     init() {
+        // DIAGNOSTIC: wenn du diese Zeile in der Console siehst, läuft init().
+        print("🚀🚀🚀 [AppStore.init] START — args=\(CommandLine.arguments)")
+
         // ── Firebase-Session beim App-Start wiederherstellen ──────────────
         // isAuthenticated startet als false. Wenn Firebase einen gültigen User
         // hat UND das Onboarding abgeschlossen wurde, direkt in die App.
         let hasOnboarded = UserDefaults.standard.bool(forKey: "hasOnboarded")
-        if FirebaseAuth.Auth.auth().currentUser != nil && hasOnboarded {
+
+        // Nach Deinstallation persistiert die Firebase-Session im Keychain.
+        // UserDefaults ist normalerweise leer → hasOnboarded=false → Logout.
+        // ABER: iCloud-Backup restauriert manchmal UserDefaults → hasOnboarded
+        // wäre irreführend true. Deshalb zusätzlich prüfen ob der Name wirklich
+        // gesetzt ist — wenn nicht, ist der State korrupt, wir loggen aus.
+        //
+        // AUSNAHME: nach normalem In-App-Logout ist `userName` leer aber
+        // `ud_lastLoginName` gesetzt — das ist KEIN korrupter State, sondern
+        // eine bewusste Logout-Situation, in der wir die Firebase-Session
+        // **erhalten** wollen damit Quick-Login ohne Apple-Sheet funktioniert.
+        let hasNameStored = !(UserDefaults.standard.string(forKey: UDKey.userName) ?? "").isEmpty
+        let hasLastLoginName = !(UserDefaults.standard.string(forKey: "ud_lastLoginName") ?? "").isEmpty
+        let isPostLogoutState = hasOnboarded && !hasNameStored && hasLastLoginName
+        if FirebaseAuth.Auth.auth().currentUser != nil
+            && (!hasOnboarded || !hasNameStored)
+            && !isPostLogoutState {
+            try? FirebaseAuth.Auth.auth().signOut()
+            UserDefaults.standard.set(false, forKey: "hasOnboarded")
+            UserDefaults.standard.removeObject(forKey: "hasSeenWelcome")
+        }
+
+        if FirebaseAuth.Auth.auth().currentUser != nil && hasOnboarded && hasNameStored {
             isAuthenticated = true
+            // Returning User → Welcome-Sheet skippen. Auch falls UserDefaults
+            // inkonsistent ist (z.B. iCloud-Teilrestore), ist jemand mit
+            // gültigem Firebase-User + Name definitiv kein Neuling.
+            UserDefaults.standard.set(true, forKey: "hasSeenWelcome")
             // Firebase UID persistent speichern damit der Drop-Filter auch beim Start funktioniert
             if let uid = FirebaseAuth.Auth.auth().currentUser?.uid {
                 UserDefaults.standard.set(uid, forKey: UDKey.firebaseUID)
@@ -912,6 +1248,9 @@ class AppStore: ObservableObject {
                             self.userGender = gender
                             UserDefaults.standard.set(gender, forKey: UDKey.userGender)
                         }
+                        // Benutzer-Einstellungen aus Firebase wiederherstellen
+                        // (Radius, Altersfilter, Interests, Blocklist etc.)
+                        self.applyRemoteUserSettings(p.settings)
                         // profileImageURL kommt aus Firestore (loadProfileImageURL)
                         self.loadProfileImageURL()
                     }
@@ -972,17 +1311,58 @@ class AppStore: ObservableObject {
         // der Rehydration oben bzw. bei createDrop/joinDrop neu eingeplant.
         UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
 
-        // ── Verwaiste Dynamic Island Live Activities aus früheren Sessions beenden ─
-        // currentLiveActivity ist bei einem Neustart immer nil (in-memory).
-        // ActivityKit hält aber laufende Activities über App-Neustarts hinweg am Leben.
-        // → alle Activities dieses Typs sofort beenden, neue werden erst beim createDrop / joinDrop gestartet.
-        Task {
+        // ── Live Activities aus früheren Sessions behandeln ───────────────
+        // ActivityKit hält Activities über App-Neustarts hinweg am Leben.
+        // Strategie:
+        //  1. Pending-End-Marker: Activities die der User in der letzten Session
+        //     beenden wollte, bei denen der Network-Call aber nicht durchkam
+        //     → garantiert jetzt beenden.
+        //  2. Noch nicht abgelaufene Activities BEHALTEN und als currentLiveActivity
+        //     referenzieren — Drop-Rehydration erfolgt ggf. noch async,
+        //     aber die User-sichtbare Activity bleibt durchgängig.
+        //  3. Wirklich abgelaufene (expiresAt < jetzt) werden beendet.
+        let pendingEndIDs = Set(UserDefaults.standard.stringArray(forKey: "ud_liveActivitiesPendingEnd") ?? [])
+        Task { [weak self] in
+            guard let self = self else { return }
+            let now = Date()
             for activity in ActivityKit.Activity<DropLiveActivityAttributes>.activities {
-                await activity.end(nil, dismissalPolicy: ActivityUIDismissalPolicy.immediate)
+                // Priorität 1: Pending-End aus letzter Session durchziehen
+                if pendingEndIDs.contains(activity.id) {
+                    await activity.end(nil, dismissalPolicy: ActivityUIDismissalPolicy.immediate)
+                    continue
+                }
+                let expiresAt = activity.content.state.expiresAt
+                if expiresAt > now {
+                    // Noch laufend — Referenz übernehmen (erste nehmen, falls mehrere)
+                    await MainActor.run {
+                        if self.currentLiveActivity == nil {
+                            self.currentLiveActivity = activity
+                        }
+                    }
+                } else {
+                    // Wirklich abgelaufen → Zombie beenden
+                    await activity.end(nil, dismissalPolicy: ActivityUIDismissalPolicy.immediate)
+                }
+            }
+            // Pending-End-Marker sauber räumen — alle bekannten Zombies sind durch
+            await MainActor.run {
+                UserDefaults.standard.removeObject(forKey: "ud_liveActivitiesPendingEnd")
             }
         }
 
         startExpiryTimer()
+
+        // ── Demo-Seed für App-Store-Screenshots ──────────────────────────
+        // Trigger: Launch-Argument `DROPS_DEMO_SEED` oder UserDefault
+        // `dropsDemoSeed`. SYNCHRON hier aufrufen — nicht async dispatchen,
+        // sonst könnte zwischenzeitlich `placeStrangerDrops` (via GPS-Update)
+        // den Cache leeren bevor wir ihn befüllen.
+        let demoEnabled = CommandLine.arguments.contains("DROPS_DEMO_SEED")
+            || UserDefaults.standard.bool(forKey: "dropsDemoSeed")
+        print("[demo] Launch check — arg=\(CommandLine.arguments), enabled=\(demoEnabled)")
+        if demoEnabled {
+            seedDemoData()
+        }
 
         // ── Drops+ Entitlements prüfen ────────────────────────────────────
         Task {
@@ -1007,15 +1387,11 @@ class AppStore: ObservableObject {
             self.isPlusUser = isPlus
         }
 
-        // Benachrichtigungs-Berechtigung wird NICHT sofort angefragt —
-        // das passiert beim ersten Drop-Erstellen (createDrop) oder wenn der Nutzer
-        // Benachrichtigungen in den Einstellungen aktiviert.
-        // Standort-Berechtigung früh anfragen (bevor LiveMapView geladen wird)
-        let locMgr = CLLocationManager()
-        earlyLocationManager = locMgr
-        if locMgr.authorizationStatus == .notDetermined {
-            locMgr.requestWhenInUseAuthorization()
-        }
+        // Benachrichtigungs-, Standort- und Bluetooth-Berechtigungen werden NICHT
+        // beim App-Start angefragt — das passiert im Onboarding (AppIntroStep /
+        // Permission-Schritte) im richtigen Kontext, damit der User versteht wofür.
+        // Nach Login triggert requestPermissionsIfNeeded() in LinkUpApp.swift
+        // ggf. Nachfragen falls der User im Onboarding abgelehnt hat.
         // Abgelaufene Begegnungen ohne Bestätigung → No-Show werten
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             self.processExpiredEncounters()
@@ -1046,23 +1422,14 @@ class AppStore: ObservableObject {
     }
 
     /// Wird beim App-Rückkehr in den Vordergrund aufgerufen.
-    /// Wenn die Pause länger als `SessionTimeout.duration` war → ausloggen.
+    /// Prüft Permissions + ob der Firebase-Account noch existiert.
+    /// Session-Lock mit Face ID wurde entfernt — zu unterbrechend für die UX.
     func checkSessionTimeout() {
         let ud = UserDefaults.standard
         evaluateCorePermissions()
-        guard isAuthenticated,
-              let ts = ud.object(forKey: UDKey.backgroundedAt) as? Double
-        else {
-            // Auch ohne Timeout: Firebase-Konto prüfen (z.B. extern gelöscht)
-            validateFirebaseAccount()
-            return
-        }
-
-        let elapsed = Date().timeIntervalSinceReferenceDate - ts
-        if elapsed > SessionTimeout.duration {
-            // Nicht ausloggen — stattdessen sperren und Face ID anfordern
-            isSessionLocked = true
-        }
+        // Auch ohne Timeout: Firebase-Konto prüfen (z.B. extern gelöscht)
+        validateFirebaseAccount()
+        // Alten Timestamp räumen falls vorhanden (Legacy-Daten aus früheren Versionen)
         ud.removeObject(forKey: UDKey.backgroundedAt)
     }
 
@@ -1153,6 +1520,17 @@ class AppStore: ObservableObject {
             print("[deleteAccount] Schritt 3: Lokale Daten + Logout…")
             UserDefaults.standard.removeObject(forKey: "hasOnboarded")
             UserDefaults.standard.removeObject(forKey: "hasSeenWelcome")
+            // Quick-Login-Daten weg — sonst würde der Name nach Löschung
+            // im Welcome-Screen noch auftauchen.
+            UserDefaults.standard.removeObject(forKey: "ud_lastLoginName")
+            UserDefaults.standard.removeObject(forKey: "ud_lastProfileImageURL")
+            // Apple-Given-Name + Relay-Email auch entfernen — sonst wird der
+            // alte Apple-Vorname beim Re-Register vorgeblendet im Namensfeld.
+            // Apple sendet beides nur beim ALLERERSTEN Sign-In, also haben
+            // wir nach Re-Register beide nicht mehr — User gibt frischen
+            // Namen ein, ohne alte Defaults.
+            UserDefaults.standard.removeObject(forKey: "ud_appleGivenName")
+            UserDefaults.standard.removeObject(forKey: "ud_appleEmail")
             self.clearLocalData()
             print("[deleteAccount] Fertig — isAuthenticated=\(self.isAuthenticated)")
 
@@ -1197,13 +1575,17 @@ class AppStore: ObservableObject {
         }
     }
 
-    /// Meldet den User ab und löscht alle lokalen Daten.
+    /// Meldet den User ab — clears alle lokalen Daten, **behält aber die
+    /// Firebase-Auth-Session**. So kann der Quick-Login-Button beim nächsten
+    /// Start direkt re-authentifizieren ohne das Apple-System-Sheet zu öffnen.
     func logout() {
-        clearLocalData()
+        clearLocalData(signOutFirebase: false)
     }
 
-    /// Löscht alle lokalen Daten und meldet den User aus.
-    func clearLocalData() {
+    /// Löscht alle lokalen Daten. Firebase-Logout ist optional — wird beim
+    /// `deleteAccount`-Pfad gebraucht (true), beim normalen Logout NICHT (false),
+    /// damit Quick-Login schnell und ohne Apple-Sheet funktioniert.
+    func clearLocalData(signOutFirebase: Bool = true) {
         // Friends-Observer abmelden, damit er beim nächsten User nicht auf der
         // alten UID hängen bleibt
         stopObservingFriends()
@@ -1229,8 +1611,14 @@ class AppStore: ObservableObject {
         ud.removeObject(forKey: "savedPhoneNumber")
         ud.removeObject(forKey: "savedPhoneDialCode")
 
-        // ── 2. Selfie-Datei löschen ───────────────────────────────────────
+        // ── 2. Selfie-Datei löschen + Image-Cache räumen ──────────────────
         try? FileManager.default.removeItem(at: selfieURL)
+        // ProfileImageCache cached Bilder per URL — sonst kommt beim Re-Login
+        // mit demselben UID das alte Profilbild zurück (Cache-Hit).
+        ProfileImageCache.shared.clear()
+        // Live-Activity-Cache (App-Group-Container) auch räumen, damit der
+        // Drop-Widget kein altes Profilbild zeigt.
+        cachedLAProfileImageFilename = ""
 
         // ── 3. In-Memory-State zurücksetzen ───────────────────────────────
         // Wichtig: AppStore-Instanz bleibt beim Account-Wechsel dieselbe,
@@ -1265,9 +1653,14 @@ class AppStore: ObservableObject {
         // ── 4. Dynamic Island beenden ─────────────────────────────────────
         endDropLiveActivity()
 
-        // ── 5. Firebase ausloggen + Session beenden ───────────────────────
-        print("[auth] clearLocalData → signOut + isAuthenticated=false (caller: \(Thread.callStackSymbols.dropFirst(1).first ?? ""))")
-        try? FirebaseAuth.Auth.auth().signOut()
+        // ── 5. Firebase ausloggen (optional) + Session beenden ────────────
+        // Quick-Login soll ohne Apple-Sheet funktionieren — dafür muss
+        // Firebase-Auth aktiv bleiben. Nur bei echter Account-Löschung
+        // wirklich aus Firebase ausloggen.
+        print("[auth] clearLocalData → signOutFirebase=\(signOutFirebase), isAuthenticated=false (caller: \(Thread.callStackSymbols.dropFirst(1).first ?? ""))")
+        if signOutFirebase {
+            try? FirebaseAuth.Auth.auth().signOut()
+        }
         isAuthenticated = false
     }
 
@@ -1303,23 +1696,112 @@ class AppStore: ObservableObject {
         }
         ud.set(homeZoneRadius, forKey: UDKey.homeZoneRadius)
         ud.set(isAgeRestricted, forKey: UDKey.wasAgeRestricted)
-        ud.set(reliabilityScore.totalCommits, forKey: UDKey.reliabilityTotal)
-        ud.set(reliabilityScore.showUps,      forKey: UDKey.reliabilityShows)
-        ud.set(reliabilityScore.noShows,      forKey: UDKey.reliabilityNoShows)
+        ud.set(reliabilityScore.totalCommits,      forKey: UDKey.reliabilityTotal)
+        ud.set(reliabilityScore.showUps,           forKey: UDKey.reliabilityShows)
+        ud.set(reliabilityScore.noShows,           forKey: UDKey.reliabilityNoShows)
+        ud.set(reliabilityScore.hostSuccesses,     forKey: UDKey.reliabilityHostOK)
+        ud.set(reliabilityScore.streakBonusPoints, forKey: UDKey.reliabilityStreakB)
+        ud.set(reliabilityScore.firstArrivalPoints, forKey: UDKey.reliabilityFirstB)
+        ud.set(reliabilityScore.dropInvitesPoints, forKey: UDKey.reliabilityInviteB)
+        ud.set(reliabilityScore.newcomerHostPoints, forKey: UDKey.reliabilityNewcB)
+        ud.set(reliabilityScore.appInvitesPoints,  forKey: UDKey.reliabilityAppInvB)
+        ud.set(reliabilityScore.currentStreak,     forKey: UDKey.reliabilityStreak)
         saveSelfie()
+
+        // Benutzer-Settings zusätzlich nach Firebase spiegeln — so überleben Radius,
+        // Altersfilter, Interests etc. einen Logout/Re-Login oder Gerätewechsel.
+        // (UserDefaults wird beim Logout bewusst geleert → Firebase ist die Truth-Source.)
+        if FirebaseAuth.Auth.auth().currentUser != nil {
+            RealtimeDBManager.shared.saveUserSettings(
+                radiusFilter:           radiusFilter,
+                ageFilterMin:           ageFilterMin,
+                ageFilterMax:           ageFilterMax,
+                selectedAgeGroups:      selectedAgeGroups.map { $0.rawValue },
+                userInterests:          userInterests,
+                blockedUsers:           Array(blockedUserNames),
+                unavailabilityReason:   unavailabilityReason,
+                genderFilterEnabled:    genderFilterEnabled,
+                activityCategoryFilter: activityCategoryFilter
+            )
+        }
+    }
+
+    /// Wendet ein `UserSettingsSnapshot` aus Firebase auf den Store an.
+    /// Nil-Felder werden ignoriert (lokaler Default bleibt stehen).
+    /// Persistiert die Werte anschließend auch in UserDefaults, damit ein
+    /// Offline-Start nicht wieder auf Default fällt.
+    func applyRemoteUserSettings(_ s: UserSettingsSnapshot) {
+        let ud = UserDefaults.standard
+        if let r = s.radiusFilter, r > 0 {
+            // Free-User dürfen max. 2 km — aber nur wenn Drops+ überhaupt
+            // als Feature aktiv ist. Im Launch ohne Plus → kein Cap.
+            let needsCap = FeatureFlags.dropsPlusEnabled && !isPlusUser
+            let clamped = (needsCap && r > 2000) ? 2000 : r
+            radiusFilter = clamped
+            ud.set(clamped, forKey: UDKey.radiusFilter)
+        }
+        if let minA = s.ageFilterMin {
+            ageFilterMin = minA
+            ud.set(minA, forKey: UDKey.ageFilterMin)
+        }
+        if let maxA = s.ageFilterMax, maxA > 0 {
+            ageFilterMax = maxA
+            ud.set(maxA, forKey: UDKey.ageFilterMax)
+        }
+        if let groups = s.selectedAgeGroups, !groups.isEmpty {
+            let parsed = groups.compactMap { AgeGroup(rawValue: $0) }
+            if !parsed.isEmpty {
+                selectedAgeGroups = parsed
+                ud.set(groups, forKey: UDKey.selectedAgeGroups)
+            }
+        }
+        if let interests = s.userInterests {
+            userInterests = interests
+            ud.set(interests, forKey: UDKey.userInterests)
+        }
+        if let blocked = s.blockedUsers {
+            blockedUserNames = Set(blocked)
+            ud.set(blocked, forKey: UDKey.blockedUsers)
+        }
+        if let reason = s.unavailabilityReason {
+            unavailabilityReason = reason
+            ud.set(reason, forKey: UDKey.unavailabilityReason)
+        }
+        if let g = s.genderFilterEnabled {
+            genderFilterEnabled = g
+            ud.set(g, forKey: UDKey.genderFilterEnabled)
+        }
+        if let cat = s.activityCategoryFilter {
+            activityCategoryFilter = cat
+            ud.set(cat, forKey: UDKey.activityCategoryFilter)
+        }
     }
 
     /// Schreibt den aktuellen Zuverlässigkeits-Score in Firestore,
     /// damit andere User den echten Wert sehen können.
+    /// Zusätzlich wird die kompakte `reliabilityPoints`-Zahl in die RTDB
+    /// unter `users/{uid}/reliabilityPoints` gespiegelt — so können
+    /// Freunde-Observer + Drop-Pins den echten Score ohne Firestore-Call lesen.
     private func pushReliabilityScoreToFirestore() {
         guard let uid = Auth.auth().currentUser?.uid else { return }
+        let points = reliabilityScore.points
         Firestore.firestore()
             .collection("users").document(uid)
             .setData([
-                "reliabilityTotal":  reliabilityScore.totalCommits,
-                "reliabilityShows":  reliabilityScore.showUps,
-                "reliabilityNoShows": reliabilityScore.noShows
+                "reliabilityTotal":        reliabilityScore.totalCommits,
+                "reliabilityShows":        reliabilityScore.showUps,
+                "reliabilityNoShows":      reliabilityScore.noShows,
+                "reliabilityHostOK":       reliabilityScore.hostSuccesses,
+                "reliabilityStreakBonus":  reliabilityScore.streakBonusPoints,
+                "reliabilityFirstBonus":   reliabilityScore.firstArrivalPoints,
+                "reliabilityInviteBonus":  reliabilityScore.dropInvitesPoints,
+                "reliabilityNewcomerBonus": reliabilityScore.newcomerHostPoints,
+                "reliabilityAppInviteBonus": reliabilityScore.appInvitesPoints,
+                "reliabilityCurrentStreak": reliabilityScore.currentStreak,
+                "reliabilityPoints":       points
             ], merge: true)
+        // Mirror in RTDB (read-path für Freundes-Observer + Drop-Pin-Badges)
+        RealtimeDBManager.shared.setMyReliabilityPoints(points)
     }
 
     func saveSelfie() {
@@ -1364,13 +1846,22 @@ class AppStore: ObservableObject {
                 DispatchQueue.main.async {
                     self.profileImageURL = urlString
                 }
+                // Persistiert für den Quick-Login-Button auf Welcome-Screen
+                UserDefaults.standard.set(urlString, forKey: "ud_lastProfileImageURL")
             }
         }
     }
 
-    func loadProfileImageURL() {
+    func loadProfileImageURL(retriesLeft: Int = 4) {
         guard let uid = Auth.auth().currentUser?.uid else {
             print("[selfie] loadProfileImageURL: kein Auth-User")
+            // Direkt nach einem signOut/re-signIn kann currentUser kurz nil sein —
+            // einmal kurz warten und erneut versuchen.
+            if retriesLeft > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    self?.loadProfileImageURL(retriesLeft: retriesLeft - 1)
+                }
+            }
             return
         }
         Firestore.firestore()
@@ -1378,15 +1869,52 @@ class AppStore: ObservableObject {
             .getDocument { [weak self] snapshot, error in
                 guard let self = self else { return }
                 if let error = error {
-                    print("[selfie] loadProfileImageURL Firestore-Fehler: \(error.localizedDescription)")
+                    let ns = error as NSError
+                    // Bei ALLEN transienten Firestore-Fehlern retryen, nicht nur "offline".
+                    // Direkt nach Re-Auth kann der Token noch nicht propagiert sein
+                    // → permission-denied (7) oder unauthenticated (16). Ein kurzer
+                    // Backoff löst das fast immer.
+                    let transientCodes: Set<Int> = [
+                        4,   // deadline-exceeded
+                        7,   // permission-denied (oft direkt nach re-auth)
+                        8,   // unavailable / offline
+                        13,  // internal
+                        14,  // unavailable (alt)
+                        16   // unauthenticated
+                    ]
+                    let isTransient = ns.domain == "FIRFirestoreErrorDomain"
+                        && transientCodes.contains(ns.code)
+                    if isTransient && retriesLeft > 0 {
+                        let delay = 2.0 + Double(4 - retriesLeft) * 1.0   // 2s, 3s, 4s, 5s
+                        print("[selfie] loadProfileImageURL transient (\(ns.code)) — retry in \(delay)s (noch \(retriesLeft) Versuche)")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                            self.loadProfileImageURL(retriesLeft: retriesLeft - 1)
+                        }
+                    } else {
+                        print("[selfie] loadProfileImageURL Firestore-Fehler (\(ns.code)): \(error.localizedDescription)")
+                        // Harter Fehler → RTDB als Fallback (dort liegt die URL auch)
+                        self.loadProfileImageURLFromRTDBFallback()
+                    }
                     return
                 }
                 let data = snapshot?.data()
                 if let url = data?["profileImageURL"] as? String, !url.isEmpty {
                     print("[selfie] loadProfileImageURL ✓ URL: \(url.prefix(80))")
                     DispatchQueue.main.async { self.profileImageURL = url }
+                    // Persistiert für den Quick-Login-Button — überlebt Logout
+                    UserDefaults.standard.set(url, forKey: "ud_lastProfileImageURL")
+                    // Sofort für Live Activity vorbereiten — Download in den
+                    // App-Group-Container, damit das Widget beim nächsten Drop
+                    // das Profilbild synchron hat (kein Race mehr).
+                    Task {
+                        let filename = await LiveActivityImageCache.shared.cacheImage(urlString: url)
+                        if !filename.isEmpty {
+                            await MainActor.run { self.cachedLAProfileImageFilename = filename }
+                        }
+                    }
                 } else {
-                    print("[selfie] loadProfileImageURL: keine profileImageURL im Firestore-Dokument")
+                    print("[selfie] loadProfileImageURL: keine profileImageURL im Firestore-Dokument — RTDB-Fallback")
+                    self.loadProfileImageURLFromRTDBFallback()
                 }
                 if let phone = data?["phoneNumber"] as? String, !phone.isEmpty {
                     DispatchQueue.main.async {
@@ -1395,6 +1923,26 @@ class AppStore: ObservableObject {
                     }
                 }
             }
+    }
+
+    /// Holt die Profilbild-URL aus der Realtime DB als Fallback, wenn Firestore
+    /// leer/unzugänglich ist. Beim `saveSelfie` schreiben wir beide Stores parallel,
+    /// hier lesen wir daher mit hoher Wahrscheinlichkeit einen Treffer.
+    private func loadProfileImageURLFromRTDBFallback() {
+        RealtimeDBManager.shared.loadMyProfileImageURL { [weak self] url in
+            guard let self = self, let url = url, !url.isEmpty else {
+                print("[selfie] RTDB-Fallback: keine profileImageURL gefunden")
+                return
+            }
+            print("[selfie] RTDB-Fallback ✓ URL: \(url.prefix(80))")
+            self.profileImageURL = url
+            Task {
+                let filename = await LiveActivityImageCache.shared.cacheImage(urlString: url)
+                if !filename.isEmpty {
+                    await MainActor.run { self.cachedLAProfileImageFilename = filename }
+                }
+            }
+        }
     }
 
     /// Speichert die optionale Handynummer in Firestore (Persistenz) UND aktualisiert
@@ -1479,7 +2027,14 @@ class AppStore: ObservableObject {
             reliabilityScore = ReliabilityScore(
                 totalCommits: savedTotal,
                 showUps:      savedShows,
-                noShows:      savedNoShows
+                noShows:      savedNoShows,
+                hostSuccesses:      ud.integer(forKey: UDKey.reliabilityHostOK),
+                streakBonusPoints:  ud.integer(forKey: UDKey.reliabilityStreakB),
+                firstArrivalPoints: ud.integer(forKey: UDKey.reliabilityFirstB),
+                dropInvitesPoints:  ud.integer(forKey: UDKey.reliabilityInviteB),
+                newcomerHostPoints: ud.integer(forKey: UDKey.reliabilityNewcB),
+                appInvitesPoints:   ud.integer(forKey: UDKey.reliabilityAppInvB),
+                currentStreak:      ud.integer(forKey: UDKey.reliabilityStreak)
             )
         }
         // Selfie vom Disk laden
@@ -1534,6 +2089,13 @@ class AppStore: ObservableObject {
            Date().timeIntervalSince(leftAt) < AppStore.joinCooldown {
             return false
         }
+        // Drop-Invite-Tracking: wenn der User via Universal Link hierher kam
+        // und genau diesen Drop öffnet, wird's als Invite-Join markiert.
+        // Der Host kriegt +5 sobald der ShowUp bestätigt ist.
+        if pendingDropID == drop.id {
+            markJoinAsInviteBased(dropID: drop.id, hostUID: drop.hostUID)
+            pendingDropID = nil
+        }
         let note = JoinRequest(
             id: UUID(), dropID: drop.id,
             dropEmoji: drop.emoji, dropActivity: drop.activity,
@@ -1584,6 +2146,7 @@ class AppStore: ObservableObject {
                 reliabilityScore.totalCommits += 1
                 // Score-Schutz für Drops+ ist als Feature angekündigt aber noch nicht aktiv
                 reliabilityScore.noShows += 1   // Mitten drin abgebrochen = No-Show
+                breakStreak()
                 saveAll()                           // Score lokal persistieren
                 pushReliabilityScoreToFirestore()   // Score für andere sichtbar machen
             }
@@ -1637,6 +2200,18 @@ class AppStore: ObservableObject {
         saveAll()
     }
 
+    // MARK: - Freunde entfernen
+
+    /// Entfernt die Freundschaft mit dem User `theirUID` — beidseitig in Firebase.
+    /// Lokal wird der Freund sofort aus `friends` genommen, damit die UI nicht auf
+    /// die Observer-Aktualisierung warten muss.
+    func removeFriend(theirUID: String) {
+        guard !theirUID.isEmpty else { return }
+        friends.removeAll { $0.firebaseUID == theirUID }
+        knownFriendUIDs.remove(theirUID)
+        RealtimeDBManager.shared.removeFriend(theirUID: theirUID)
+    }
+
     // MARK: - Encounters
 
     @Published var encounters: [Encounter] = []
@@ -1652,9 +2227,98 @@ class AppStore: ObservableObject {
             // Bestätigung → ShowUp zählt positiv
             reliabilityScore.totalCommits += 1
             reliabilityScore.showUps += 1
+            applyStreakBonus()
             saveAll()                           // Score lokal persistieren
             pushReliabilityScoreToFirestore()   // Score für andere sichtbar machen
         }
+    }
+
+    /// Erhöht den Streak-Counter und vergibt +20 bei jedem 5er-Block.
+    /// Aufrufen wenn ein ShowUp gezählt wird (confirmEncounter / BLE-Arrival / Host-Success).
+    private func applyStreakBonus() {
+        reliabilityScore.currentStreak += 1
+        if reliabilityScore.currentStreak % 5 == 0 {
+            reliabilityScore.streakBonusPoints += 20
+        }
+    }
+
+    /// Bricht den Streak bei einem No-Show.
+    private func breakStreak() {
+        reliabilityScore.currentStreak = 0
+    }
+
+    // MARK: - Drop-Invite-Bonus-Tracking
+    // Set von Drop-IDs (UUID-Strings) die via Invite-Link gejoint wurden.
+    // Beim ShowUp wird der Eintrag verbraucht und der Host bekommt +5 Punkte.
+    // Persistiert in UserDefaults damit's App-Restart überlebt.
+    private static let invitedDropJoinsKey = "ud_invitedDropJoins"
+
+    private func markJoinAsInviteBased(dropID: UUID, hostUID: String?) {
+        let ud = UserDefaults.standard
+        var set = Set(ud.stringArray(forKey: Self.invitedDropJoinsKey) ?? [])
+        set.insert(dropID.uuidString)
+        ud.set(Array(set), forKey: Self.invitedDropJoinsKey)
+        // Host-UID separat merken (pro Drop), damit wir beim ShowUp korrekt crediten können
+        if let host = hostUID, !host.isEmpty {
+            ud.set(host, forKey: "ud_inviteDropHost_\(dropID.uuidString)")
+        }
+    }
+
+    /// Löst den Drop-Invite-Bonus aus wenn der ShowUp für einen invite-gejointen Drop war.
+    /// Aufrufen direkt nach applyStreakBonus/maybeAwardFirstArrivalBonus im Arrival-Flow.
+    private func maybeAwardDropInviteBonusToHost() {
+        guard let dropID = activeJoinedDropID else { return }
+        let ud = UserDefaults.standard
+        var set = Set(ud.stringArray(forKey: Self.invitedDropJoinsKey) ?? [])
+        guard set.remove(dropID.uuidString) != nil else { return }
+        ud.set(Array(set), forKey: Self.invitedDropJoinsKey)
+        // Host-UID laden und Bonus schreiben
+        let key = "ud_inviteDropHost_\(dropID.uuidString)"
+        let hostUID = ud.string(forKey: key) ?? ""
+        ud.removeObject(forKey: key)
+        guard !hostUID.isEmpty else { return }
+        RealtimeDBManager.shared.creditDropInviteBonus(hostUID: hostUID)
+    }
+
+    /// Vergibt +5 Bonus wenn der User als Erster Joiner vor Ort ist — außer er ist Host.
+    /// Heuristik: wenn BLE noch keine anderen Teilnehmer bestätigt hat, sind wir der Erste.
+    private func maybeAwardFirstArrivalBonus() {
+        guard activeJoinedDropID != nil else { return }           // Nur bei gejointem Drop
+        guard bluetoothMeetup.confirmedTokens.isEmpty else { return } // Schon jemand anderes da
+        reliabilityScore.firstArrivalPoints += 5
+    }
+
+    /// Wird aufgerufen wenn ein eigener Drop zustande gekommen ist (min. 1 weiterer Teilnehmer
+    /// war vor Ort). +8 Host-Bonus + Prüfung Neuling-Host-Bonus (+3 pro Drop-Entdecker).
+    func recordHostSuccess(arrivedParticipants: [DropParticipant]) {
+        reliabilityScore.hostSuccesses += 1
+        reliabilityScore.totalCommits += 1
+        reliabilityScore.showUps += 1
+        applyStreakBonus()
+        // Neuling-Bonus: für jeden gejointen Drop-Entdecker (<200 Pkt) +3
+        let newcomers = arrivedParticipants.filter {
+            ReliabilityScore.badge(forPoints: $0.reliabilityScore) == "Drop-Entdecker"
+                || ReliabilityScore.badge(forPoints: $0.reliabilityScore) == "Neustart"
+        }
+        reliabilityScore.newcomerHostPoints += newcomers.count * 3
+        saveAll()
+        pushReliabilityScoreToFirestore()
+    }
+
+    /// Wird aufgerufen wenn jemand den Drop via deiner Einladung gejoint hat.
+    /// Aufrufer muss sicherstellen, dass der Joiner via Link vom aktuellen User kam.
+    func recordDropInviteJoined() {
+        reliabilityScore.dropInvitesPoints += 5
+        saveAll()
+        pushReliabilityScoreToFirestore()
+    }
+
+    /// Wird aufgerufen wenn ein von diesem User eingeladener Freund Drops neu installiert
+    /// und das Onboarding abgeschlossen hat (via deeplink-Zuordnung).
+    func recordAppInviteCompleted() {
+        reliabilityScore.appInvitesPoints += 10
+        saveAll()
+        pushReliabilityScoreToFirestore()
     }
 
     func denyEncounter(id: UUID) {
@@ -1676,6 +2340,7 @@ class AppStore: ObservableObject {
             reliabilityScore.totalCommits += 1
             // Score-Schutz für Drops+ ist als Feature angekündigt aber noch nicht aktiv
             reliabilityScore.noShows += 1
+            breakStreak()
             changed = true
         }
         if changed {
@@ -1729,7 +2394,19 @@ class AppStore: ObservableObject {
             // Live-Activity aktualisieren damit der neue Teilnehmer erscheint
             self.refreshLiveActivityParticipants()
         }
+        // Zusätzlich: Live-Positions-Updates der Joiner beobachten → Pins auf der Karte
+        joinerLocationObserverHandle = RealtimeDBManager.shared.observeJoinerLocations(
+            dropID: dropID
+        ) { [weak self] joinerID, lat, lng in
+            guard let self = self else { return }
+            self.joinerLiveCoordinates[joinerID] = CLLocationCoordinate2D(latitude: lat, longitude: lng)
+        }
     }
+
+    /// Live-Koordinaten der Joiner pro UID — wird von observeJoinerLocations befüllt.
+    /// Die Kartendarstellung pickt sich daraus die Pins. Wird beim Drop-Ende gecleart.
+    @Published var joinerLiveCoordinates: [String: CLLocationCoordinate2D] = [:]
+    private var joinerLocationObserverHandle: DatabaseHandle? = nil
 
     // MARK: - Drop Views („wer hat geschaut")
 
@@ -1769,7 +2446,8 @@ class AppStore: ObservableObject {
 
     /// Startet den Live-Observer auf `friends/{uid}` — adds auf anderen Geräten
     /// landen automatisch in store.friends. Neue Adds lösen einen Notification-
-    /// Push aus (Freundschafts-Event).
+    /// Push aus (Freundschafts-Event). Gleichzeitig startet der Observer auf
+    /// `friendRequests/{uid}` für eingehende Anfragen.
     func startObservingFriends(ownerUID: String) {
         stopObservingFriends()
         friendsObservedUID = ownerUID
@@ -1777,6 +2455,18 @@ class AppStore: ObservableObject {
         friendsObserverHandle = RealtimeDBManager.shared.observeMyFriends(ownerUID: ownerUID) { [weak self] snapshots in
             guard let self = self else { return }
             self.applyFriendSnapshots(snapshots)
+        }
+        // Eingehende Freundschaftsanfragen — separater Observer
+        friendRequestsObserverHandle = RealtimeDBManager.shared.observeIncomingFriendRequests { [weak self] requests in
+            guard let self = self else { return }
+            // Neue Requests (UID war vorher nicht in der Liste) → lokaler Push
+            let oldUIDs = Set(self.incomingFriendRequests.map { $0.fromUID })
+            let newRequests = requests.filter { !oldUIDs.contains($0.fromUID) }
+            self.incomingFriendRequests = requests
+            for req in newRequests where self.friendRequestsObserverInitialized {
+                self.notifyFriendRequestReceived(from: req.fromName)
+            }
+            self.friendRequestsObserverInitialized = true
         }
     }
 
@@ -1787,6 +2477,51 @@ class AppStore: ObservableObject {
         friendsObserverHandle = nil
         friendsObservedUID = nil
         friendsObserverInitialized = false
+        if let handle = friendRequestsObserverHandle {
+            RealtimeDBManager.shared.removeFriendRequestsObserver(handle)
+        }
+        friendRequestsObserverHandle = nil
+        friendRequestsObserverInitialized = false
+        incomingFriendRequests = []
+    }
+
+    /// Lokale Push-Notification bei neuer Freundschaftsanfrage.
+    /// (Cloud Function schickt separat die Remote-Push — aber falls sie
+    /// nicht deployed ist oder der User gerade die App offen hat, zeigen
+    /// wir auch lokal einen Hinweis als Banner.)
+    private func notifyFriendRequestReceived(from name: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "Neue Freundschaftsanfrage"
+        content.body  = "\(name) möchte mit dir befreundet sein."
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "friendRequest_\(name)_\(Date().timeIntervalSince1970)",
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+        )
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    // MARK: - Friend Request Actions
+
+    /// Schickt eine Freundschaftsanfrage an `theirUID`.
+    /// Clientseitig kein Auto-Add mehr — der Empfänger muss annehmen.
+    func sendFriendRequest(to theirUID: String) {
+        guard !theirUID.isEmpty else { return }
+        RealtimeDBManager.shared.sendFriendRequest(
+            theirUID: theirUID,
+            myName: currentUser.name,
+            myProfileImageURL: profileImageURL
+        )
+    }
+
+    func acceptFriendRequest(fromUID: String) {
+        RealtimeDBManager.shared.acceptFriendRequest(fromUID: fromUID)
+        // Observer updated incomingFriendRequests automatisch
+    }
+
+    func rejectFriendRequest(fromUID: String) {
+        RealtimeDBManager.shared.rejectFriendRequest(fromUID: fromUID)
     }
 
     /// Merged eine frische Snapshot-Liste in store.friends. Dedup per Name
@@ -1806,6 +2541,15 @@ class AppStore: ObservableObject {
             }
         }
 
+        // Online-Status: ein Freund gilt als online wenn sein letzter Heartbeat
+        // weniger als 5 Minuten her ist. Daraus ableiten wir `isAvailable`.
+        let now = Date().timeIntervalSince1970
+        let onlineWindow: TimeInterval = 5 * 60
+        func isOnline(_ last: TimeInterval?) -> Bool {
+            guard let last = last else { return false }
+            return (now - last) < onlineWindow
+        }
+
         // Vorhandene Einträge aktualisieren / fehlende hinzufügen — Dedup primär
         // per Firebase-UID (stabil), Name-Fallback für Legacy-Einträge.
         for snap in snapshots {
@@ -1818,21 +2562,30 @@ class AppStore: ObservableObject {
                 existingIdx = nil
             }
 
+            let online = isOnline(snap.lastActiveAt)
+
             if let idx = existingIdx {
-                // Legacy-Eintrag mit UID/Name/Avatar auffrischen
+                // Legacy-Eintrag mit UID/Name/Avatar/Online-Status/Score auffrischen
                 if friends[idx].firebaseUID != snap.uid    { friends[idx].firebaseUID = snap.uid }
                 if friends[idx].name != snap.name          { friends[idx].name = snap.name }
                 if friends[idx].profileImageURL != snap.profileImageURL {
                     friends[idx].profileImageURL = snap.profileImageURL
                 }
+                if friends[idx].isAvailable != online {
+                    friends[idx].isAvailable = online
+                }
+                if friends[idx].reliabilityPoints != snap.reliabilityPoints {
+                    friends[idx].reliabilityPoints = snap.reliabilityPoints
+                }
             } else {
                 friends.append(User(
                     name: snap.name,
                     emoji: "👋",
-                    isAvailable: false,
+                    isAvailable: online,
                     statusMessage: "",
                     profileImageURL: snap.profileImageURL,
-                    firebaseUID: snap.uid
+                    firebaseUID: snap.uid,
+                    reliabilityPoints: snap.reliabilityPoints
                 ))
             }
         }
@@ -1859,6 +2612,11 @@ class AppStore: ObservableObject {
     }
 
     func stopObservingDropIns() {
+        if let handle = joinerLocationObserverHandle, let dropID = dropInObservedDropID {
+            RealtimeDBManager.shared.removeJoinerLocationObserver(handle, dropID: dropID)
+        }
+        joinerLocationObserverHandle = nil
+        joinerLiveCoordinates.removeAll()
         if let handle = dropInObserverHandle, let dropID = dropInObservedDropID {
             RealtimeDBManager.shared.removeDropInObserver(handle, dropID: dropID)
         }
@@ -1872,7 +2630,7 @@ class AppStore: ObservableObject {
         stopObservingJoinRequests()
         joinRequestObserverHandle = RealtimeDBManager.shared.observeIncomingJoinRequests(
             dropID: dropID
-        ) { [weak self] joinerID, name, emoji, age, imageURL, requestedAt in
+        ) { [weak self] joinerID, name, emoji, age, imageURL, points, isPlus, requestedAt in
             guard let self = self else { return }
             // Keine doppelten Einträge
             guard !self.pendingJoinRequests.contains(where: { $0.id == joinerID }) else { return }
@@ -1881,6 +2639,8 @@ class AppStore: ObservableObject {
                 joinerName: name, joinerEmoji: emoji,
                 joinerAge: age,
                 joinerProfileImageURL: imageURL,
+                joinerReliabilityPoints: points,
+                joinerIsPlus: isPlus,
                 requestedAt: requestedAt
             )
             self.pendingJoinRequests.append(req)
@@ -1968,7 +2728,9 @@ class AppStore: ObservableObject {
             joinerName: currentUser.name,
             joinerEmoji: currentUser.emoji,
             joinerAge: userAge,
-            profileImageURL: profileImageURL
+            profileImageURL: profileImageURL,
+            reliabilityPoints: reliabilityScore.points,
+            isPlus: isDropsPlusActive
         )
 
         // Status beobachten
@@ -2072,9 +2834,12 @@ class AppStore: ObservableObject {
             let dist = userLoc.distance(from: dropLoc)
 
             if dist < 150 {
-                // GPS bestätigt Anwesenheit → Show-up
+                // GPS bestätigt Anwesenheit → Show-up (Joiner-Ankunft)
                 reliabilityScore.totalCommits += 1
                 reliabilityScore.showUps += 1
+                applyStreakBonus()
+                maybeAwardFirstArrivalBonus()
+                maybeAwardDropInviteBonusToHost()
                 saveAll()
                 pushReliabilityScoreToFirestore()
                 return
@@ -2084,6 +2849,7 @@ class AppStore: ObservableObject {
             reliabilityScore.totalCommits += 1
             // Score-Schutz für Drops+ ist als Feature angekündigt aber noch nicht aktiv
             reliabilityScore.noShows += 1
+            breakStreak()
             saveAll()
             pushReliabilityScoreToFirestore()
             return
@@ -2100,12 +2866,18 @@ class AppStore: ObservableObject {
             encounters[idx].confirmed = true
             reliabilityScore.totalCommits += 1
             reliabilityScore.showUps += 1
+            applyStreakBonus()
+            maybeAwardFirstArrivalBonus()
+            maybeAwardDropInviteBonusToHost()
             generateFriendSuggestions(from: encounters[idx])
         } else {
             // Kein Encounter-Eintrag vorhanden (z.B. spontaner Stranger-Drop) →
             // Score direkt gutschreiben
             reliabilityScore.totalCommits += 1
             reliabilityScore.showUps += 1
+            applyStreakBonus()
+            maybeAwardFirstArrivalBonus()
+            maybeAwardDropInviteBonusToHost()
         }
         saveAll()                           // Score lokal persistieren
         pushReliabilityScoreToFirestore()   // Score für andere sichtbar machen
@@ -2141,7 +2913,7 @@ class AppStore: ObservableObject {
             }
             var dropParticipants = [DropParticipant(name: currentUser.name, emoji: currentUser.emoji,
                                                      selfie: selfieImage,
-                                                     reliabilityScore: Int(reliabilityScore.score),
+                                                     reliabilityScore: reliabilityScore.points,
                                                      reliabilityCommits: reliabilityScore.totalCommits,
                                                      age: hostAge,
                                                      isVerified: false,
@@ -2157,7 +2929,8 @@ class AppStore: ObservableObject {
                 dropParticipants.append(DropParticipant(name: friend.name, emoji: friend.emoji,
                                                          token: friendToken,
                                                          simulatedDistance: dist,
-                                                         liveCoordinate: friend.coordinate))
+                                                         liveCoordinate: friend.coordinate,
+                                                         firebaseUID: friend.firebaseUID))
             }
             items.append(MapAnnotationItem(
                 id: drop.id,
@@ -2177,29 +2950,40 @@ class AppStore: ObservableObject {
                 isBoosted: drop.isBoosted
             ))
         }
-        if liveStrangerDrops.isEmpty {
-            // No radius filter on map — show all drops distributed across Munich
+        // Demo-Seed oder keine Live-Drops → lokaler Cache. Bei aktivem Seed
+        // überschreiben wir den Firebase-Pfad IMMER, damit Screenshots auch
+        // bei vorhandenen Production-Drops immer die gleichen Fake-Pins zeigen.
+        if isDemoSeedActive || liveStrangerDrops.isEmpty {
             items += strangerDropsCache.filter {
                 !blockedUserNames.contains($0.name)
                     && !$0.isFull
                     && ($0.creatorAgeGroup.map { $0.minAge <= ageFilterMax && $0.maxAge >= ageFilterMin } ?? true)
             }
         } else {
+            let friendUIDs = Set(friends.compactMap { $0.firebaseUID })
             items += liveStrangerDrops
                 .filter { !blockedUserNames.contains($0.displayName) }
                 .map { drop in
                     // Stabile UUID aus dem Firebase-Key — damit joinRequests
                     // auch nach Map-Rerendering korrekt matchen
                     let stableID = UUID(uuidString: drop.id) ?? UUID()
-                    // Standort von Fremden verwischen: zufälliger Versatz 800 m–1 km
-                    let fuzzyCoord = Self.fuzzyCoordinate(drop.coordinate, minMeters: 800, maxMeters: 1000, seed: drop.id)
+                    let isFriendHost = friendUIDs.contains(drop.ownerID)
+                    // Freunde: echter Standort + kein Fuzz + normale Anzeige (kein Lock-Look).
+                    // Fremde: zufälliger Versatz 800m–1km, unscharfe Anzeige bis Join.
+                    // Der `.stranger` Typ bleibt in beiden Fällen (damit der Drop in der
+                    // Feed-Section „Öffentliche Drops" auftaucht), aber isFuzzy wird
+                    // bei Freunden abgeschaltet.
+                    let displayCoord = isFriendHost
+                        ? drop.coordinate
+                        : Self.fuzzyCoordinate(drop.coordinate, minMeters: 800, maxMeters: 1000, seed: drop.id)
                     return MapAnnotationItem(id: stableID, name: drop.displayName, emoji: drop.emoji,
-                                            activity: drop.activityName, coordinate: fuzzyCoord,
+                                            activity: drop.activityName, coordinate: displayCoord,
                                             type: .stranger, scheduledTime: drop.scheduledTime,
                                             maxParticipants: drop.maxParticipants,
-                                            isFuzzy: true,
+                                            isFuzzy: !isFriendHost,
                                              realCoordinate: drop.coordinate, hostGender: drop.hostGender,
-                                             isBoosted: drop.isBoosted)
+                                             isBoosted: drop.isBoosted,
+                                             hostUID: drop.ownerID)
                 }
         }
         // ── Joiner unterwegs (echter GPS-Standort des Users) ───────────
@@ -2213,11 +2997,34 @@ class AppStore: ObservableObject {
                 type: .joiner
             ))
         }
+        // ── Host-Sicht: Joiner-Pins basierend auf Firebase-Live-Koordinaten ──
+        // joinerLiveCoordinates wird durch observeJoinerLocations befüllt.
+        // Pro Joiner einen Pin an seiner echten Position.
+        if let activeDrop = activeDrops.first {
+            for (joinerUID, coord) in joinerLiveCoordinates {
+                // Name + Emoji aus participants-Liste ziehen falls vorhanden
+                let match = activeDrop.participants.first(where: { $0.firebaseUID == joinerUID })
+                let pinName  = match?.name  ?? "Joiner"
+                let pinEmoji = match?.emoji ?? "👤"
+                // Stabile UUID aus dem UID-Hash, damit SwiftUI nicht jedes Mal neu rendert
+                let id = UUID(uuidString: joinerUID) ?? UUID()
+                items.append(MapAnnotationItem(
+                    id: id,
+                    name: pinName,
+                    emoji: pinEmoji,
+                    activity: "→ \(activeDrop.activity.emoji) \(activeDrop.activity.name)",
+                    coordinate: coord,
+                    type: .joiner
+                ))
+            }
+        }
         return items
     }
 
     func placeStrangerDrops(around center: CLLocationCoordinate2D) {
-        // Demo-Daten deaktiviert — Drops kommen live aus Firebase
+        // Demo-Seed darf nicht überschrieben werden!
+        if isDemoSeedActive { return }
+        // Reguläre Logik: Drops kommen live aus Firebase, Cache bleibt leer.
         guard !strangerDropsPlaced else { return }
         strangerDropsPlaced = true
         strangerDropsCache = []
@@ -2256,6 +3063,14 @@ class AppStore: ObservableObject {
     }
 
     func isWithinRadius(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        // Spezialfall: wenn User den Max-Radius gewählt hat (≥ 50km),
+        // zeigen wir ALLE Drops innerhalb seiner aktuellen Service-Stadt.
+        // Das entspricht dem User-Wunsch: "in München bei Max = alle München-Drops".
+        if radiusFilter >= 50000 {
+            if let myCity = ServiceCities.city(for: currentUser.coordinate) {
+                return myCity.contains(coordinate)
+            }
+        }
         let from = CLLocation(latitude: currentUser.coordinate.latitude, longitude: currentUser.coordinate.longitude)
         let to   = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         return from.distance(from: to) <= radiusFilter
@@ -2301,6 +3116,18 @@ class AppStore: ObservableObject {
         currentUser.coordinate = coord
         placeStrangerDrops(around: coord)
         startObservingLiveDrops(around: coord)
+
+        // Wenn wir gerade einem fremden Drop beigetreten sind → Live-Position
+        // nach Firebase pushen, damit der Host unseren Pin auf der Karte sieht.
+        if let joinedDropID = activeJoinedDropID,
+           let uid = FirebaseAuth.Auth.auth().currentUser?.uid {
+            RealtimeDBManager.shared.updateJoinerLiveLocation(
+                dropID: joinedDropID.uuidString,
+                joinerID: uid,
+                lat: coord.latitude,
+                lng: coord.longitude
+            )
+        }
 
         let isNowInHomeZone = isInHomeZone(coord)
 
@@ -2546,6 +3373,18 @@ class AppStore: ObservableObject {
         )
         let arrivedEmojis = drop.participants.map { $0.emoji }
         let arrivedNames  = drop.participants.map { $0.name }
+        // Profilbild SOFORT synchron verfügbar machen.
+        // Priorität: 1) vorab gecachtes Firebase-Bild, 2) lokales Selfie.
+        // Dadurch zeigt die Live Activity von Anfang an das Host-Profilbild.
+        var initialFilenames = Array(repeating: "", count: arrivedEmojis.count)
+        if !initialFilenames.isEmpty {
+            if !cachedLAProfileImageFilename.isEmpty {
+                initialFilenames[0] = cachedLAProfileImageFilename
+            } else if let selfie = self.selfieImage {
+                let key = self.currentUser.id.uuidString
+                initialFilenames[0] = LiveActivityImageCache.shared.cacheSelfie(selfie, key: key)
+            }
+        }
         let state = DropLiveActivityAttributes.ContentState(
             participantCount: drop.participants.count,
             maxParticipants: drop.maxParticipants,
@@ -2553,7 +3392,7 @@ class AppStore: ObservableObject {
             locationTitle: drop.location.title,   // Wird sofort async überschrieben
             arrivedEmojis: arrivedEmojis,
             arrivedNames: arrivedNames,
-            arrivedImageFilenames: Array(repeating: "", count: arrivedEmojis.count),
+            arrivedImageFilenames: initialFilenames,
             onTheWayEmojis: [], onTheWayETAs: [], onTheWayNames: []
         )
         let content = ActivityContent(state: state, staleDate: drop.expiresAt)
@@ -2690,18 +3529,28 @@ class AppStore: ObservableObject {
     /// Beendet die Live Activity sofort (Drop beendet / verlassen).
     /// Beendet ALLE laufenden Activities dieses Typs — auch Reste aus früheren App-Sessions,
     /// bei denen currentLiveActivity nil ist (z.B. nach Account-Wechsel oder App-Neustart).
+    ///
+    /// **Persistence-Marker:** `await activity.end(...)` ist ein Netzwerk-Call an Apple.
+    /// Wenn die App nach dem User-Tap auf "Drop beenden" schnell suspendiert
+    /// (Apple Watch-Szenario), kann der Task unterbrochen werden und die Activity
+    /// bleibt zombiehaft aktiv. Deshalb merken wir die pending Activity-IDs in
+    /// UserDefaults — beim nächsten App-Start werden sie garantiert beendet.
     func endDropLiveActivity() {
+        let pendingIDs = ActivityKit.Activity<DropLiveActivityAttributes>.activities.map { $0.id }
+        if !pendingIDs.isEmpty {
+            UserDefaults.standard.set(pendingIDs, forKey: "ud_liveActivitiesPendingEnd")
+        }
+        currentLiveActivity = nil
+
         Task {
-            // Tracked Activity beenden
-            if let liveActivity = currentLiveActivity {
-                await liveActivity.end(nil, dismissalPolicy: ActivityUIDismissalPolicy.immediate)
-            }
-            // Alle laufenden Activities dieses Typs beenden (Schutz vor Zombies)
             for activity in ActivityKit.Activity<DropLiveActivityAttributes>.activities {
                 await activity.end(nil, dismissalPolicy: ActivityUIDismissalPolicy.immediate)
             }
+            // Alle durch → Marker räumen
+            await MainActor.run {
+                UserDefaults.standard.removeObject(forKey: "ud_liveActivitiesPendingEnd")
+            }
         }
-        currentLiveActivity = nil
     }
 
     func createDrop(activity: Activity, location: DropLocation,
@@ -2761,6 +3610,18 @@ class AppStore: ObservableObject {
         stopObservingJoinRequests()
         RealtimeDBManager.shared.cleanupJoinRequests(dropID: id.uuidString)
         RealtimeDBManager.shared.cleanupDropIns(dropID: id.uuidString)
+        // Host-Erfolg: wenn min. 1 weiterer Teilnehmer dabei war → +8 Bonus
+        // + Neuling-Host-Bonus wenn darunter Drop-Entdecker/Neustart-User sind
+        if let drop = activeDrops.first(where: { $0.id == id }),
+           drop.participants.count >= 2 {
+            let others = Array(drop.participants.dropFirst())
+            let asDropParts = others.map { user in
+                DropParticipant(name: user.name, emoji: user.emoji,
+                                reliabilityScore: 100,  // Tatsächliche Punkte unbekannt — neutral
+                                reliabilityCommits: 0)
+            }
+            recordHostSuccess(arrivedParticipants: asDropParts)
+        }
         activeDrops.removeAll { $0.id == id }
         currentUser.isAvailable = false
         currentUser.statusMessage = "Gerade nicht verfügbar"
@@ -2846,6 +3707,8 @@ final class LiveActivityImageCache {
     }
 
     /// Downloads `urlString`, saves to App Group container, returns filename or "".
+    /// Bilder werden auf 256x256 runterskaliert — das Widget hat nur ~30MB Speicher,
+    /// original hochauflösende Profilbilder würden den Extension-Prozess crashen.
     func cacheImage(urlString: String) async -> String {
         guard !urlString.isEmpty else { return "" }
         let filename = stableFilename(for: urlString)
@@ -2854,10 +3717,30 @@ final class LiveActivityImageCache {
         if FileManager.default.fileExists(atPath: fileURL.path) { return filename }
         guard let url = URL(string: urlString),
               let (data, _) = try? await URLSession.shared.data(from: url),
-              let image = UIImage(data: data),
-              let jpeg  = image.jpegData(compressionQuality: 0.65) else { return "" }
+              let image = UIImage(data: data) else { return "" }
+        let resized = Self.downscale(image, maxDim: 256)
+        guard let jpeg = resized.jpegData(compressionQuality: 0.7) else { return "" }
         try? jpeg.write(to: fileURL, options: .atomic)
         return filename
+    }
+
+    /// Skaliert ein UIImage proportional runter, sodass die längere Kante ≤ maxDim ist.
+    /// Wichtig für Widget-Speicherlimit — Original-Fotos sind oft 4000x4000.
+    static func downscale(_ image: UIImage, maxDim: CGFloat) -> UIImage {
+        let w = image.size.width
+        let h = image.size.height
+        guard max(w, h) > maxDim else { return image }
+        let scale = maxDim / max(w, h)
+        let newSize = CGSize(width: w * scale, height: h * scale)
+        let renderer = UIGraphicsImageRenderer(size: newSize, format: {
+            let f = UIGraphicsImageRendererFormat.default()
+            f.scale = 1   // 1x statt Screen-Scale — Widget braucht kein @3x
+            f.opaque = true
+            return f
+        }())
+        return renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: newSize))
+        }
     }
 
     /// Caches all URLs concurrently, returns filenames in the same order.
@@ -2879,11 +3762,13 @@ final class LiveActivityImageCache {
 
     /// Speichert ein lokales UIImage (z.B. Selfie) direkt in den App-Group-Container.
     /// Gibt den Dateinamen zurück, oder "" bei Fehler.
+    /// Bild wird auf 256px runterskaliert für Widget-Speichersicherheit.
     @discardableResult
     func cacheSelfie(_ image: UIImage, key: String) -> String {
         let filename = stableFilename(for: "selfie_\(key)") // deterministisch pro User
-        guard let folder = avatarsFolderURL,
-              let jpeg = image.jpegData(compressionQuality: 0.7) else { return "" }
+        guard let folder = avatarsFolderURL else { return "" }
+        let resized = Self.downscale(image, maxDim: 256)
+        guard let jpeg = resized.jpegData(compressionQuality: 0.7) else { return "" }
         let fileURL = folder.appendingPathComponent(filename)
         try? jpeg.write(to: fileURL, options: .atomic)
         return filename

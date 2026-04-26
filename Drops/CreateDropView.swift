@@ -209,6 +209,7 @@ struct CreateDropView: View {
     @State private var pinnedCoordinate: CLLocationCoordinate2D? = nil
 
     @State private var sheetPulse = false
+    @State private var showEmojiPicker = false
 
     var suggestedEmojis: [String] { suggestEmojis(for: activityName) }
 
@@ -255,7 +256,7 @@ struct CreateDropView: View {
                     // ── Navigationszeile: Titel + Schließen-Button ─────────
                     HStack {
                         Text("Drop erstellen")
-                            .font(.system(size: 20, weight: .bold, design: .rounded))
+                            .font(.system(size: 28, weight: .bold, design: .rounded))
                             .foregroundColor(.textPrimary)
                         Spacer()
                         Button {
@@ -278,16 +279,29 @@ struct CreateDropView: View {
                     createSection(label: "Was macht ihr?", aurora: true) {
                         // Emoji + Textfeld
                         HStack(spacing: 14) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.brand.opacity(displayEmoji.isEmpty ? 0.07 : 0.12))
-                                    .frame(width: 52, height: 52)
-                                if !displayEmoji.isEmpty {
-                                    Text(displayEmoji).font(.system(size: 26))
-                                        .transition(.scale.combined(with: .opacity))
+                            // Tappbarer Emoji-Kreis: öffnet manuellen Picker.
+                            // Wenn leer: Plus-Icon als Hinweis. Sonst gewähltes Emoji.
+                            Button(action: { showEmojiPicker = true }) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.brand.opacity(displayEmoji.isEmpty ? 0.07 : 0.12))
+                                        .frame(width: 52, height: 52)
+                                    Circle()
+                                        .stroke(Color.brand.opacity(displayEmoji.isEmpty ? 0.25 : 0.0),
+                                                style: StrokeStyle(lineWidth: 1.2, dash: [3, 3]))
+                                        .frame(width: 52, height: 52)
+                                    if displayEmoji.isEmpty {
+                                        Image(systemName: "face.smiling")
+                                            .font(.system(size: 22, weight: .light))
+                                            .foregroundColor(.textTertiary)
+                                    } else {
+                                        Text(displayEmoji).font(.system(size: 26))
+                                            .transition(.scale.combined(with: .opacity))
+                                    }
                                 }
+                                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: displayEmoji)
                             }
-                            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: displayEmoji)
+                            .buttonStyle(.plain)
 
                             TextField("z.B. Fußball, Kaffee, Wandern…", text: $activityName)
                                 .font(.system(size: 15))
@@ -303,29 +317,56 @@ struct CreateDropView: View {
                         }
                         .padding(.horizontal, 16).padding(.vertical, 10)
 
-                        // Emoji-Vorschläge — verschwinden nach Auswahl
-                        if !suggestedEmojis.isEmpty && selectedEmoji.isEmpty {
-                            Divider().padding(.leading, 16)
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 8) {
-                                    ForEach(suggestedEmojis, id: \.self) { emoji in
-                                        Button(action: {
-                                            selectedEmoji = emoji; emojiLockedByUser = true
-                                        }) {
-                                            let isActive = selectedEmoji == emoji
-                                            Text(emoji).font(.system(size: 22))
+                        // Emoji-Vorschläge — verschwinden nach Auswahl.
+                        // Wenn keine Vorschläge matchen, kommt der "Selbst wählen"-Link.
+                        if selectedEmoji.isEmpty {
+                            if !suggestedEmojis.isEmpty {
+                                Divider().padding(.leading, 16)
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 8) {
+                                        ForEach(suggestedEmojis, id: \.self) { emoji in
+                                            Button(action: {
+                                                selectedEmoji = emoji; emojiLockedByUser = true
+                                            }) {
+                                                let isActive = selectedEmoji == emoji
+                                                Text(emoji).font(.system(size: 22))
+                                                    .frame(width: 42, height: 42)
+                                                    .background(isActive ? Color.brand.opacity(0.18) : Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                                                    .overlay(RoundedRectangle(cornerRadius: 10)
+                                                        .stroke(isActive ? Color.brand.opacity(0.5) : Color.clear, lineWidth: 1.5))
+                                            }
+                                            .buttonStyle(.plain)
+                                            .animation(.spring(response: 0.2), value: selectedEmoji)
+                                        }
+                                        // Picker-Button am Ende der Vorschläge — falls nichts passt
+                                        Button(action: { showEmojiPicker = true }) {
+                                            Image(systemName: "ellipsis")
+                                                .font(.system(size: 16, weight: .semibold))
+                                                .foregroundColor(.textSecondary)
                                                 .frame(width: 42, height: 42)
-                                                .background(isActive ? Color.brand.opacity(0.18) : Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-                                                .overlay(RoundedRectangle(cornerRadius: 10)
-                                                    .stroke(isActive ? Color.brand.opacity(0.5) : Color.clear, lineWidth: 1.5))
+                                                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
                                         }
                                         .buttonStyle(.plain)
-                                        .animation(.spring(response: 0.2), value: selectedEmoji)
                                     }
+                                    .padding(.horizontal, 16).padding(.vertical, 12)
                                 }
-                                .padding(.horizontal, 16).padding(.vertical, 12)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                            } else if !activityName.trimmingCharacters(in: .whitespaces).isEmpty {
+                                // Kein Match in der Keyword-Liste → User-Picker anbieten
+                                Divider().padding(.leading, 16)
+                                Button(action: { showEmojiPicker = true }) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "face.smiling")
+                                            .font(.system(size: 14, weight: .medium))
+                                        Text("Emoji wählen")
+                                            .font(.system(size: 13, weight: .medium))
+                                    }
+                                    .foregroundColor(.brand)
+                                    .padding(.horizontal, 16).padding(.vertical, 12)
+                                }
+                                .buttonStyle(.plain)
+                                .transition(.opacity)
                             }
-                            .transition(.opacity.combined(with: .move(edge: .top)))
                         }
                     }
 
@@ -668,7 +709,8 @@ struct CreateDropView: View {
                     }
 
                     // ── Drops+ Upsell (nur für Free-User, vor CTA) ──────────
-                    if !store.isDropsPlusActive && !created {
+                    // Aus für den Launch (FeatureFlags.dropsPlusEnabled).
+                    if FeatureFlags.dropsPlusEnabled && !store.isDropsPlusActive && !created {
                         plusReachUpsell
                             .padding(.horizontal, 16)
                             .padding(.top, 4)
@@ -696,9 +738,14 @@ struct CreateDropView: View {
                             case .pin:      return pinnedCoordinate ?? store.currentUser.coordinate
                             }
                         }()
-                        let isInMunich = MunichBoundary.contains(dropCoordPreview)
-                        AuroraDropButton(isLoading: isCreating, isEnabled: isValid && isInMunich) {
-                            guard isValid && isInMunich else { return }
+                        // Drop-Erstellen-Gate: Drop-Koordinate muss in einer
+                        // der 5 Launch-Städte liegen (Berlin, Hamburg, München,
+                        // Köln, Frankfurt). Bei deaktiviertem Gate ist alles
+                        // erlaubt.
+                        let isInServiceArea = !BetaConfig.cityRestrictionEnabled
+                            || ServiceCities.isInside(dropCoordPreview)
+                        AuroraDropButton(isLoading: isCreating, isEnabled: isValid && isInServiceArea) {
+                            guard isValid && isInServiceArea else { return }
                             performCreate(coord: dropCoordPreview)
                         }
                         .padding(.horizontal, 16)
@@ -709,11 +756,11 @@ struct CreateDropView: View {
                                 .frame(maxWidth: .infinity, alignment: .center)
                                 .padding(.horizontal, 16)
                                 .transition(.opacity)
-                        } else if !isInMunich {
+                        } else if !isInServiceArea {
                             HStack(spacing: 5) {
                                 Image(systemName: "mappin.slash")
                                     .font(.system(size: 11))
-                                Text("Drops sind aktuell nur in München verfügbar.")
+                                Text("Drops nur in Berlin, Hamburg, München, Köln oder Frankfurt.")
                                     .font(.system(size: 12))
                             }
                             .foregroundColor(Color(hex: "f59e0b"))
@@ -728,6 +775,15 @@ struct CreateDropView: View {
             .scrollContentBackground(.hidden)
             .background(Color.clear)
             .scrollDismissesKeyboard(.immediately)
+        }
+        .sheet(isPresented: $showEmojiPicker) {
+            EmojiPickerSheet(selected: selectedEmoji) { emoji in
+                selectedEmoji = emoji
+                emojiLockedByUser = true
+            }
+            .presentationDetents([.height(460)])
+            .presentationDragIndicator(.hidden)
+            .sheetBackground()
         }
         .fullScreenCover(isPresented: $showPinMap) {
             ZStack(alignment: .bottom) {
@@ -888,7 +944,9 @@ struct CreateDropView: View {
                 coordinate: coord, type: selectedLocationType
             )
             let name = activityName.trimmingCharacters(in: .whitespaces).isEmpty ? "Drop" : activityName.trimmingCharacters(in: .whitespaces)
-            let emoji = displayEmoji.isEmpty ? (suggestedEmojis.first ?? "✨") : displayEmoji
+            // Reihenfolge: 1) explizite User-Auswahl, 2) erster Auto-Match
+            // (wenn Keyword passt), 3) leer (kein generisches ✨-Fallback mehr).
+            let emoji = displayEmoji.isEmpty ? (suggestedEmojis.first ?? "") : displayEmoji
             let finalActivity = Activity(id: UUID(), name: name, emoji: emoji)
             store.createDrop(activity: finalActivity, location: loc,
                              description: dropDescription, scheduledTime: scheduledTime,

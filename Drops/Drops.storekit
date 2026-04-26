@@ -1,0 +1,38 @@
+{
+  "identifier" : "Drops-Local",
+  "nonRenewingSubscriptions" : [],
+  "products" : [
+    {
+      "displayPrice" : "4.99",
+      "familyShareable" : false,
+      "internalID" : "A1000001",
+      "localizations" : [
+        {
+          "description" : "Einmaliger Kauf — Boost, größerer Radius, Wer hat geschaut",
+          "displayName" : "Drops+",
+          "locale" : "de_DE"
+        },
+        {
+          "description" : "One-time purchase — Boost, wider radius, view tracking",
+          "displayName" : "Drops+",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.dennis.drops.dropsplus",
+      "referenceName" : "Drops+",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_askToBuyEnabled" : false,
+    "_disableDialogs" : false,
+    "_locale" : "de_DE",
+    "_storefront" : "DEU",
+    "_storeKitErrors" : []
+  },
+  "subscriptionGroups" : [],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}

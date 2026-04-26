@@ -30,6 +30,19 @@ enum MapStyleMode: String, CaseIterable {
 class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
     @Published var userLocation: CLLocationCoordinate2D? = nil
+    /// Horizontale GPS-Genauigkeit in Metern — für den Accuracy-Ring um den Pin.
+    @Published var horizontalAccuracy: CLLocationAccuracy = 0
+    /// Zeitpunkt des letzten akzeptierten Updates — für die Stale-Detection.
+    private var lastAcceptedAt: Date? = nil
+
+    /// Ab dieser Accuracy (in Metern) gilt ein Update als "schlechter Empfang".
+    private let maxAcceptableAccuracy: CLLocationAccuracy = 250
+    /// Wenn letzter guter Fix älter als X Sekunden → schlechte Updates akzeptieren
+    /// (sonst bleibt der Pin nach langer U-Bahn-Fahrt am alten Standort hängen).
+    private let staleThresholdSeconds: TimeInterval = 60
+    /// Wenn neuer Punkt weiter als X Meter vom alten entfernt ist → akzeptieren,
+    /// egal wie schlecht die Accuracy ist (User ist offensichtlich woanders).
+    private let bigJumpThresholdMeters: CLLocationDistance = 500
 
     override init() {
         super.init()
@@ -40,7 +53,33 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        userLocation = locations.last?.coordinate
+        guard let loc = locations.last else { return }
+        // Negative Accuracy = ungültig (Simulator-Feature oder Hardwarefehler)
+        guard loc.horizontalAccuracy >= 0 else { return }
+
+        let isPoorAccuracy = loc.horizontalAccuracy > maxAcceptableAccuracy
+
+        if let prev = userLocation, let lastAt = lastAcceptedAt, isPoorAccuracy {
+            // Wir haben schon eine Position + das neue Update ist schlecht.
+            // Verwerfen nur wenn der alte Fix **frisch** ist UND der neue
+            // Punkt **nicht weit** weg ist. Sonst: U-Bahn-Fahrt → Pin updaten.
+            let secsSinceLast = Date().timeIntervalSince(lastAt)
+            let prevLoc = CLLocation(latitude: prev.latitude, longitude: prev.longitude)
+            let movedDistance = prevLoc.distance(from: loc)
+
+            let isStillFresh = secsSinceLast < staleThresholdSeconds
+            let isSmallJump = movedDistance < bigJumpThresholdMeters
+
+            if isStillFresh && isSmallJump {
+                return  // kurzer Empfangsausfall, alten Pin behalten
+            }
+            // Sonst: entweder der alte Fix ist schon veraltet (>60s) oder der
+            // neue Punkt ist >500m weg → Update akzeptieren auch wenn unscharf.
+        }
+
+        userLocation = loc.coordinate
+        horizontalAccuracy = loc.horizontalAccuracy
+        lastAcceptedAt = Date()
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
@@ -62,6 +101,9 @@ struct LiveMapView: View {
     /// Werden ausschließlich in onMapCameraChange aktualisiert (synchron mit MapKit),
     /// nicht im 60fps-Animations-Loop → kein Jitter mehr.
     @State private var munichBoundaryPts: [CGPoint] = []
+    /// Pro-Stadt-Polygone in Screen-Koordinaten (5 Städte beim Launch).
+    /// Wird in onMapCameraChange synchron aktualisiert.
+    @State private var cityPolygonsPts: [[CGPoint]] = []
     @State private var hasInitiallyZoomed = false
     @State private var selectedItem: MapAnnotationItem? = nil
     @State private var selectedActivity = "Alle"
@@ -83,12 +125,36 @@ struct LiveMapView: View {
         return base.filter { selectedActivity.contains($0.emoji) }
     }
 
+    /// Konvertiert die Polygone ALLER Launch-Städte in eine flache Liste von
+    /// Screen-Koordinaten, mit `nil`-Separator zwischen Städten (damit der
+    /// Overlay weiß, wo ein Polygon endet und das nächste beginnt).
+    ///
+    /// Wir geben `[[CGPoint]]` zurück — also ein Array von Polygonen. Der
+    /// Canvas-Overlay iteriert und zeichnet jedes einzeln, mit gemeinsamer
+    /// Ausgrauung außerhalb aller Zonen.
+    static func allCityPolygonsPts(proxy: MapProxy) -> [[CGPoint]] {
+        ServiceCities.all.map { city in
+            var closed = city.polygon
+            if let first = closed.first { closed.append(first) }
+            return closed.compactMap { proxy.convert($0, to: .local) }
+        }
+    }
+
     var body: some View {
         ZStack {
             MapReader { proxy in
                 Map(position: $mapPosition) {
                     // Eigener Standort
                     UserAnnotation()
+
+                    // GPS-Accuracy-Ring um den User (nur wenn Accuracy > 20m sichtbar)
+                    // Zeigt dem User visuell die Ungenauigkeit wie in Apple Maps.
+                    if let loc = locationManager.userLocation,
+                       locationManager.horizontalAccuracy > 20 {
+                        MapCircle(center: loc, radius: locationManager.horizontalAccuracy)
+                            .foregroundStyle(Color.brand.opacity(0.12))
+                            .stroke(Color.brand.opacity(0.35), lineWidth: 1)
+                    }
 
                     // Drops & Freunde
                     // HINWEIS: @EnvironmentObject ist in Map-Annotation-Content nicht
@@ -111,12 +177,13 @@ struct LiveMapView: View {
                 // .continuous feuert für jeden MapKit-Render-Frame während
                 // Scroll/Zoom → Overlay-Geometrie ist immer in sync.
                 .onMapCameraChange(frequency: .continuous) { _ in
-                    munichBoundaryPts = MunichBoundary.coordinates
-                        .compactMap { proxy.convert($0, to: .local) }
+                    // Alle 5 Launch-Städte als Polygon-Overlay — damit man beim
+                    // Rauszoomen auf Deutschland alle Service-Zones sieht.
+                    cityPolygonsPts = Self.allCityPolygonsPts(proxy: proxy)
                 }
-                // ── Aurora-Grenze + Ausgrauung außerhalb der Zone ────────
+                // ── Aurora-Grenzen um alle 5 Launch-Städte ──────────────
                 .overlay {
-                    MunichZoneOverlay(pts: munichBoundaryPts)
+                    MultiZoneOverlay(polygons: cityPolygonsPts)
                         .ignoresSafeArea()
                         .allowsHitTesting(false)
                 }
@@ -409,6 +476,22 @@ struct IncomingJoinRequestSheet: View {
         max(0, Int(request.autoAcceptAt.timeIntervalSinceNow))
     }
 
+    /// Entfernung Joiner → Drop-Standort, berechnet aus Live-Koordinaten.
+    private var joinerDistanceMeters: Double? {
+        guard let coord = store.joinerLiveCoordinates[request.id],
+              let drop  = store.activeDrops.first(where: { $0.id.uuidString == request.dropID })
+        else { return nil }
+        let joinerLoc = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+        let dropLoc   = CLLocation(latitude: drop.location.coordinate.latitude,
+                                    longitude: drop.location.coordinate.longitude)
+        return joinerLoc.distance(from: dropLoc)
+    }
+
+    private func formatDistance(_ meters: Double) -> String {
+        if meters < 1000 { return "\(Int(meters)) m entfernt" }
+        return String(format: "%.1f km entfernt", meters / 1000)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // ── Anfrage-Header ─────────────────────────────────────
@@ -442,11 +525,50 @@ struct IncomingJoinRequestSheet: View {
                     Text(request.joinerName)
                         .font(.system(size: 22, weight: .bold))
                     if let age = request.joinerAge {
-                        Text(", \(age)")
+                        Text("\(age)")
                             .font(.system(size: 22, weight: .semibold))
                             .foregroundColor(.textSecondary)
                     }
+                    if request.joinerIsPlus {
+                        HStack(spacing: 3) {
+                            Image(systemName: "bolt.fill").font(.system(size: 9, weight: .bold))
+                            Text("PLUS").font(.system(size: 10, weight: .heavy))
+                        }
+                        .foregroundStyle(Color(hex: "7a4e05"))
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(
+                            LinearGradient(colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing),
+                            in: Capsule()
+                        )
+                    }
                 }
+
+                // Tier + Entfernung in einer Zeile
+                HStack(spacing: 10) {
+                    let tierColor = ReliabilityScore.color(forPoints: request.joinerReliabilityPoints)
+                    HStack(spacing: 4) {
+                        Image(systemName: ReliabilityScore.badgeIcon(forPoints: request.joinerReliabilityPoints))
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(ReliabilityScore.badge(forPoints: request.joinerReliabilityPoints))
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(tierColor)
+                    .padding(.horizontal, 9).padding(.vertical, 4)
+                    .background(tierColor.opacity(0.14), in: Capsule())
+
+                    if let meters = joinerDistanceMeters {
+                        HStack(spacing: 4) {
+                            Image(systemName: "location.fill").font(.system(size: 10))
+                            Text(formatDistance(meters))
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .foregroundColor(.textSecondary)
+                        .padding(.horizontal, 9).padding(.vertical, 4)
+                        .background(Color.textSecondary.opacity(0.10), in: Capsule())
+                    }
+                }
+                .padding(.top, 4)
 
                 // Auto-Accept Countdown
                 if timeLeft > 0 {
@@ -754,50 +876,63 @@ struct DropJoinSheet: View {
                             .font(.system(size: 13)).foregroundColor(.textSecondary)
                     }
 
-                    // ── Drops+ Boost Button ──────────────────────────────
-                    Button {
-                        if item.isBoosted {
-                            store.unboostActiveDrop()
-                        } else {
-                            store.boostActiveDrop()
-                        }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: item.isBoosted ? "bolt.circle.fill" : "bolt.fill")
-                                .font(.system(size: 16))
-                            Text(item.isBoosted ? "Boost aktiv" : "Drop boosten")
-                                .font(.system(size: 15, weight: .semibold))
-                            if !store.isPlusUser {
-                                Text("Drops+")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(.black.opacity(0.7))
-                                    .padding(.horizontal, 6).padding(.vertical, 2)
-                                    .background(Color(hex: "f59e0b"), in: Capsule())
+                    // ── Drops+ Boost Button — Premium-Light Gold ────────
+                    // Aus für den initialen Launch (FeatureFlags.dropsPlusEnabled).
+                    if FeatureFlags.dropsPlusEnabled {
+                        Button {
+                            if item.isBoosted {
+                                store.unboostActiveDrop()
+                            } else {
+                                store.boostActiveDrop()
                             }
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: item.isBoosted ? "bolt.circle.fill" : "bolt.fill")
+                                    .font(.system(size: 16, weight: .semibold))
+                                Text(item.isBoosted ? "Boost aktiv" : "Drop boosten")
+                                    .font(.system(size: 15, weight: .semibold))
+                                if !store.isPlusUser {
+                                    Text("Drops+")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(Color(hex: "7a4e05"))
+                                        .padding(.horizontal, 6).padding(.vertical, 2)
+                                        .background(Color.white.opacity(0.35), in: Capsule())
+                                }
+                            }
+                            .foregroundColor(item.isBoosted ? Color(hex: "a87408") : .white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(
+                                Group {
+                                    if item.isBoosted {
+                                        Color(hex: "d4a017").opacity(0.15)
+                                    } else {
+                                        LinearGradient(
+                                            colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    }
+                                }
+                                .clipShape(RoundedRectangle(cornerRadius: 16))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .stroke(
+                                        item.isBoosted
+                                            ? Color(hex: "d4a017").opacity(0.5)
+                                            : Color.white.opacity(0.20),
+                                        lineWidth: 1
+                                    )
+                            )
+                            .shadow(color: Color(hex: "a87408").opacity(item.isBoosted ? 0 : 0.25),
+                                    radius: 8, y: 3)
                         }
-                        .foregroundColor(item.isBoosted ? Color(hex: "f59e0b") : .white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(
-                            item.isBoosted
-                                ? Color(hex: "f59e0b").opacity(0.15)
-                                : Color.white.opacity(0.08),
-                            in: RoundedRectangle(cornerRadius: 16)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16)
-                                .stroke(
-                                    item.isBoosted
-                                        ? Color(hex: "f59e0b").opacity(0.5)
-                                        : Color.white.opacity(0.12),
-                                    lineWidth: 1
-                                )
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 18)
-                    .sheet(isPresented: $store.showDropsPlusPaywall) {
-                        DropsPlusView()
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 18)
+                        .sheet(isPresented: $store.showDropsPlusPaywall) {
+                            DropsPlusView()
+                        }
                     }
 
                     Button {
@@ -821,6 +956,7 @@ struct DropJoinSheet: View {
                     Button(tr("common.cancel"), role: .cancel) {}
                     Button(tr("common.done"), role: .destructive) {
                         store.cancelDrop(id: item.id)
+                        dismiss()
                     }
                 } message: {
                     Text(tr("drop.end_drop_message"))
@@ -934,6 +1070,7 @@ struct DropJoinSheet: View {
                         reliabilityScore: creator.reliabilityScore,
                         accentColor: accentColor,
                         isVerified: creator.isVerified,
+                        userUID: creator.firebaseUID,
                         canBlock: true
                     ) { dismiss() }
                     .environmentObject(store)
@@ -949,6 +1086,7 @@ struct DropJoinSheet: View {
                         reliabilityScore: creator.reliabilityScore,
                         accentColor: accentColor,
                         isVerified: creator.isVerified,
+                        userUID: creator.firebaseUID,
                         canBlock: true
                     ) { dismiss() }
                     .environmentObject(store)
@@ -1263,10 +1401,26 @@ struct ActiveDropTabView: View {
 
     /// Prüft ob GPS-Position nahe genug am Drop-Ort ist.
     private var isNearDropByGPS: Bool {
-        guard let user = locationManager.userLocation else { return false }
+        guard let dist = liveDistanceMeters else { return false }
+        return dist <= Self.gpsArrivalThresholdMeters
+    }
+
+    /// Live Luftlinien-Distanz zum Drop in Metern. Re-berechnet sich bei jedem
+    /// GPS-Update (locationManager.userLocation ist @Published), daher updated
+    /// die Anzeige im Aktiv-Tab **live** während man läuft — statt nur beim
+    /// Tab-Switch wie vorher mit der statischen Route-Distanz.
+    private var liveDistanceMeters: Double? {
+        guard let user = locationManager.userLocation else { return nil }
         let userLoc = CLLocation(latitude: user.latitude, longitude: user.longitude)
         let dropLoc = CLLocation(latitude: item.coordinate.latitude, longitude: item.coordinate.longitude)
-        return userLoc.distance(from: dropLoc) <= Self.gpsArrivalThresholdMeters
+        return userLoc.distance(from: dropLoc)
+    }
+
+    /// Geschätzte Gehzeit basierend auf liveDistanceMeters (~1.25 m/s = 75 m/min
+    /// Fußgänger-Durchschnitt in der Stadt).
+    private var liveWalkMinutes: Int? {
+        guard let dist = liveDistanceMeters else { return nil }
+        return max(1, Int(dist / 75))
     }
 
     /// Host ist „angekommen" sobald eine dieser Bedingungen zutrifft:
@@ -1501,14 +1655,22 @@ struct ActiveDropTabView: View {
                         .font(.system(size: 14)).foregroundColor(textSecondary)
                 }
             } else if let r = route {
+                // Gehzeit kommt aus MKRoute (einmal berechnet, genauer weil
+                // Gebäude-Umrundung), aber Distanz kommt LIVE aus dem GPS:
+                // updated während man geht, nicht nur beim Tab-Switch.
                 HStack(spacing: 0) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("~\(max(1, Int(r.expectedTravelTime / 60))) Min zu Fuß")
+                        Text("~\(liveWalkMinutes ?? max(1, Int(r.expectedTravelTime / 60))) Min zu Fuß")
                             .font(.system(size: 17, weight: .bold)).foregroundColor(textPrimary)
-                        Text(r.distance < 1000
-                             ? "\(Int(r.distance)) m entfernt"
-                             : String(format: "%.1f km entfernt", r.distance / 1000))
+                        Text({
+                            let dist = liveDistanceMeters ?? r.distance
+                            return dist < 1000
+                                ? "\(Int(dist)) m entfernt"
+                                : String(format: "%.1f km entfernt", dist / 1000)
+                        }())
                             .font(.system(size: 13)).foregroundColor(textSecondary)
+                            .contentTransition(.numericText())
+                            .animation(.easeInOut(duration: 0.3), value: liveDistanceMeters)
                         if let addr = resolvedAddress {
                             HStack(spacing: 3) {
                                 Image(systemName: "mappin").font(.system(size: 9)).foregroundColor(textTertiary)
@@ -1529,6 +1691,35 @@ struct ActiveDropTabView: View {
                     }
                     .buttonStyle(.plain)
                 }
+            }
+        }
+
+        // Host-Vorschau (immer sichtbar für den Joiner — damit man weiß zu wem man geht)
+        sectionCard {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(Color.brand.opacity(0.14)).frame(width: 44, height: 44)
+                    Text(item.emoji).font(.system(size: 22))
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 4) {
+                        Text(item.name)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(textPrimary)
+                        if let age = item.creatorAge {
+                            Text("\(age)")
+                                .font(.system(size: 15))
+                                .foregroundColor(textSecondary)
+                        }
+                    }
+                    Text("Dein Host")
+                        .font(.system(size: 11))
+                        .foregroundColor(textTertiary)
+                }
+                Spacer()
+                Image(systemName: "person.fill")
+                    .font(.system(size: 13))
+                    .foregroundColor(Color.brand)
             }
         }
 
@@ -1775,7 +1966,10 @@ struct ActiveDropTabView: View {
     /// Drops+ Mitglieder sehen zusätzlich Avatare + Namen.
     @ViewBuilder
     private var dropViewersCard: some View {
-        let viewers = store.dropViewersByDropID[item.id.uuidString] ?? []
+        // "Wer hat geschaut" ist eine Drops+ Feature → für den Launch komplett aus.
+        let viewers = FeatureFlags.dropsPlusEnabled
+            ? (store.dropViewersByDropID[item.id.uuidString] ?? [])
+            : []
         if !viewers.isEmpty {
             sectionCard {
                 VStack(alignment: .leading, spacing: 12) {
@@ -2303,9 +2497,11 @@ struct ParticipantDetailRow: View {
                 selfie: participant.selfie,
                 profileImageURL: participant.profileImageURL,
                 reliabilityScore: participant.reliabilityScore,
+                totalCommits: participant.reliabilityCommits,
                 subtitle: subtitle,
                 accentColor: score.color,
                 isVerified: participant.isVerified,
+                userUID: participant.firebaseUID,
                 canBlock: true,
                 onBlock: {}
             )
@@ -2641,27 +2837,34 @@ struct MiniProfileSheet: View {
     var selfie: UIImage? = nil
     var profileImageURL: String? = nil
     var reliabilityScore: Int = 85
+    var totalCommits: Int = 0
     var subtitle: String = "Drops-Nutzer"
     var accentColor: Color = Color(hex: "06b6d4")
     var isVerified: Bool = false
+    var isPlus: Bool = false
+    /// Wenn gesetzt, wird der Drops+ Status live aus Firebase nachgezogen — dadurch
+    /// zeigt das Sheet auch bei Freunden / Teilnehmern korrekt das Plus-Badge.
+    var userUID: String? = nil
     var canBlock: Bool = true
+    /// True wenn dieser User in deiner Freundesliste ist → zeigt
+    /// "Freund entfernen"-Button statt Block/Melden.
+    var isFriend: Bool = false
     let onBlock: () -> Void
 
     @State private var showBlockAlert = false
+    @State private var showReportSheet = false
+    @State private var showRemoveFriendAlert = false
+    @State private var fetchedPlus: Bool = false
 
-    private var reliabilityColor: Color {
-        switch reliabilityScore {
-        case 90...100: return .onlineGreen
-        case 70..<90:  return .brand
-        default:       return .accentOrange
-        }
-    }
-    private var reliabilityLabel: String {
-        switch reliabilityScore {
-        case 90...100: return tr("profile.very_reliable")
-        case 70..<90:  return tr("profile.reliable")
-        default:       return tr("profile.average")
-        }
+    // Tier aus Punktzahl direkt — unabhängig von Event-Historie.
+    private var tierLabel: String { ReliabilityScore.badge(forPoints: reliabilityScore) }
+    private var tierIcon:  String { ReliabilityScore.badgeIcon(forPoints: reliabilityScore) }
+    private var tierColor: Color  { ReliabilityScore.color(forPoints: reliabilityScore) }
+    private var tierProgress: Double { ReliabilityScore.tierProgress(forPoints: reliabilityScore) }
+
+    /// Anzahl früherer bestätigter Begegnungen mit diesem Nutzer (aus lokalen Daten).
+    private var priorEncountersCount: Int {
+        store.encounters.filter { $0.friendName == name && $0.confirmed }.count
     }
 
     var body: some View {
@@ -2700,33 +2903,47 @@ struct MiniProfileSheet: View {
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color.brand)
                 }
+                if isPlus || fetchedPlus {
+                    HStack(spacing: 3) {
+                        Image(systemName: "bolt.fill").font(.system(size: 9, weight: .bold))
+                        Text("PLUS").font(.system(size: 10, weight: .heavy))
+                    }
+                    .foregroundStyle(Color(hex: "7a4e05"))
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(
+                        LinearGradient(colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                                       startPoint: .topLeading, endPoint: .bottomTrailing),
+                        in: Capsule()
+                    )
+                    .overlay(Capsule().stroke(Color.white.opacity(0.35), lineWidth: 0.5))
+                }
             }
             Text(subtitle)
                 .font(.system(size: 13))
                 .foregroundColor(.textSecondary)
                 .padding(.bottom, 20)
 
-            // Zuverlässigkeits-Ring
+            // Zuverlässigkeits-Ring mit Tier-Icon + Badge-Name
             HStack(spacing: 14) {
                 ZStack {
                     Circle()
-                        .stroke(reliabilityColor.opacity(0.15), lineWidth: 5)
+                        .stroke(tierColor.opacity(0.15), lineWidth: 5)
                         .frame(width: 54, height: 54)
                     Circle()
-                        .trim(from: 0, to: CGFloat(reliabilityScore) / 100)
-                        .stroke(reliabilityColor, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                        .trim(from: 0, to: CGFloat(tierProgress))
+                        .stroke(tierColor, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                         .frame(width: 54, height: 54)
                         .rotationEffect(.degrees(-90))
                         .animation(.easeOut(duration: 0.6), value: reliabilityScore)
-                    Text("\(reliabilityScore)")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(reliabilityColor)
+                    Image(systemName: tierIcon)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(tierColor)
                 }
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(reliabilityLabel)
+                    Text(tierLabel)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(.textPrimary)
-                    Text(tr("profile.reliability_score"))
+                    Text("\(reliabilityScore) Pkt\(totalCommits > 0 ? " · \(totalCommits) Drops" : "")")
                         .font(.system(size: 12))
                         .foregroundColor(.textSecondary)
                 }
@@ -2736,24 +2953,78 @@ struct MiniProfileSheet: View {
             .liquidGlass(cornerRadius: 16)
             .padding(.horizontal, 20)
 
+            // Frühere Begegnungen — nur wenn > 0
+            if priorEncountersCount > 0 {
+                HStack(spacing: 10) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 14))
+                        .foregroundColor(.accentOrange)
+                    Text("Schon \(priorEncountersCount == 1 ? "1× getroffen" : "\(priorEncountersCount)× getroffen")")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.textSecondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 18).padding(.vertical, 10)
+                .liquidGlass(cornerRadius: 12)
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+            }
+
             Spacer()
 
-            // Block-Button (nur für Fremde, nie für sich selbst)
-            if canBlock && name != store.currentUser.name {
-                Button { showBlockAlert = true } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "hand.raised.fill").font(.system(size: 14))
-                        Text("\(name) blockieren").font(.system(size: 15, weight: .semibold))
+            // Bei Freunden: "Freund entfernen" — bei Fremden: Melden + Blockieren.
+            // Keine Aktionen auf sich selbst.
+            if name != store.currentUser.name {
+                if isFriend {
+                    Button { showRemoveFriendAlert = true } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "person.badge.minus")
+                                .font(.system(size: 13))
+                            Text("Freund entfernen")
+                                .font(.system(size: 14, weight: .semibold))
+                        }
+                        .foregroundColor(.accentRed)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 13)
+                        .liquidGlass(cornerRadius: 14)
+                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.accentRed.opacity(0.25), lineWidth: 1))
                     }
-                    .foregroundColor(.accentRed)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .liquidGlass(cornerRadius: 16)
-                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.accentRed.opacity(0.25), lineWidth: 1))
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 30)
+                } else if canBlock {
+                    HStack(spacing: 10) {
+                        Button { showReportSheet = true } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "flag.fill").font(.system(size: 13))
+                                Text("Melden").font(.system(size: 14, weight: .semibold))
+                            }
+                            .foregroundColor(.accentOrange)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 13)
+                            .liquidGlass(cornerRadius: 14)
+                            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.accentOrange.opacity(0.25), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+
+                        Button { showBlockAlert = true } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "hand.raised.fill").font(.system(size: 13))
+                                Text("Blockieren").font(.system(size: 14, weight: .semibold))
+                            }
+                            .foregroundColor(.accentRed)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 13)
+                            .liquidGlass(cornerRadius: 14)
+                            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.accentRed.opacity(0.25), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 30)
+                } else {
+                    Spacer(minLength: 20)
                 }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 30)
             } else {
                 Spacer(minLength: 20)
             }
@@ -2768,6 +3039,30 @@ struct MiniProfileSheet: View {
             }
         } message: {
             Text(tr("profile.block_message").replacingOccurrences(of: "{name}", with: name))
+        }
+        .alert("Freund entfernen?", isPresented: $showRemoveFriendAlert) {
+            Button(tr("common.cancel"), role: .cancel) {}
+            Button("Entfernen", role: .destructive) {
+                if let uid = userUID, !uid.isEmpty {
+                    store.removeFriend(theirUID: uid)
+                }
+                dismiss()
+            }
+        } message: {
+            Text("\(name) wird aus deiner Freundesliste entfernt. Ihr seht eure Drops nicht mehr gegenseitig.")
+        }
+        .sheet(isPresented: $showReportSheet) {
+            ReportUserSheet(reportedName: name, reportedUID: userUID) {
+                showReportSheet = false
+            }
+        }
+        .onAppear {
+            // Plus-Status aus Firebase ziehen, falls nicht schon übergeben und UID vorhanden
+            if !isPlus, let uid = userUID, !uid.isEmpty {
+                RealtimeDBManager.shared.fetchPlusStatus(uid: uid) { plus in
+                    fetchedPlus = plus
+                }
+            }
         }
     }
 }
@@ -2798,23 +3093,33 @@ struct MunichZoneOverlay: View {
         return Color(hue: h, saturation: 0.78, brightness: 0.92)
     }
 
+    /// Vorberechnete normalisierte Positionen (0..1) je Punkt um das Polygon
+    /// — basiert auf dem **Punkt-Index**, nicht auf Screen-Distanz, damit
+    /// wir das nicht pro Frame neu rechnen müssen. Der Farbverlauf wandert
+    /// gleichmäßig entlang der Punkt-Reihenfolge — für 161-Punkte-Polygon
+    /// mit halbwegs gleichmäßiger Punktdichte sieht das gleichwertig aus.
+    private var normalizedPositions: [Double] {
+        let n = pts.count
+        guard n > 1 else { return [] }
+        return (0..<n).map { Double($0) / Double(n - 1) }
+    }
+
     var body: some View {
-        // 24 fps reicht für den langsamen Farbwechsel — spart Energie
-        TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: false)) { timeline in
-            // 20s-Loop → sehr langsame, beruhigende Farbwanderung
+        // 12 fps für Farbwechsel — 20s-Loop, sehr langsam, halbierte CPU-Last
+        TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: false)) { timeline in
             let phase = timeline.date.timeIntervalSinceReferenceDate
                 .truncatingRemainder(dividingBy: 20.0) / 20.0
 
             Canvas { ctx, size in
-                // pts kommen fertig konvertiert rein — kein proxy.convert hier
                 guard pts.count > 3 else { return }
 
-                // ── Ausgrauung außerhalb (Even-Odd-Loch) ─────────────────
+                // ── Zone-Path bauen (wird 2× gebraucht) ─────────────────
                 var zonePath = Path()
                 zonePath.move(to: pts[0])
                 for pt in pts.dropFirst() { zonePath.addLine(to: pt) }
                 zonePath.closeSubpath()
 
+                // ── Ausgrauung außerhalb (Even-Odd-Loch) ──────────────
                 var outerPath = Path()
                 outerPath.addRect(CGRect(x: -600, y: -600,
                                         width: size.width + 1200,
@@ -2824,21 +3129,18 @@ struct MunichZoneOverlay: View {
                          with: .color(.primary.opacity(0.12)),
                          style: FillStyle(eoFill: true))
 
-                // ── Bogenlängen-basierte Farbpositionen ───────────────────
+                // ── Index-basierte Farbpositionen (keine Arc-Length-
+                //     Berechnung pro Frame mehr!) ────────────────────
                 let n = pts.count
-                var cumLen: [Double] = [0]
-                for i in 0..<(n - 1) {
-                    let dx = pts[i + 1].x - pts[i].x
-                    let dy = pts[i + 1].y - pts[i].y
-                    cumLen.append(cumLen[i] + sqrt(dx * dx + dy * dy))
-                }
-                let totalLen = max(cumLen.last ?? 1, 1)
+                let positions = normalizedPositions
 
-                // ── Breiter Glow-Layer ────────────────────────────────────
+                // ── Breiter Glow-Layer ──────────────────────────────
+                // Jeder Segment bekommt eine Mischfarbe aus Start und Ende —
+                // sieht flüssiger aus als harte Segment-Grenzen.
                 ctx.drawLayer { layer in
                     layer.addFilter(.blur(radius: 8))
                     for i in 0..<(n - 1) {
-                        let col = hue(at: cumLen[i] / totalLen, phase: phase)
+                        let col = hue(at: positions[i], phase: phase)
                         var seg = Path()
                         seg.move(to: pts[i])
                         seg.addLine(to: pts[i + 1])
@@ -2850,11 +3152,11 @@ struct MunichZoneOverlay: View {
                     }
                 }
 
-                // ── Feine Mittellinie ─────────────────────────────────────
+                // ── Feine Mittellinie ──────────────────────────────
                 ctx.drawLayer { layer in
                     layer.addFilter(.blur(radius: 1.0))
                     for i in 0..<(n - 1) {
-                        let col = hue(at: cumLen[i] / totalLen, phase: phase)
+                        let col = hue(at: positions[i], phase: phase)
                         var seg = Path()
                         seg.move(to: pts[i])
                         seg.addLine(to: pts[i + 1])
@@ -2863,6 +3165,94 @@ struct MunichZoneOverlay: View {
                                      style: StrokeStyle(lineWidth: 1.5,
                                                         lineCap: .round,
                                                         lineJoin: .round))
+                    }
+                }
+            }
+        }
+        .transaction { $0.animation = nil }
+    }
+}
+
+// MARK: - Multi-Zone Overlay (alle 5 Launch-Städte gleichzeitig)
+
+/// Zeichnet mehrere Service-Zones (Polygone) mit Aurora-Borders und
+/// einer gemeinsamen Ausgrauung außerhalb aller Zonen. Even-Odd-Fill mit
+/// N+1 Subpaths (Außen-Rechteck + N Polygone) erzeugt N Löcher im Grau.
+struct MultiZoneOverlay: View {
+    let polygons: [[CGPoint]]
+
+    private static let hueStops: [Double] = [0.530, 0.370, 0.720, 0.920, 0.100, 0.530]
+
+    private func hue(at arcPos: Double, phase: Double) -> Color {
+        let t = (arcPos + phase).truncatingRemainder(dividingBy: 1.0)
+        let stops = Self.hueStops
+        let scaled = t * Double(stops.count - 1)
+        let i = min(Int(scaled), stops.count - 2)
+        let f = scaled - Double(i)
+        let h = stops[i] + (stops[i + 1] - stops[i]) * f
+        return Color(hue: h, saturation: 0.78, brightness: 0.92)
+    }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: false)) { timeline in
+            let phase = timeline.date.timeIntervalSinceReferenceDate
+                .truncatingRemainder(dividingBy: 20.0) / 20.0
+
+            Canvas { ctx, size in
+                guard !polygons.isEmpty else { return }
+
+                // ── Ausgrauung: Außen-Rechteck + jede Zone als Loch (even-odd) ──
+                var outerPath = Path()
+                outerPath.addRect(CGRect(x: -600, y: -600,
+                                        width: size.width + 1200,
+                                        height: size.height + 1200))
+                for pts in polygons where pts.count > 2 {
+                    var zone = Path()
+                    zone.move(to: pts[0])
+                    for pt in pts.dropFirst() { zone.addLine(to: pt) }
+                    zone.closeSubpath()
+                    outerPath.addPath(zone)
+                }
+                ctx.fill(outerPath,
+                         with: .color(.primary.opacity(0.12)),
+                         style: FillStyle(eoFill: true))
+
+                // ── Aurora-Border pro Zone ───────────────────────────
+                for pts in polygons where pts.count > 2 {
+                    let n = pts.count
+                    // Index-basierte Farbpositionen (performant)
+                    let positions = (0..<n).map { Double($0) / Double(n - 1) }
+
+                    // Breiter Glow
+                    ctx.drawLayer { layer in
+                        layer.addFilter(.blur(radius: 8))
+                        for i in 0..<(n - 1) {
+                            let col = hue(at: positions[i], phase: phase)
+                            var seg = Path()
+                            seg.move(to: pts[i])
+                            seg.addLine(to: pts[i + 1])
+                            layer.stroke(seg,
+                                         with: .color(col.opacity(0.48)),
+                                         style: StrokeStyle(lineWidth: 10,
+                                                            lineCap: .round,
+                                                            lineJoin: .round))
+                        }
+                    }
+
+                    // Feine Mittellinie
+                    ctx.drawLayer { layer in
+                        layer.addFilter(.blur(radius: 1.0))
+                        for i in 0..<(n - 1) {
+                            let col = hue(at: positions[i], phase: phase)
+                            var seg = Path()
+                            seg.move(to: pts[i])
+                            seg.addLine(to: pts[i + 1])
+                            layer.stroke(seg,
+                                         with: .color(col.opacity(0.42)),
+                                         style: StrokeStyle(lineWidth: 1.5,
+                                                            lineCap: .round,
+                                                            lineJoin: .round))
+                        }
                     }
                 }
             }
@@ -2958,6 +3348,114 @@ private struct ExtendDropSheet: View {
                 .font(.system(size: 14))
                 .foregroundColor(.textSecondary)
                 .padding(.bottom, 12)
+        }
+    }
+}
+
+// MARK: - Report User Sheet
+// Ermöglicht Nutzern, andere Profile wegen Verstoßes zu melden.
+// Schreibt einen Eintrag unter `reports/{autoID}` → wird im Admin-Panel geprüft.
+// Pflicht für App Review (Guideline 1.2 — UGC-Apps).
+
+struct ReportUserSheet: View {
+    let reportedName: String
+    let reportedUID: String?
+    let onDismiss: () -> Void
+
+    init(reportedName: String, reportedUID: String? = nil, onDismiss: @escaping () -> Void) {
+        self.reportedName = reportedName
+        self.reportedUID = reportedUID
+        self.onDismiss = onDismiss
+    }
+
+    @State private var selectedReason: String = ""
+    @State private var details: String = ""
+    @State private var submitted: Bool = false
+    @Environment(\.dismiss) private var dismiss
+
+    private let reasons: [String] = [
+        "Belästigung / Bedrohung",
+        "Fake-Profil / Identitätsklau",
+        "Spam / Werbung",
+        "Anstößige Inhalte",
+        "Minderjährig",
+        "Sonstiges"
+    ]
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    HStack {
+                        Image(systemName: "flag.fill")
+                            .foregroundColor(.accentOrange)
+                        Text(reportedName).font(.system(size: 15, weight: .semibold))
+                    }
+                } header: {
+                    Text("Gemeldeter Nutzer")
+                }
+
+                if submitted {
+                    Section {
+                        HStack(spacing: 10) {
+                            Image(systemName: "checkmark.seal.fill")
+                                .foregroundColor(.brand)
+                            Text("Meldung erhalten — wir prüfen sie innerhalb von 24 Stunden.")
+                                .font(.system(size: 14))
+                        }
+                    }
+                } else {
+                    Section {
+                        ForEach(reasons, id: \.self) { reason in
+                            Button {
+                                selectedReason = reason
+                            } label: {
+                                HStack {
+                                    Text(reason).foregroundColor(.textPrimary)
+                                    Spacer()
+                                    if selectedReason == reason {
+                                        Image(systemName: "checkmark").foregroundColor(.brand)
+                                    }
+                                }
+                            }
+                        }
+                    } header: {
+                        Text("Grund")
+                    }
+
+                    Section {
+                        TextField("Optional: weitere Infos", text: $details, axis: .vertical)
+                            .lineLimit(3...6)
+                    } header: {
+                        Text("Details (optional)")
+                    }
+                }
+            }
+            .navigationTitle("Nutzer melden")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Abbrechen") { dismiss(); onDismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if submitted {
+                        Button("Fertig") { dismiss(); onDismiss() }
+                            .fontWeight(.semibold)
+                    } else {
+                        Button("Senden") {
+                            RealtimeDBManager.shared.submitReport(
+                                reportedUID: reportedUID,
+                                reportedName: reportedName,
+                                reason: selectedReason,
+                                details: details
+                            )
+                            withAnimation { submitted = true }
+                        }
+                        .fontWeight(.semibold)
+                        .disabled(selectedReason.isEmpty)
+                    }
+                }
+            }
         }
     }
 }

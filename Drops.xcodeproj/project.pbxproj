@@ -29,6 +29,7 @@
 		E4FFB32A2F94EDAD004E687A /* SessionLockView 2.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4FFB3292F94EDAD004E687A /* SessionLockView 2.swift */; };
 		E4FFB3302F95298B004E687A /* DropsStoreManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4FFB32F2F95298B004E687A /* DropsStoreManager.swift */; };
 		E4FFB3322F952A3E004E687A /* DropsPlusView 2.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4FFB3312F952A3E004E687A /* DropsPlusView 2.swift */; };
+		E4FFB3352F9749B4004E687A /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = E4FFB3342F9749B4004E687A /* FirebaseCrashlytics */; };
 		FA001AA12F900000001AA121 /* FirebaseAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA001AA02F900000001AA120 /* FirebaseAuthManager.swift */; };
 		FA002BB12F900000002BB121 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA002BB02F900000002BB120 /* AppDelegate.swift */; };
 		FA004DD12F900000004DD121 /* FirebaseDatabase in Frameworks */ = {isa = PBXBuildFile; productRef = FA004DD02F900000004DD120 /* FirebaseDatabase */; };
@@ -119,6 +120,7 @@
 				E4315F862F814CE100E60F54 /* FirebaseCore in Frameworks */,
 				E4315F842F814CE100E60F54 /* FirebaseAuth in Frameworks */,
 				FA004DD12F900000004DD121 /* FirebaseDatabase in Frameworks */,
+				E4FFB3352F9749B4004E687A /* FirebaseCrashlytics in Frameworks */,
 				FA005EE12F900000005EE121 /* FirebaseMessaging in Frameworks */,
 				FA00C3E12F900000C3E10121 /* FirebaseStorage in Frameworks */,
 				FA00F5012F900000F5010121 /* FirebaseFirestore in Frameworks */,
@@ -151,6 +153,7 @@
 				DA001006000000000001006 /* DropLiveActivity */,
 				AA000003000000000000003 /* Products */,
 				E4FFB3282F94DC5A004E687A /* Recovered References */,
+				E4FFB3332F9749B4004E687A /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -218,6 +221,13 @@
 			name = "Recovered References";
 			sourceTree = "<group>";
 		};
+		E4FFB3332F9749B4004E687A /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -229,6 +239,7 @@
 				AA000007000000000000007 /* Frameworks */,
 				AA000006000000000000006 /* Resources */,
 				DA00100A00000000000100A /* Embed Foundation Extensions */,
+				E4FFB3362F9749E3004E687A /* ShellScript */,
 			);
 			buildRules = (
 			);
@@ -243,6 +254,7 @@
 				FA005EE02F900000005EE120 /* FirebaseMessaging */,
 				FA00C3E12F900000C3E10120 /* FirebaseStorage */,
 				FA00F5012F900000F5010120 /* FirebaseFirestore */,
+				E4FFB3342F9749B4004E687A /* FirebaseCrashlytics */,
 			);
 			productName = LinkUp;
 			productReference = AA000008000000000000008 /* Drops.app */;
@@ -326,6 +338,30 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		E4FFB3362F9749E3004E687A /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${TARGET_NAME}",
+				"${SRCROOT}/${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}",
+				"${SRCROOT}/Drops/GoogleService-Info.plist",
+			);
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		AA000005000000000000005 /* Sources */ = {
@@ -513,10 +549,11 @@
 				CODE_SIGN_ENTITLEMENTS = Drops/Drops.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 13;
 				DEVELOPMENT_ASSET_PATHS = "\"Drops/Preview Content\"";
 				DEVELOPMENT_TEAM = 63N54256Q7;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Drops/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Drops;
@@ -544,10 +581,11 @@
 				CODE_SIGN_ENTITLEMENTS = Drops/Drops.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 13;
 				DEVELOPMENT_ASSET_PATHS = "\"Drops/Preview Content\"";
 				DEVELOPMENT_TEAM = 63N54256Q7;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Drops/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Drops;
@@ -669,6 +707,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = E4315F822F814CE100E60F54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseCore;
+		};
+		E4FFB3342F9749B4004E687A /* FirebaseCrashlytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E4315F822F814CE100E60F54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCrashlytics;
 		};
 		FA004DD02F900000004DD120 /* FirebaseDatabase */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -27,7 +27,7 @@ private let strings: [String: [String: String]] = [
     // ── Tab Bar ──────────────────────────────────────────────────
     "tab.map":          ["de": "Karte",        "en": "Map"],
     "tab.nearby":       ["de": "Umgebung",     "en": "Nearby"],
-    "tab.active":       ["de": "Aktiv",        "en": "Active"],
+    "tab.active":       ["de": "Live",         "en": "Live"],
     "tab.friends":      ["de": "Profil",       "en": "Profile"],
     "tab.settings":     ["de": "Einstellungen","en": "Settings"],
 
@@ -133,8 +133,8 @@ private let strings: [String: [String: String]] = [
     "welcome.feature2_sub":         ["de": "Finde Drops und Freunde direkt auf der Karte.", "en": "Find Drops and friends directly on the map."],
     "welcome.feature3_title":       ["de": "Freunde & neue Leute",      "en": "Friends & New People"],
     "welcome.feature3_sub":         ["de": "Alle sehen deinen Namen, dein Alter und dein Bild — triff Freunde oder lerne neue Leute kennen.", "en": "Everyone sees your name, age, and photo — meet friends or get to know new people."],
-    "welcome.feature4_title":       ["de": "Sicher unterwegs",         "en": "Stay Safe"],
-    "welcome.feature4_sub":         ["de": "SOS, Notfallkontakt und Ausweis-Verifizierung.", "en": "SOS, emergency contact, and ID verification."],
+    "welcome.feature4_title":       ["de": "Privat & sicher",          "en": "Private & Safe"],
+    "welcome.feature4_sub":         ["de": "Dein Standort wird nur während aktiver Drops geteilt. Nutzer melden & blockieren jederzeit möglich.", "en": "Your location is only shared during active Drops. Report & block users anytime."],
 
     // ── Common ───────────────────────────────────────────────────
     "common.cancel":    ["de": "Abbrechen",  "en": "Cancel"],

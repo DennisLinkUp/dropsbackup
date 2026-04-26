@@ -193,6 +193,60 @@ async function deleteAuthAccountsForTombstones(auth: any, uids: string[]): Promi
     return deleted;
 }
 
+// ── Friend Request Push ────────────────────────────────────────────────────
+
+/**
+ * Wenn friendRequests/{recipientUID}/{senderUID} geschrieben wird → Push an
+ * recipientUID mit "{senderName} möchte mit dir befreundet sein".
+ *
+ * Der Client hinterlegt beim Schreiben `fromName` und optional `fromImageURL`
+ * als Payload — wir brauchen also keinen separaten users/-Lookup für den Namen.
+ */
+export const onFriendRequestCreated = onValueCreated(
+    { ref: "/friendRequests/{recipientUID}/{senderUID}", region: "europe-west1" },
+    async (event) => {
+        const { recipientUID, senderUID } = event.params;
+        if (recipientUID === senderUID) return;
+
+        const db = getDatabase();
+        const tokenSnap = await db.ref(`users/${recipientUID}/fcmToken`).once("value");
+        const token = tokenSnap.val() as string | null;
+        if (!token) {
+            logger.info("onFriendRequestCreated: no FCM token for recipient", { recipientUID });
+            return;
+        }
+
+        const val = event.data.val() ?? {};
+        const senderName = (val.fromName as string | null) ?? "Jemand";
+
+        try {
+            await getMessaging().send({
+                token,
+                notification: {
+                    title: "Neue Freundschaftsanfrage",
+                    body: `${senderName} möchte mit dir befreundet sein.`,
+                },
+                apns: {
+                    payload: {
+                        aps: {
+                            sound: "default",
+                            category: "FRIEND_REQUEST",
+                        },
+                    },
+                },
+                data: {
+                    type: "friend_request",
+                    senderUID,
+                    senderName,
+                },
+            });
+            logger.info("onFriendRequestCreated sent", { recipientUID, senderUID });
+        } catch (e: any) {
+            logger.warn("FCM send failed", { recipientUID, error: e?.message });
+        }
+    }
+);
+
 // ── Friendship Push ────────────────────────────────────────────────────────
 
 /**

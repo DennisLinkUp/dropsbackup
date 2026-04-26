@@ -1,6 +1,7 @@
 import SwiftUI
 import MapKit
 import AVFoundation
+import FirebaseAuth
 @preconcurrency import Contacts
 
 // MARK: - Freunde View
@@ -25,9 +26,10 @@ struct FreundeView: View {
     private var onlineFriends: [User]  { store.friends.filter { $0.isAvailable } }
     private var offlineFriends: [User] { store.friends.filter { !$0.isAvailable } }
 
-    /// Kontaktvorschläge: nur Leute die noch keine Freunde sind
+    /// Kontaktvorschläge: nur Leute die noch keine Freunde sind.
+    /// Vergleich über `firebaseUID` (nicht `id.uuidString` — das ist nur die lokale UUID).
     private var contactSuggestions: [RealtimeDBManager.ContactMatchResult] {
-        let friendUIDs = Set(store.friends.map { $0.id.uuidString })
+        let friendUIDs = Set(store.friends.compactMap { $0.firebaseUID })
         return contactsVM.matches.filter { !friendUIDs.contains($0.uid) && !addedContactUIDs.contains($0.uid) }
     }
 
@@ -68,6 +70,11 @@ struct FreundeView: View {
 
                         // Eigener Status
                         myStatusCard
+
+                        // ── Eingehende Freundschaftsanfragen (ganz oben wenn vorhanden)
+                        if !store.incomingFriendRequests.isEmpty {
+                            friendRequestsSection
+                        }
 
                         // ── Zu bestätigende Begegnungen ganz oben wenn ausstehend ──
                         if !store.pendingEncounters.isEmpty {
@@ -201,6 +208,14 @@ struct FreundeView: View {
                 set: { if !$0 { profileParticipant = nil } }
             )) {
                 if let p = profileParticipant {
+                    // Match gegen die Freundesliste über Firebase-UID — wenn der
+                    // User ein Freund ist, zeigt das Sheet "Freund entfernen"
+                    // statt Block/Melden.
+                    let isFriend: Bool = {
+                        guard let uid = p.firebaseUID, !uid.isEmpty else { return false }
+                        return store.friends.contains(where: { $0.firebaseUID == uid })
+                    }()
+
                     if #available(iOS 16.4, *) {
                         MiniProfileSheet(
                             name: p.name,
@@ -211,7 +226,9 @@ struct FreundeView: View {
                             subtitle: tr("profile.your_friend"),
                             accentColor: .brand,
                             isVerified: p.isVerified,
-                            canBlock: false
+                            userUID: p.firebaseUID,
+                            canBlock: false,
+                            isFriend: isFriend
                         ) { profileParticipant = nil }
                         .environmentObject(store)
                         .presentationDetents([.height(360)])
@@ -227,7 +244,9 @@ struct FreundeView: View {
                             subtitle: tr("profile.your_friend"),
                             accentColor: .brand,
                             isVerified: p.isVerified,
-                            canBlock: false
+                            userUID: p.firebaseUID,
+                            canBlock: false,
+                            isFriend: isFriend
                         ) { profileParticipant = nil }
                         .environmentObject(store)
                         .presentationDetents([.height(360)])
@@ -248,12 +267,14 @@ struct FreundeView: View {
                 ZStack(alignment: .bottomLeading) {
                     Button(action: { showImageSourceSheet = true }) {
                         ZStack(alignment: .bottomTrailing) {
-                            // Gold-Rand für Drops+ User, sonst dezenter Standard-Stroke
+                            // Gold-Rand für Drops+ User, sonst dezenter Standard-Stroke.
+                            // Bei deaktiviertem Drops+ Feature → nie Plus-Ring zeigen.
+                            let isPlusVisible = FeatureFlags.dropsPlusEnabled && store.isDropsPlusActive
                             let plusRing = LinearGradient(
                                 colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
                                 startPoint: .topLeading, endPoint: .bottomTrailing
                             )
-                            let ringWidth: CGFloat = store.isDropsPlusActive ? 2.5 : 1.5
+                            let ringWidth: CGFloat = isPlusVisible ? 2.5 : 1.5
                             Group {
                                 if let img = store.selfieImage {
                                     Image(uiImage: img).resizable().scaledToFill()
@@ -267,13 +288,13 @@ struct FreundeView: View {
                             .overlay(
                                 Circle()
                                     .strokeBorder(
-                                        store.isDropsPlusActive
+                                        isPlusVisible
                                             ? AnyShapeStyle(plusRing)
                                             : AnyShapeStyle(Color.white.opacity(0.25)),
                                         lineWidth: ringWidth
                                     )
                             )
-                            .shadow(color: store.isDropsPlusActive ? Color(hex: "f59e0b").opacity(0.35) : .clear,
+                            .shadow(color: isPlusVisible ? Color(hex: "f59e0b").opacity(0.35) : .clear,
                                     radius: 8, y: 2)
 
                             // Kamera-Badge
@@ -314,7 +335,7 @@ struct FreundeView: View {
                                 .font(.system(size: 17, weight: .semibold, design: .rounded))
                                 .foregroundColor(.textSecondary)
                         }
-                        if store.isDropsPlusActive {
+                        if FeatureFlags.dropsPlusEnabled && store.isDropsPlusActive {
                             // Drops+ Badge — goldene Blitz-Pille
                             HStack(spacing: 3) {
                                 Image(systemName: "bolt.fill")
@@ -412,24 +433,12 @@ struct FreundeView: View {
                         }
                         Spacer()
                         Button(action: {
-                            RealtimeDBManager.shared.addFriend(theirUID: match.uid)
+                            // Schickt eine Anfrage — der Empfänger muss annehmen.
+                            // Der Eintrag erscheint erst nach Accept in store.friends.
+                            store.sendFriendRequest(to: match.uid)
                             addedContactUIDs.insert(match.uid)
-                            // Direkt in die lokale Freunde-Liste aufnehmen, damit der
-                            // neue Kontakt sofort im Freunde-Tab erscheint. Dedup per
-                            // Firebase-UID — dann findet der Observer beim nächsten
-                            // Hydrate genau diesen Eintrag wieder und erzeugt keinen
-                            // Duplikat.
-                            if !store.friends.contains(where: { $0.firebaseUID == match.uid }) {
-                                store.friends.append(User(
-                                    name: match.name,
-                                    emoji: "👋",
-                                    isAvailable: false,
-                                    statusMessage: tr("profile.newly_added"),
-                                    firebaseUID: match.uid
-                                ))
-                            }
                         }) {
-                            Text("Hinzufügen")
+                            Text("Anfragen")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 14).padding(.vertical, 7)
@@ -536,6 +545,88 @@ struct FreundeView: View {
         .padding(.horizontal, 0)
     }
 
+    // MARK: Freundschaftsanfragen (eingehend)
+
+    @ViewBuilder
+    private var friendRequestsSection: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "person.badge.plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.brand)
+                Text("Freundschaftsanfragen")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.textSecondary)
+                Text("\(store.incomingFriendRequests.count)")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.brandInverse)
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Color.brand).cornerRadius(20)
+                Spacer()
+            }
+            .padding(.horizontal, 20).padding(.bottom, 8)
+
+            VStack(spacing: 0) {
+                ForEach(store.incomingFriendRequests) { req in
+                    HStack(spacing: 12) {
+                        // Avatar
+                        if let url = req.fromImageURL, !url.isEmpty {
+                            RemoteProfileImage(url: url,
+                                               fallbackEmoji: "👋",
+                                               size: 44)
+                        } else {
+                            Circle()
+                                .fill(Color.brand.opacity(0.15))
+                                .frame(width: 44, height: 44)
+                                .overlay(Text("👋").font(.system(size: 22)))
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(req.fromName)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(.textPrimary)
+                            Text("möchte mit dir befreundet sein")
+                                .font(.system(size: 12))
+                                .foregroundColor(.textSecondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+
+                        // Ablehnen
+                        Button(action: {
+                            store.rejectFriendRequest(fromUID: req.fromUID)
+                        }) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundColor(.textSecondary)
+                                .frame(width: 36, height: 36)
+                                .background(Color(UIColor.systemGray5), in: Circle())
+                        }
+                        .buttonStyle(.plain)
+
+                        // Annehmen
+                        Button(action: {
+                            store.acceptFriendRequest(fromUID: req.fromUID)
+                        }) {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.white)
+                                .frame(width: 36, height: 36)
+                                .background(Color.brand, in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+
+                    if req.id != store.incomingFriendRequests.last?.id {
+                        Divider().padding(.leading, 70).padding(.trailing, 16)
+                    }
+                }
+            }
+            .liquidGlass(cornerRadius: 20)
+            .padding(.horizontal, 16)
+        }
+    }
+
     // MARK: Freunde Sektion
 
     @ViewBuilder
@@ -564,7 +655,9 @@ struct FreundeView: View {
                             name: friend.name,
                             emoji: friend.emoji,
                             selfie: nil,
-                            reliabilityScore: 88
+                            reliabilityScore: friend.reliabilityPoints,
+                            profileImageURL: friend.profileImageURL,
+                            firebaseUID: friend.firebaseUID
                         )
                     }
                     if friend.id != friends.last?.id {
@@ -852,7 +945,7 @@ struct FreundeView: View {
             Divider().padding(.leading, 60)
 
             // Via Link
-            ShareLink(item: URL(string: "https://drops-app.de/invite/\(store.currentUser.name.lowercased())")!) {
+            ShareLink(item: URL(string: "https://drops-app.de/invite/\(FirebaseAuth.Auth.auth().currentUser?.uid ?? "")")!) {
                 HStack(spacing: 14) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 10).fill(Color(UIColor.systemBlue).opacity(0.12)).frame(width: 40, height: 40)
@@ -1403,8 +1496,14 @@ struct AddFromContactsSheet: View {
     @State private var addedUIDs: Set<String> = []
 
     private var filtered: [RealtimeDBManager.ContactMatchResult] {
-        guard !searchText.isEmpty else { return vm.matches }
-        return vm.matches.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+        // Bereits hinzugefügte Freunde ausblenden — sowohl aus der lokalen store.friends-Liste
+        // (Firebase-UID-Match) als auch aus `addedUIDs` (gerade im Sheet getappt).
+        let friendUIDs = Set(store.friends.compactMap { $0.firebaseUID })
+        let base = vm.matches.filter {
+            !friendUIDs.contains($0.uid) && !addedUIDs.contains($0.uid)
+        }
+        guard !searchText.isEmpty else { return base }
+        return base.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
     }
 
     var body: some View {
@@ -1472,18 +1571,10 @@ struct AddFromContactsSheet: View {
                         VStack(spacing: 0) {
                             ForEach(Array(filtered.enumerated()), id: \.element.id) { idx, match in
                                 ContactMatchRow(match: match, isAdded: addedUIDs.contains(match.uid)) {
-                                    RealtimeDBManager.shared.addFriend(theirUID: match.uid)
+                                    // Anfrage schicken — kein direkter Add mehr.
+                                    // Der Empfänger muss die Anfrage annehmen.
+                                    store.sendFriendRequest(to: match.uid)
                                     addedUIDs.insert(match.uid)
-                                    // Direkt in die lokale Freunde-Liste aufnehmen — Dedup per UID
-                                    if !store.friends.contains(where: { $0.firebaseUID == match.uid }) {
-                                        store.friends.append(User(
-                                            name: match.name,
-                                            emoji: "👋",
-                                            isAvailable: false,
-                                            statusMessage: tr("profile.newly_added"),
-                                            firebaseUID: match.uid
-                                        ))
-                                    }
                                 }
                                 if idx < filtered.count - 1 {
                                     Divider().padding(.leading, 60)
@@ -1685,6 +1776,7 @@ struct ProfileView: View {
     @State private var showTeensLockedInfo = false
     @State private var showAdminPanel = false
     @State private var showDropsPlus = false
+    @State private var showBlockedList = false
 
     // Lokale Buffer für Altersslider — Store-Update nur beim Loslassen
     @State private var localAgeMin: Int = 18
@@ -1751,63 +1843,67 @@ struct ProfileView: View {
                     LazyVStack(spacing: 16) {
 
                         // ── Drops+ Banner ────────────────────────────────
-                        Button { showDropsPlus = true } label: {
-                            HStack(spacing: 14) {
-                                Image(systemName: "bolt.fill")
-                                    .font(.system(size: 22, weight: .bold))
-                                    .foregroundStyle(Color(hex: "f59e0b"))
-                                    .frame(width: 44, height: 44)
-                                    .background(Color(hex: "f59e0b").opacity(0.15))
-                                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                                VStack(alignment: .leading, spacing: 3) {
-                                    HStack(spacing: 6) {
-                                        Text("Drops+")
-                                            .font(.system(size: 15, weight: .bold))
-                                            .foregroundStyle(
-                                                LinearGradient(
-                                                    colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
-                                                    startPoint: .leading, endPoint: .trailing
+                        // Aus für den initialen Launch — wieder einschalten
+                        // via `FeatureFlags.dropsPlusEnabled = true` in Models.swift.
+                        if FeatureFlags.dropsPlusEnabled {
+                            Button { showDropsPlus = true } label: {
+                                HStack(spacing: 14) {
+                                    Image(systemName: "bolt.fill")
+                                        .font(.system(size: 22, weight: .bold))
+                                        .foregroundStyle(Color(hex: "f59e0b"))
+                                        .frame(width: 44, height: 44)
+                                        .background(Color(hex: "f59e0b").opacity(0.15))
+                                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack(spacing: 6) {
+                                            Text("Drops+")
+                                                .font(.system(size: 15, weight: .bold))
+                                                .foregroundStyle(
+                                                    LinearGradient(
+                                                        colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
+                                                        startPoint: .leading, endPoint: .trailing
+                                                    )
                                                 )
-                                            )
-                                        if store.isPlusUser {
-                                            Text("AKTIV")
-                                                .font(.system(size: 10, weight: .bold))
-                                                .foregroundStyle(.black)
-                                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                                .background(Color(hex: "f59e0b"), in: Capsule())
+                                            if store.isPlusUser {
+                                                Text("AKTIV")
+                                                    .font(.system(size: 10, weight: .bold))
+                                                    .foregroundStyle(.black)
+                                                    .padding(.horizontal, 6).padding(.vertical, 2)
+                                                    .background(Color(hex: "f59e0b"), in: Capsule())
+                                            }
                                         }
+                                        Text(store.isPlusUser
+                                             ? "Boost · Großer Radius · Wer hat geschaut"
+                                             : "Boost · Radius bis ∞ · Wer hat geschaut")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(.secondary)
                                     }
-                                    Text(store.isPlusUser
-                                         ? "Boost · Großer Radius · Wer hat geschaut"
-                                         : "Boost · Radius bis ∞ · Wer hat geschaut")
-                                        .font(.system(size: 12))
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 13, weight: .semibold))
                                         .foregroundStyle(.secondary)
                                 }
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(.secondary)
+                                .padding(16)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .fill(Color(UIColor.secondarySystemGroupedBackground))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 16)
+                                                .stroke(
+                                                    LinearGradient(
+                                                        colors: [Color(hex: "f59e0b").opacity(0.5), Color(hex: "f59e0b").opacity(0.15)],
+                                                        startPoint: .topLeading, endPoint: .bottomTrailing
+                                                    ),
+                                                    lineWidth: 1
+                                                )
+                                        )
+                                )
                             }
-                            .padding(16)
-                            .background(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .fill(Color(UIColor.secondarySystemGroupedBackground))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 16)
-                                            .stroke(
-                                                LinearGradient(
-                                                    colors: [Color(hex: "f59e0b").opacity(0.5), Color(hex: "f59e0b").opacity(0.15)],
-                                                    startPoint: .topLeading, endPoint: .bottomTrailing
-                                                ),
-                                                lineWidth: 1
-                                            )
-                                    )
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 16)
-                        .sheet(isPresented: $showDropsPlus) {
-                            DropsPlusView()
+                            .buttonStyle(.plain)
+                            .padding(.horizontal, 16)
+                            .sheet(isPresented: $showDropsPlus) {
+                                DropsPlusView()
+                            }
                         }
 
                         // Drop-Statistiken: als Drops+ Feature angekündigt, kommt mit einem
@@ -1853,6 +1949,16 @@ struct ProfileView: View {
                         settingsSection(icon: "circle.lefthalf.filled", color: Color(UIColor.systemIndigo), title: tr("settings.appearance")) {
                             appearanceSection
                         }
+                        // Support & Feedback
+                        settingsSection(icon: "envelope.fill", color: Color(UIColor.systemTeal), title: "Support & Feedback") {
+                            feedbackSection
+                        }
+
+                        // Sicherheit — Blockierte Nutzer
+                        settingsSection(icon: "nosign", color: .red, title: "Blockierte Nutzer") {
+                            blockedUsersSection
+                        }
+
                         // Datenschutz + Konto
                         settingsSection(icon: "hand.raised.fill", color: Color(UIColor.systemPurple), title: tr("settings.privacy_account")) {
                             privacySection
@@ -1892,6 +1998,25 @@ struct ProfileView: View {
                                 .buttonStyle(.plain)
                             }
                         }
+
+                        // Version + Build am Ende — hilfreich für Support
+                        VStack(spacing: 4) {
+                            HStack(spacing: 6) {
+                                Text("Drops")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(.textSecondary)
+                                Text("Beta")
+                                    .font(.system(size: 10, weight: .heavy))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 6).padding(.vertical, 2)
+                                    .background(Color.accentOrange, in: Capsule())
+                            }
+                            Text("Version \(appBundleVersion) · Build \(appBundleBuild)")
+                                .font(.system(size: 11))
+                                .foregroundColor(.textTertiary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 12)
 
                         Spacer(minLength: 40)
                     }
@@ -1991,6 +2116,7 @@ struct ProfileView: View {
             .padding(.horizontal, 20).padding(.bottom, 8)
 
             VStack(spacing: 0) { content() }
+                .frame(maxWidth: .infinity)
                 .liquidGlass(cornerRadius: 20)
                 .padding(.horizontal, 16)
         }
@@ -2001,7 +2127,11 @@ struct ProfileView: View {
     // Free:  500m / 1km / 2km            (max 2km)
     // Plus:  500m / 1km / 2km / 5km / 10km / 25km / ∞
     private var radiusSteps: [Double] {
-        store.isPlusUser
+        // Wenn Drops+ deaktiviert ist (Launch-Phase) bekommen alle User die
+        // volle Auswahl — sonst wäre der 2km-Cap eine harte Einschränkung
+        // ohne Upgrade-Pfad.
+        let unlocked = !FeatureFlags.dropsPlusEnabled || store.isPlusUser
+        return unlocked
             ? [500, 1000, 2000, 5000, 10000, 25000, 50000]
             : [500, 1000, 2000]
     }
@@ -2027,9 +2157,10 @@ struct ProfileView: View {
     }
 
     @ViewBuilder private var radiusSection: some View {
-        // Free-User: Radius auf max 2km clampen
+        // Free-User: Radius auf max 2km clampen — aber nur wenn Drops+ als
+        // Feature aktiv ist. Bei deaktiviertem Plus haben alle User vollen Radius.
         let clampedFilter: Double = {
-            if !store.isPlusUser && store.radiusFilter > 2000 {
+            if FeatureFlags.dropsPlusEnabled && !store.isPlusUser && store.radiusFilter > 2000 {
                 DispatchQueue.main.async { store.radiusFilter = 2000; store.saveAll() }
                 return 2000
             }
@@ -2101,7 +2232,7 @@ struct ProfileView: View {
                         .font(.system(size: 12))
                         .foregroundColor(.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    if !store.isPlusUser {
+                    if FeatureFlags.dropsPlusEnabled && !store.isPlusUser {
                         Text("Plus: bis zu 25km oder unbegrenzt")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(Color(UIColor.systemBlue).opacity(0.8))
@@ -2623,6 +2754,131 @@ struct ProfileView: View {
         }
     }
 
+    private var appBundleVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+    }
+    private var appBundleBuild: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+    }
+    /// Kompakte Variante für Feedback-Mail etc.
+    private var appVersionString: String {
+        "Drops v\(appBundleVersion) (\(appBundleBuild)) · Beta"
+    }
+
+    @ViewBuilder private var feedbackSection: some View {
+        Button {
+            openFeedbackMail()
+        } label: {
+            HStack(spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(Color(UIColor.systemTeal).opacity(0.15))
+                        .frame(width: 36, height: 36)
+                    Image(systemName: "exclamationmark.bubble.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color(UIColor.systemTeal))
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Bug melden / Feedback")
+                        .font(.system(size: 15))
+                        .foregroundColor(.textPrimary)
+                    Text("Schreib uns eine kurze Mail")
+                        .font(.system(size: 12))
+                        .foregroundColor(.textSecondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.textTertiary)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 13)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func openFeedbackMail() {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let build   = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        let device  = UIDevice.current.model
+        let iosVer  = UIDevice.current.systemVersion
+        let uid     = FirebaseAuth.Auth.auth().currentUser?.uid ?? "—"
+
+        let subject = "Drops Feedback – v\(version) (\(build))"
+        let body = """
+
+
+        ———
+        (Bitte oben deine Nachricht einfügen)
+
+        App: Drops v\(version) (Build \(build))
+        Gerät: \(device) · iOS \(iosVer)
+        User-ID: \(uid)
+        """
+
+        var components = URLComponents()
+        components.scheme = "mailto"
+        components.path = "support@drops-app.de"
+        components.queryItems = [
+            URLQueryItem(name: "subject", value: subject),
+            URLQueryItem(name: "body",    value: body)
+        ]
+        if let url = components.url {
+            UIApplication.shared.open(url)
+        }
+    }
+
+    @ViewBuilder private var blockedUsersSection: some View {
+        if store.blockedUserNames.isEmpty {
+            HStack(spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(Color.red.opacity(0.10))
+                        .frame(width: 36, height: 36)
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.red)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Keine blockierten Nutzer")
+                        .font(.system(size: 14))
+                        .foregroundColor(.textPrimary)
+                    Text("Blockierte Nutzer siehst und triffst du nicht mehr")
+                        .font(.system(size: 12))
+                        .foregroundColor(.textSecondary)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 16).padding(.vertical, 13)
+        } else {
+            ForEach(Array(store.blockedUserNames).sorted(), id: \.self) { name in
+                HStack(spacing: 14) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(Color.red.opacity(0.12))
+                            .frame(width: 36, height: 36)
+                        Image(systemName: "nosign")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.red)
+                    }
+                    Text(name)
+                        .font(.system(size: 15))
+                        .foregroundColor(.textPrimary)
+                    Spacer()
+                    Button("Entsperren") {
+                        store.blockedUserNames.remove(name)
+                        store.saveAll()
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.brand)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                if name != Array(store.blockedUserNames).sorted().last {
+                    Divider().padding(.leading, 60)
+                }
+            }
+        }
+    }
+
     @ViewBuilder private var privacySection: some View {
         Button { showPrivacy = true } label: {
             HStack(spacing: 14) {
@@ -2698,6 +2954,7 @@ struct ProfileView: View {
             .padding(.horizontal, 16).padding(.vertical, 13)
         }
         .buttonStyle(.plain)
+
     }
 
 }
@@ -2880,7 +3137,7 @@ struct DropsPlusStatsCard: View {
     @Binding var showPaywall: Bool
 
     private var totalJoins: Int { store.reliabilityScore.totalCommits }
-    private var scorePct: Int   { Int(store.reliabilityScore.score.rounded()) }
+    private var scorePct: Int   { store.reliabilityScore.points }
     private var dropsCreated: Int { store.pastDrops.count + store.activeDrops.count }
 
     var body: some View {

@@ -1,0 +1,120 @@
+{
+  "rules": {
+    ".read":  "auth != null",
+    ".write": "auth != null",
+
+    "users": {
+      "$uid": {
+        ".read":  "auth != null",
+        ".write": "auth != null && auth.uid == $uid",
+
+        "isAdmin":  { ".write": false },
+        "isBanned": { ".write": false },
+        "isPlusUser": { ".write": false }
+      }
+    },
+
+    "friends": {
+      "$uid": {
+        ".read":  "auth != null && auth.uid == $uid",
+        "$friendUID": {
+          ".write": "auth != null && (auth.uid == $uid || auth.uid == $friendUID)",
+          ".validate": "newData.val() === true || newData.val() === null"
+        }
+      }
+    },
+
+    "friendRequests": {
+      "$recipientUID": {
+        ".read":  "auth != null && auth.uid == $recipientUID",
+        "$senderUID": {
+          ".write": "auth != null && (auth.uid == $senderUID || auth.uid == $recipientUID)",
+          ".validate": "newData.hasChildren(['fromName','createdAt']) || newData.val() === null"
+        }
+      }
+    },
+
+    "drops": {
+      ".read":  "auth != null",
+      "$dropID": {
+        ".write": "auth != null && (newData.child('userID').val() == auth.uid || data.child('userID').val() == auth.uid || newData.val() == null)"
+      }
+    },
+
+    "dropins": {
+      ".read":  "auth != null",
+      "$dropID": {
+        "$joinerUID": {
+          ".write": "auth != null && (auth.uid == $joinerUID || root.child('drops').child($dropID).child('userID').val() == auth.uid || newData.val() == null)"
+        }
+      }
+    },
+
+    "joinRequests": {
+      ".read":  "auth != null",
+      "$dropID": {
+        "$joinerUID": {
+          ".write": "auth != null && (auth.uid == $joinerUID || root.child('drops').child($dropID).child('userID').val() == auth.uid || newData.val() == null)"
+        }
+      }
+    },
+
+    "phoneIndex": {
+      ".read":  "auth != null",
+      "$phone": {
+        ".write": "auth != null && (newData.child('uid').val() == auth.uid || data.child('uid').val() == auth.uid || newData.val() == null)"
+      }
+    },
+
+    "emailIndex": {
+      ".read":  "auth != null",
+      "$email": {
+        ".write": "auth != null && (newData.child('uid').val() == auth.uid || data.child('uid').val() == auth.uid || newData.val() == null)"
+      }
+    },
+
+    "usernameIndex": {
+      ".read":  "auth != null",
+      "$username": {
+        ".write": "auth != null && (newData.child('uid').val() == auth.uid || data.child('uid').val() == auth.uid || newData.val() == null)"
+      }
+    },
+
+    "deletedAccounts": {
+      ".read":  "auth != null",
+      "$uid": {
+        ".write": "auth != null && (auth.uid == $uid || newData.val() == null)"
+      }
+    },
+
+    "dropViews": {
+      "$dropID": {
+        ".read":  "auth != null && root.child('drops').child($dropID).child('userID').val() == auth.uid",
+        "$viewerUID": {
+          ".write": "auth != null && auth.uid == $viewerUID"
+        }
+      }
+    },
+
+    "joinerLocations": {
+      "$dropID": {
+        ".read":  "auth != null",
+        "$joinerUID": {
+          ".write": "auth != null && auth.uid == $joinerUID"
+        }
+      }
+    },
+
+    "reports": {
+      "$reportID": {
+        ".write": "auth != null && newData.child('reporterUID').val() == auth.uid",
+        ".read":  "auth != null && root.child('users').child(auth.uid).child('isAdmin').val() == true"
+      }
+    },
+
+    "friendshipPushSent": {
+      ".read":  false,
+      ".write": false
+    }
+  }
+}

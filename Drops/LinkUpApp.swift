@@ -42,7 +42,7 @@ struct LinkUpApp: App {
 
     // MARK: - Universal Link Handler
     // Erwartet: https://drops-app.de/drop/{UUID}
-    //           https://drops-app.de/invite/{username}
+    //           https://drops-app.de/invite/{inviterUID}
     private func handleUniversalLink(_ url: URL) {
         guard url.host == "drops-app.de",
               url.pathComponents.count >= 3 else { return }
@@ -78,21 +78,11 @@ struct LinkUpApp: App {
             let _ = store.enforceAgeGuard()
 
             if store.isAuthenticated {
-                ZStack {
-                    MainTabView()
-                        .environmentObject(store)
-                        .preferredColorScheme(preferredScheme)
-                        .onOpenURL { url in handleUniversalLink(url) }
-                        .onAppear { requestPermissionsIfNeeded() }
-
-                    // Session-Lock nach Timeout — liegt über dem MainTabView
-                    if store.isSessionLocked {
-                        SessionLockView()
-                            .environmentObject(store)
-                            .transition(.opacity)
-                    }
-                }
-                .animation(.easeInOut(duration: 0.25), value: store.isSessionLocked)
+                MainTabView()
+                    .environmentObject(store)
+                    .preferredColorScheme(preferredScheme)
+                    .onOpenURL { url in handleUniversalLink(url) }
+                    .onAppear { requestPermissionsIfNeeded() }
             } else {
                 OnboardingView()
                     .environmentObject(store)
@@ -120,6 +110,8 @@ struct LinkUpApp: App {
                     PushNotificationManager.shared.resetSession()
                     PushNotificationManager.shared.requestPermissionIfNeeded()
                 }
+                // Online-Heartbeat für Freundes-Anzeige (users/{uid}/lastActiveAt)
+                RealtimeDBManager.shared.markOnlineHeartbeat()
             default:
                 break
             }
