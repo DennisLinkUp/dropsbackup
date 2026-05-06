@@ -191,9 +191,8 @@
 				AA000016000000000000016 /* Preview Content */,
 				E4FFB3312F952A3E004E687A /* DropsPlusView 2.swift */,
 			);
-			name = Drops;
-			path = "/Users/sophie/Downloads/LinkUp 2/Drops";
-			sourceTree = "<absolute>";
+			path = Drops;
+			sourceTree = "<group>";
 		};
 		AA000016000000000000016 /* Preview Content */ = {
 			isa = PBXGroup;
