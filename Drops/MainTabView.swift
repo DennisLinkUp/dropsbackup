@@ -76,6 +76,19 @@ struct MainTabView: View {
         }
 
         } // ZStack
+        // ── App-Version-Gate (Hard-Force) ─────────────────────────────────
+        // Liegt ÜBER allem (auch über Tab-Bar, Sheets, Toast). Vollbild-
+        // Blocker, wenn `minRequiredVersion` aktiv ist.
+        .overlay {
+            AppVersionGate()
+        }
+        // ── Soft-Recommend-Banner ─────────────────────────────────────────
+        // Echter Top-Banner via safeAreaInset(.top). Sitzt unmittelbar unter
+        // der Status Bar (Uhrzeit), pusht den Tab-Inhalt darunter weg, statt
+        // als Overlay irgendwo im View-Tree zu schweben.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            AppVersionRecommendBanner()
+        }
         // ── Globaler Punkte-Toast ─────────────────────────────────────────
         // Liegt über der ganzen Tab-View, damit egal in welchem Tab Punkte
         // vergeben werden, der User die "+X Punkte"-Pille zentral oben

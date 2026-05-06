@@ -477,16 +477,22 @@ struct FriendSuggestion: Identifiable {
 
 // MARK: - Past Drop (Verlauf)
 
-struct PastDropParticipant: Identifiable {
+struct PastDropParticipant: Identifiable, Codable {
     let id = UUID()
     let name: String
     let emoji: String
     let reliabilityScore: Int
     var wasHost: Bool = false
     var didShowUp: Bool = true
+
+    // ID wird beim Decodieren neu erzeugt — sie hat keine semantische
+    // Bedeutung über den App-Run hinweg.
+    enum CodingKeys: String, CodingKey {
+        case name, emoji, reliabilityScore, wasHost, didShowUp
+    }
 }
 
-struct PastDrop: Identifiable {
+struct PastDrop: Identifiable, Codable {
     let id = UUID()
     let activityEmoji: String
     let activityName: String
@@ -494,6 +500,10 @@ struct PastDrop: Identifiable {
     let date: Date
     let wasHost: Bool
     let participants: [PastDropParticipant]
+
+    enum CodingKeys: String, CodingKey {
+        case activityEmoji, activityName, locationName, date, wasHost, participants
+    }
 
     var participantCount: Int { participants.count }
     var avgReliability: Int {
@@ -649,6 +659,10 @@ private enum UDKey {
     /// Flag: User hat den einmaligen Erst-Host-Bonus (+10) bereits erhalten.
     /// Wird gesetzt wenn der erste eigene Drop tatsächlich Teilnehmer hatte.
     static let firstHostBonusReceived = "ud_firstHostBonusReceived"
+    /// JSON-Array aller PastDrop-Einträge. Persistiert den Drop-Verlauf
+    /// zwischen App-Sessions damit die Statistik / Drop-Verlauf-Section
+    /// nicht jedes Mal leer ist nach App-Restart.
+    static let pastDrops             = "ud_pastDrops"
     static let reliabilityStreak    = "ud_reliabilityStreak"
     static let firebaseUID          = "ud_firebaseUID"   // Stabile UID für Drop-Filter
     static let appleEmail           = "ud_appleEmail"    // Apple relay E-Mail (nur beim 1. Login verfügbar)
@@ -960,6 +974,118 @@ class AppStore: ObservableObject {
     /// Gibt an ob die App gerade im Vordergrund ist (wird von LinkUpApp.swift gesetzt)
     var isAppActive: Bool = true
 
+    // MARK: - Beta-Badge (Early-Adopter)
+    //
+    // Eigenes Erstell-Datum aus RTDB. Wird einmalig beim ersten Settings-/
+    // Profil-Open via fetchUserMeta nachgezogen und in der App gehalten,
+    // damit alle UI-Touchpoints (Settings-Header, ParticipantDetailRow,
+    // ProfileSheet) konsistent denselben Beta-Badge zeigen.
+    @Published var ownCreatedAt: Date? = nil
+
+    /// Stichtag: Nutzer ab 04.05.2026 00:00 Europe/Berlin bekommen kein
+    /// Beta-Badge mehr. Frühere Nutzer (Early Adopter) behalten den Badge
+    /// dauerhaft. Wenn `createdAt` nil ist (Datum noch nicht geladen oder
+    /// fremder User ohne propagierten Wert) → false (kein Badge).
+    static func qualifiesForBetaBadge(createdAt: Date?) -> Bool {
+        guard let created = createdAt else { return false }
+        var c = DateComponents()
+        c.year = 2026; c.month = 5; c.day = 4
+        c.hour = 0; c.minute = 0; c.second = 0
+        c.timeZone = TimeZone(identifier: "Europe/Berlin")
+        let cutoff = Calendar(identifier: .gregorian).date(from: c) ?? Date()
+        return created < cutoff
+    }
+
+    /// Convenience: Eigenes Beta-Badge-Recht.
+    var qualifiesForBetaBadge: Bool {
+        Self.qualifiesForBetaBadge(createdAt: ownCreatedAt)
+    }
+
+    // MARK: - App Version Gate
+    //
+    // Steuert Force-Update (Hard) und Soft-Recommend-Banner. Config kommt
+    // aus Firebase RTDB unter /config:
+    //   - minRequiredVersion: Hard-Force, blockierender Vollbild
+    //   - recommendedVersion: dezenter Banner, dismissibel
+    enum AppVersionStatus: Equatable {
+        case unknown                  // noch nicht geladen oder offline
+        case ok                       // aktuelle Version >= recommended
+        case updateRecommended(String)// recommended-Version-String
+        case updateRequired(String)   // minRequired-Version-String
+    }
+    @Published var appVersionStatus: AppVersionStatus = .unknown
+
+    /// App-Store-ID für den Update-Link. Wird aus dem Sheet als `itms-apps://`
+    /// URL geöffnet → springt direkt in den App-Store.
+    /// Drops – Triff Leute (https://apps.apple.com/de/app/drops-triff-leute/id6762097493)
+    static let appStoreID: String = "6762097493"
+
+    /// User hat den Soft-Recommend-Banner für diese Version weggewischt.
+    /// Persistiert in UserDefaults damit er nicht nach jedem App-Start
+    /// erneut aufpoppt. Der Banner kommt nur wieder wenn eine NEUE
+    /// recommendedVersion als die zuletzt dismissed höher ist.
+    @AppStorage("ud_dismissedRecommendVersion") private var dismissedRecommendVersion: String = ""
+
+    /// Gibt die installierte App-Version zurück (z.B. "1.0.2").
+    var currentAppVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+    }
+
+    /// Lädt Version-Config + setzt appVersionStatus. Idempotent OK aufrufbar
+    /// auch beim Foregrounding (re-evaluiert mit aktuellem RTDB-Stand).
+    func refreshAppVersionStatus() {
+        let current = currentAppVersion
+        RealtimeDBManager.shared.fetchAppVersionConfig { [weak self] minReq, rec in
+            guard let self = self else { return }
+            // Min-Required hat Vorrang
+            if let minReq = minReq, !minReq.isEmpty,
+               Self.compareVersions(current, minReq) < 0 {
+                self.appVersionStatus = .updateRequired(minReq)
+                return
+            }
+            // Recommended (nur wenn der User nicht schon dismisst hat)
+            if let rec = rec, !rec.isEmpty,
+               Self.compareVersions(current, rec) < 0,
+               Self.compareVersions(self.dismissedRecommendVersion, rec) < 0 {
+                self.appVersionStatus = .updateRecommended(rec)
+                return
+            }
+            self.appVersionStatus = .ok
+        }
+    }
+
+    /// User hat den Soft-Recommend-Banner für diese Version weggewischt.
+    func dismissRecommendBanner(forVersion version: String) {
+        dismissedRecommendVersion = version
+        if case .updateRecommended = appVersionStatus {
+            appVersionStatus = .ok
+        }
+    }
+
+    /// Vergleicht zwei Versions-Strings im "1.2.3"-Format. Liefert -1 / 0 / 1.
+    /// Robuster als String-Compare: "1.10.0" > "1.9.0".
+    static func compareVersions(_ a: String, _ b: String) -> Int {
+        let parts1 = a.split(separator: ".").map { Int($0) ?? 0 }
+        let parts2 = b.split(separator: ".").map { Int($0) ?? 0 }
+        let count = max(parts1.count, parts2.count)
+        for i in 0 ..< count {
+            let v1 = i < parts1.count ? parts1[i] : 0
+            let v2 = i < parts2.count ? parts2[i] : 0
+            if v1 != v2 { return v1 < v2 ? -1 : 1 }
+        }
+        return 0
+    }
+
+    /// Lädt das eigene createdAt einmalig aus RTDB. Idempotent — mehrfache
+    /// Aufrufe haben keine zusätzliche Wirkung wenn schon geladen.
+    func loadOwnCreatedAtIfNeeded() {
+        guard ownCreatedAt == nil,
+              let uid = FirebaseAuth.Auth.auth().currentUser?.uid else { return }
+        RealtimeDBManager.shared.fetchUserMeta(uid: uid) { [weak self] created, _ in
+            DispatchQueue.main.async { self?.ownCreatedAt = created }
+        }
+    }
+
     // MARK: - Points-Toast
     //
     // Zeigt eine kleine animierte Pille mit "+X Punkte" wann immer der
@@ -1161,6 +1287,12 @@ class AppStore: ObservableObject {
         // Points-Toast-Observer NACH Hydration starten — sonst triggert
         // die Score-Initialisierung aus UserDefaults selbst einen Toast.
         startPointsToastObserver()
+
+        // Eigenes createdAt für Beta-Badge laden (idempotent)
+        loadOwnCreatedAtIfNeeded()
+
+        // App-Version-Status laden (Force-Update / Recommend-Banner)
+        refreshAppVersionStatus()
 
         // ── Eigene aktive Drops aus Firebase rehydrieren ─────────────────
         // activeDrops und joinRequests werden lokal nicht persistiert, aber nach
@@ -1616,6 +1748,11 @@ class AppStore: ObservableObject {
         ud.set(reliabilityScore.creationBonusPoints, forKey: UDKey.reliabilityCreateB)
         ud.set(reliabilityScore.boostBonusPoints, forKey: UDKey.reliabilityBoostB)
         ud.set(reliabilityScore.currentStreak,     forKey: UDKey.reliabilityStreak)
+        // Drop-Verlauf persistieren — damit beendete Drops und die
+        // Statistik einen App-Restart überleben.
+        if let pastData = try? JSONEncoder().encode(pastDrops) {
+            ud.set(pastData, forKey: UDKey.pastDrops)
+        }
         saveSelfie()
 
         // Benutzer-Settings zusätzlich nach Firebase spiegeln — so überleben Radius,
@@ -1960,6 +2097,11 @@ class AppStore: ObservableObject {
         if let data = try? Data(contentsOf: selfieURL),
            let img = UIImage(data: data) {
             selfieImage = img
+        }
+        // Drop-Verlauf laden — JSON aus UserDefaults
+        if let data = ud.data(forKey: UDKey.pastDrops),
+           let decoded = try? JSONDecoder().decode([PastDrop].self, from: data) {
+            pastDrops = decoded
         }
     }
 
@@ -3873,6 +4015,28 @@ class AppStore: ObservableObject {
                 pushReliabilityScoreToFirestore()
             }
             // (3) Sonst: clean cancel, keine Buchung — egal wie lange der Drop offen war.
+
+            // Drop in den persistierten Drop-Verlauf übernehmen — egal ob
+            // Erfolg, No-Show oder Clean Cancel. Sonst sind beendete Drops
+            // weder in der Statistik noch im Verlauf sichtbar.
+            let pastParticipants: [PastDropParticipant] = drop.participants.map { p in
+                PastDropParticipant(
+                    name: p.name,
+                    emoji: p.emoji,
+                    reliabilityScore: p.reliabilityPoints,
+                    wasHost: p.name == currentUser.name,
+                    didShowUp: true
+                )
+            }
+            let past = PastDrop(
+                activityEmoji: drop.activity.emoji,
+                activityName: drop.activity.name,
+                locationName: drop.location.title,
+                date: drop.createdAt,
+                wasHost: true,
+                participants: pastParticipants
+            )
+            pastDrops.insert(past, at: 0)
         }
         activeDrops.removeAll { $0.id == id }
         currentUser.isAvailable = false

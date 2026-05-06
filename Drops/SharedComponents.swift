@@ -362,7 +362,9 @@ struct DropShareButton: View {
     }
 
     private func shareDrops() {
-        let deepLink = "https://drops-app.de/drop/\(item.id.uuidString)"
+        // www-Subdomain nutzen — Apex 307-redirected zu www, Apple Universal
+        // Links akzeptieren keine Redirects (siehe LiveMapView).
+        let deepLink = "https://www.drops-app.de/drop/\(item.id.uuidString)"
         let location = item.locationTitle.isEmpty ? "" : " · \(item.locationTitle)"
         let text = "\(item.emoji) \(item.activity)\(location) — komm vorbei. Spontan, vor Ort, kein Smalltalk. 👋"
         let items: [Any] = [text, URL(string: deepLink) ?? deepLink]
@@ -734,6 +736,208 @@ struct PowerHourCountdownPill: View {
         let h = minutes / 60
         let m = minutes % 60
         return m == 0 ? "\(h)h" : "\(h)h \(m)min"
+    }
+}
+
+// MARK: - App Version Gate (Force-Update + Recommend-Banner)
+//
+// Liest store.appVersionStatus und rendert je nach Phase:
+//   - .updateRequired: blockierender Vollbild (kein Schließen möglich)
+//   - .updateRecommended: dezenter dismissibler Banner oben
+//   - .ok / .unknown: nichts
+/// Force-Update-Vollbild-Overlay. NUR für Hard-Force. Der Soft-Recommend-
+/// Banner wird in MainTabView via safeAreaInset(.top) eingehängt, damit er
+/// wirklich an den oberen Screen-Rand andockt und nicht von anderen Overlays
+/// verdrängt wird.
+struct AppVersionGate: View {
+    @EnvironmentObject var store: AppStore
+
+    var body: some View {
+        Group {
+            if case .updateRequired(let v) = store.appVersionStatus {
+                ForceUpdateSheet(requiredVersion: v)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.spring(response: 0.45, dampingFraction: 0.85),
+                   value: store.appVersionStatus)
+    }
+}
+
+/// Recommend-Banner als eigene Top-Inset-View, damit er als wirklicher
+/// Top-Banner direkt unter der Status Bar sitzt und nicht im View-Mittelteil
+/// verschwindet.
+struct AppVersionRecommendBanner: View {
+    @EnvironmentObject var store: AppStore
+
+    var body: some View {
+        Group {
+            if case .updateRecommended(let v) = store.appVersionStatus {
+                RecommendUpdateBanner(recVersion: v) {
+                    store.dismissRecommendBanner(forVersion: v)
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 4)
+                .padding(.bottom, 4)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.45, dampingFraction: 0.85),
+                   value: store.appVersionStatus)
+    }
+}
+
+/// Vollbild-Blocker: kein "X", kein Drag-Dismiss. Einziger Ausweg ist
+/// "App Store öffnen". Genutzt nur für Notfälle (kritische Bugs).
+private struct ForceUpdateSheet: View {
+    let requiredVersion: String
+    @EnvironmentObject var store: AppStore
+
+    var body: some View {
+        ZStack {
+            // Voll-deckender Hintergrund (Aurora-ähnlich) — sperrt Inhalte
+            // dahinter komplett aus.
+            LinearGradient(
+                colors: [Color.brand.opacity(0.18), Color.accentOrange.opacity(0.10)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            .background(.regularMaterial)
+
+            VStack(spacing: 24) {
+                Spacer()
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.accentOrange.opacity(0.25),
+                                         Color.brand.opacity(0.18)],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 110, height: 110)
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 48, weight: .bold))
+                        .foregroundColor(.accentOrange)
+                        .shadow(color: Color.accentOrange.opacity(0.45), radius: 12)
+                }
+
+                VStack(spacing: 10) {
+                    Text("Update erforderlich")
+                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                        .foregroundColor(.textPrimary)
+                    Text("Drops braucht jetzt Version \(requiredVersion) oder neuer, um weiter zu funktionieren.")
+                        .font(.system(size: 14))
+                        .foregroundColor(.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 36)
+                }
+
+                Text("Du nutzt aktuell \(store.currentAppVersion).")
+                    .font(.system(size: 12))
+                    .foregroundColor(.textTertiary)
+
+                Spacer()
+
+                Button(action: openAppStore) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.up.forward.app.fill")
+                        Text("App Store öffnen")
+                    }
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(
+                        Capsule().fill(
+                            LinearGradient(
+                                colors: [Color.accentOrange, Color.brand],
+                                startPoint: .leading, endPoint: .trailing
+                            )
+                        )
+                    )
+                    .shadow(color: Color.accentOrange.opacity(0.30), radius: 10, y: 3)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 22)
+                .padding(.bottom, 32)
+            }
+        }
+    }
+
+    private func openAppStore() {
+        let id = AppStore.appStoreID
+        // itms-apps:// öffnet die App-Store-App direkt; falls die ID
+        // mal nicht gesetzt ist (Pre-Release-Branch o.ä.) → https-Fallback
+        // auf den echten Drops-Listing-Pfad.
+        let urlString = id.isEmpty
+            ? "https://apps.apple.com/de/app/drops-triff-leute/id6762097493"
+            : "itms-apps://itunes.apple.com/app/id\(id)"
+        if let url = URL(string: urlString),
+           UIApplication.shared.canOpenURL(url) {
+            UIApplication.shared.open(url)
+        }
+    }
+}
+
+/// Soft-Recommend: kleiner Banner oben, dismissibel mit X.
+private struct RecommendUpdateBanner: View {
+    let recVersion: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.up.circle.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.white)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Update verfügbar")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.white)
+                Text("Version \(recVersion) im App Store")
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.85))
+            }
+            Spacer()
+            Button(action: openAppStore) {
+                Text("Jetzt")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(Capsule().fill(Color.white.opacity(0.22)))
+            }
+            .buttonStyle(.plain)
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white.opacity(0.85))
+                    .padding(6)
+                    .background(Circle().fill(Color.white.opacity(0.18)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Banner schließen")
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(
+            Capsule().fill(
+                LinearGradient(
+                    colors: [Color.brand, Color.accentOrange],
+                    startPoint: .leading, endPoint: .trailing
+                )
+            )
+        )
+        .shadow(color: Color.accentOrange.opacity(0.25), radius: 8, y: 2)
+    }
+
+    private func openAppStore() {
+        let id = AppStore.appStoreID
+        let urlString = id.isEmpty
+            ? "https://apps.apple.com/de/app/drops"
+            : "itms-apps://itunes.apple.com/app/id\(id)"
+        if let url = URL(string: urlString),
+           UIApplication.shared.canOpenURL(url) {
+            UIApplication.shared.open(url)
+        }
     }
 }
 

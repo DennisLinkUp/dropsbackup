@@ -1,5 +1,6 @@
 import SwiftUI
 import MapKit
+import FirebaseAuth
 
 // MARK: - Map Style Helper
 
@@ -890,15 +891,47 @@ struct DropJoinSheet: View {
                 HStack(spacing: 10) {
                     ParticipantAvatars(participants: confirmedParticipants)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(participantNamesLabel(confirmedParticipants))
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.textPrimary)
-                            .lineLimit(1)
-                        Text(confirmedParticipants.count == 1
-                             ? "Ist bereits vor Ort"
-                             : "Sind bereits vor Ort")
-                            .font(.system(size: 11))
-                            .foregroundColor(.textSecondary)
+                        // Single-Participant-Fall: Name + Alter inline,
+                        // Verified-Check, Beta-Badge (nur wenn Self),
+                        // dann Tier-Badge + "Ist bereits vor Ort" darunter.
+                        if confirmedParticipants.count == 1, let p = confirmedParticipants.first {
+                            HStack(spacing: 5) {
+                                Text(nameWithAge(p))
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(.textPrimary)
+                                    .lineLimit(1)
+                                if p.isVerified {
+                                    Image(systemName: "checkmark.seal.fill")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(Color(hex: "3b82f6"))
+                                }
+                                if isSelfParticipant(p) && store.qualifiesForBetaBadge {
+                                    BetaBadge()
+                                }
+                            }
+                            HStack(spacing: 5) {
+                                Image(systemName: ReliabilityScore.badgeIcon(forPoints: p.reliabilityScore))
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundColor(ReliabilityScore.color(forPoints: p.reliabilityScore))
+                                Text(ReliabilityScore.badge(forPoints: p.reliabilityScore))
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundColor(ReliabilityScore.color(forPoints: p.reliabilityScore))
+                                Circle()
+                                    .fill(Color.textTertiary)
+                                    .frame(width: 2, height: 2)
+                                Text("Ist bereits vor Ort")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.textSecondary)
+                            }
+                        } else {
+                            Text(participantNamesLabel(confirmedParticipants))
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.textPrimary)
+                                .lineLimit(1)
+                            Text("Sind bereits vor Ort")
+                                .font(.system(size: 11))
+                                .foregroundColor(.textSecondary)
+                        }
                     }
                     Spacer()
                 }
@@ -1225,6 +1258,21 @@ struct DropJoinSheet: View {
             let visible = names.prefix(2).joined(separator: ", ")
             return "\(visible) & \(names.count - 2) weitere"
         }
+    }
+
+    /// Name mit Alter im Format "Dennis, 30" wenn vorhanden, sonst nur Name.
+    private func nameWithAge(_ p: DropParticipant) -> String {
+        if let age = p.age { return "\(p.name), \(age)" }
+        return p.name
+    }
+
+    /// Vergleicht ob der Teilnehmer der eigene User ist — Vergleich
+    /// primär über firebaseUID, Fallback Name (z.B. wenn als Host
+    /// registriert ohne explizite UID).
+    private func isSelfParticipant(_ p: DropParticipant) -> Bool {
+        let myUID = FirebaseAuth.Auth.auth().currentUser?.uid
+        return (p.firebaseUID != nil && p.firebaseUID == myUID)
+            || (p.firebaseUID == nil && p.name == store.currentUser.name)
     }
 
     // MARK: - Reverse Geocoding
@@ -2210,7 +2258,12 @@ struct ActiveDropTabView: View {
             .buttonStyle(.plain)
         }
         .sheet(isPresented: $showShareSheet) {
-            let dropLink = URL(string: "https://drops-app.de/drop/\(item.id.uuidString)")!
+            // Wichtig: www-Subdomain nutzen weil drops-app.de → www.drops-app.de
+            // mit 307 redirected wird. Apple Universal Links akzeptieren keine
+            // Redirects — der Link würde sonst im Browser statt in der App
+            // öffnen. Beide Hosts sind in den Entitlements als applinks
+            // registriert, also gleich autoritativ.
+            let dropLink = URL(string: "https://www.drops-app.de/drop/\(item.id.uuidString)")!
             let location = item.locationTitle.isEmpty ? "" : " · \(item.locationTitle)"
             let text = "\(item.emoji) \(item.activity)\(location) — komm vorbei. 📍"
             ShareSheet(items: [text, dropLink])
@@ -2440,15 +2493,27 @@ struct ParticipantDetailRow: View {
 
     // MARK: Helpers
 
-    private var score: ReliabilityScore {
-        let s = participant.reliabilityScore
-        let total = participant.reliabilityCommits
-        guard total > 0 else {
-            // Neue User ohne Commit-Historie → Drop-Entdecker, nicht fiktives 100%
-            return ReliabilityScore(totalCommits: 0, showUps: 0, noShows: 0)
-        }
-        let shows = Int(Double(s) / 100.0 * Double(total))
-        return ReliabilityScore(totalCommits: total, showUps: shows, noShows: total - shows)
+    /// Direkte Display-Werte aus der echten Punktzahl. Frühere Rekonstruktion
+    /// via showUps führte bei Punkten >100 dazu, dass `displayText` falsche
+    /// Werte zeigte und die Progress-Bar überlief (Strikethrough-Effekt).
+    private var displayPoints: Int { participant.reliabilityScore }
+    private var displayColor: Color  { ReliabilityScore.color(forPoints: displayPoints) }
+    private var displayBadge: String { ReliabilityScore.badge(forPoints: displayPoints) }
+    private var displayBadgeIcon: String { ReliabilityScore.badgeIcon(forPoints: displayPoints) }
+    /// Bar-Füllung: Fortschritt innerhalb des aktuellen Tiers (0–1).
+    private var displayBarFill: Double {
+        ReliabilityScore.tierProgress(forPoints: displayPoints)
+    }
+
+    /// Beta-Badge nur wenn der Teilnehmer der eigene User ist (für andere
+    /// Teilnehmer ist `createdAt` aktuell nicht im DropParticipant-Schema
+    /// propagiert). Vergleich über firebaseUID, Fallback Name.
+    private var participantQualifiesForBetaBadge: Bool {
+        let myUID = FirebaseAuth.Auth.auth().currentUser?.uid
+        let isMe = (participant.firebaseUID != nil && participant.firebaseUID == myUID)
+            || (participant.firebaseUID == nil && participant.name == store.currentUser.name)
+        guard isMe else { return false }
+        return store.qualifiesForBetaBadge
     }
 
     /// Gehgeschwindigkeit ~5 km/h = 83 m/min
@@ -2521,22 +2586,30 @@ struct ParticipantDetailRow: View {
                                 Image(systemName: "checkmark.seal.fill")
                                     .font(.system(size: 11)).foregroundColor(Color(hex: "3b82f6"))
                             }
+                            if participantQualifiesForBetaBadge {
+                                BetaBadge()
+                            }
                         }
                         HStack(spacing: 7) {
                             GeometryReader { geo in
                                 ZStack(alignment: .leading) {
                                     RoundedRectangle(cornerRadius: 3).fill(rowSub.opacity(0.3))
-                                    RoundedRectangle(cornerRadius: 3).fill(score.color)
-                                        .frame(width: geo.size.width * CGFloat(participant.reliabilityScore) / 100)
+                                    RoundedRectangle(cornerRadius: 3).fill(displayColor)
+                                        // Tier-Progress geclampt auf 0–1, damit
+                                        // die Bar nicht über den 52pt-Frame
+                                        // hinausläuft und den Punktetext
+                                        // optisch durchstreicht.
+                                        .frame(width: geo.size.width * CGFloat(min(1.0, max(0.0, displayBarFill))))
                                 }
                             }
                             .frame(width: 52, height: 4)
-                            Text(score.displayText)
-                                .font(.system(size: 11, weight: .semibold)).foregroundColor(score.color)
-                            Image(systemName: score.badgeIcon)
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                            Text("\(displayPoints)")
+                                .font(.system(size: 11, weight: .semibold)).foregroundColor(displayColor)
+                            Image(systemName: displayBadgeIcon)
                                 .font(.system(size: 9, weight: .semibold))
-                                .foregroundColor(score.color)
-                            Text(score.badge).font(.system(size: 10)).foregroundColor(rowSub)
+                                .foregroundColor(displayColor)
+                            Text(displayBadge).font(.system(size: 10)).foregroundColor(rowSub)
                         }
                     }
 
@@ -2626,7 +2699,7 @@ struct ParticipantDetailRow: View {
                 reliabilityScore: participant.reliabilityScore,
                 totalCommits: participant.reliabilityCommits,
                 subtitle: subtitle,
-                accentColor: score.color,
+                accentColor: displayColor,
                 isVerified: participant.isVerified,
                 userUID: participant.firebaseUID,
                 canBlock: true,

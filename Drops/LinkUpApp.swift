@@ -46,10 +46,14 @@ struct LinkUpApp: App {
     }
 
     // MARK: - Universal Link Handler
-    // Erwartet: https://drops-app.de/drop/{UUID}
-    //           https://drops-app.de/invite/{inviterUID}
+    // Erwartet: https://(www.)drops-app.de/drop/{UUID}
+    //           https://(www.)drops-app.de/invite/{inviterUID}
     private func handleUniversalLink(_ url: URL) {
-        guard url.host == "drops-app.de",
+        // Beide Hosts akzeptieren — Apex und www-Subdomain sind beide
+        // als applinks in den Entitlements registriert. Geteilte Links
+        // sollten www nutzen, ältere Links könnten noch Apex sein.
+        let allowedHosts: Set<String> = ["drops-app.de", "www.drops-app.de"]
+        guard let host = url.host, allowedHosts.contains(host),
               url.pathComponents.count >= 3 else { return }
 
         let section = url.pathComponents[1]
@@ -139,6 +143,14 @@ struct LinkUpApp: App {
                     // anlegen / refreshen — iOS feuert sie dann jede Woche zur
                     // konfigurierten Uhrzeit auch wenn die App nicht läuft.
                     PushNotificationManager.shared.schedulePowerHourNotifications()
+                    // App-Version-Gate beim Foregrounding refreshen — falls
+                    // der Server inzwischen Force-Update aktiviert hat, sieht
+                    // der User es spätestens beim nächsten App-Open.
+                    store.refreshAppVersionStatus()
+                    // Eigene createdAt nochmal versuchen — beim ersten
+                    // App-Init ist Firebase-Auth möglicherweise noch nicht
+                    // bereit, der Beta-Badge bleibt dann ungeladen.
+                    store.loadOwnCreatedAtIfNeeded()
                 }
                 // Online-Heartbeat für Freundes-Anzeige (users/{uid}/lastActiveAt)
                 RealtimeDBManager.shared.markOnlineHeartbeat()

@@ -25,18 +25,10 @@ struct FreundeView: View {
     @State private var showHeroPicker = false
     /// Persistierter Profil-Hero-Hintergrund. Default: aurora.
     @AppStorage("ud_profileHeroTemplate") private var profileHeroTemplateRaw = ProfileHeroTemplate.aurora.rawValue
-    /// Eigene createdAt aus Firebase nachgezogen für Beta-Badge-Cutoff.
-    @State private var ownCreatedAt: Date? = nil
-
-    /// Beta-Badge-Cutoff: Nutzer ab 04.05.2026 (Europe/Berlin) bekommen kein Badge.
+    /// Beta-Badge-Cutoff: zentralisiert in AppStore.qualifiesForBetaBadge —
+    /// dieselbe Logik wird jetzt überall in der App verwendet.
     private var qualifiesForBetaBadge: Bool {
-        guard let created = ownCreatedAt else { return false }
-        var c = DateComponents()
-        c.year = 2026; c.month = 5; c.day = 4
-        c.hour = 0; c.minute = 0; c.second = 0
-        c.timeZone = TimeZone(identifier: "Europe/Berlin")
-        let cutoff = Calendar(identifier: .gregorian).date(from: c) ?? Date()
-        return created < cutoff
+        store.qualifiesForBetaBadge
     }
 
     private var profileHeroTemplate: ProfileHeroTemplate {
@@ -191,12 +183,8 @@ struct FreundeView: View {
                 store.saveSelfie()   // Upload zu Firebase Storage → für andere Nutzer sichtbar
             }
             .task {
-                // Eigene createdAt für Beta-Badge-Cutoff laden
-                guard ownCreatedAt == nil,
-                      let uid = FirebaseAuth.Auth.auth().currentUser?.uid else { return }
-                RealtimeDBManager.shared.fetchUserMeta(uid: uid) { created, _ in
-                    ownCreatedAt = created
-                }
+                // Sicherstellen dass createdAt geladen ist (idempotent)
+                store.loadOwnCreatedAtIfNeeded()
             }
             .sheet(isPresented: $showScoreInfo) {
                 ReliabilityInfoSheet(score: store.reliabilityScore)
@@ -834,8 +822,14 @@ struct FreundeView: View {
     }
 
     @ViewBuilder private var dropStatsSection: some View {
-        let total   = store.pastDrops.count
-        let hosted  = store.pastDrops.filter { $0.wasHost }.count
+        // Aktive eigene Drops mitzählen — sonst wirkt die Statistik leer
+        // solange ein User seinen ersten Drop noch nicht beendet hat
+        // (war bisheriger Bug: "Drops gesamt = 0" trotz 2 laufender Drops).
+        let pastTotal    = store.pastDrops.count
+        let pastHosted   = store.pastDrops.filter { $0.wasHost }.count
+        let activeHosted = store.activeDrops.count
+        let total   = pastTotal + activeHosted
+        let hosted  = pastHosted + activeHosted
         let joined  = total - hosted
         let rs      = store.reliabilityScore
         let streak  = weeklyStreak

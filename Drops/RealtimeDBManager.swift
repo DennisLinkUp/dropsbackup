@@ -1427,6 +1427,22 @@ class RealtimeDBManager: ObservableObject {
 
     /// Lädt einmalig `createdAt` (Unix ms) und `birthdate` (Unix s) eines Users.
     /// Wird im MiniProfileSheet genutzt um Beta-Badge & Alter anzuzeigen.
+    /// Lädt die App-Version-Config aus `/config`:
+    ///   - `minRequiredVersion`: Hard-Force, unter dieser Version → Block
+    ///   - `recommendedVersion`: Soft-Recommend, unter dieser → Banner
+    /// Wenn beide fehlen oder Netzwerk-Fehler → completion mit (nil, nil),
+    /// die App läuft normal (kein Force ohne Server-Antwort).
+    func fetchAppVersionConfig(completion: @escaping (_ minRequired: String?, _ recommended: String?) -> Void) {
+        db.child("config").observeSingleEvent(of: .value) { snap in
+            let dict = snap.value as? [String: Any] ?? [:]
+            let minReq = dict["minRequiredVersion"] as? String
+            let rec    = dict["recommendedVersion"] as? String
+            DispatchQueue.main.async { completion(minReq, rec) }
+        } withCancel: { _ in
+            DispatchQueue.main.async { completion(nil, nil) }
+        }
+    }
+
     func fetchUserMeta(uid: String, completion: @escaping (_ createdAt: Date?, _ birthdate: Date?) -> Void) {
         guard !uid.isEmpty else { completion(nil, nil); return }
         db.child("users").child(uid).observeSingleEvent(of: .value) { snap in
