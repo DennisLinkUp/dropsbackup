@@ -1,6 +1,7 @@
 import SwiftUI
 import MapKit
 import CoreBluetooth
+import Combine
 import FirebaseDatabase
 import FirebaseAuth
 import FirebaseStorage
@@ -645,6 +646,9 @@ private enum UDKey {
     static let reliabilityAppInvB   = "ud_reliabilityAppInvB"
     static let reliabilityCreateB   = "ud_reliabilityCreateB"   // +5 pro Drop-Erstellung
     static let reliabilityBoostB    = "ud_reliabilityBoostB"    // +5 für Aktion während Boost-Phase
+    /// Flag: User hat den einmaligen Erst-Host-Bonus (+10) bereits erhalten.
+    /// Wird gesetzt wenn der erste eigene Drop tatsächlich Teilnehmer hatte.
+    static let firstHostBonusReceived = "ud_firstHostBonusReceived"
     static let reliabilityStreak    = "ud_reliabilityStreak"
     static let firebaseUID          = "ud_firebaseUID"   // Stabile UID für Drop-Filter
     static let appleEmail           = "ud_appleEmail"    // Apple relay E-Mail (nur beim 1. Login verfügbar)
@@ -956,6 +960,30 @@ class AppStore: ObservableObject {
     /// Gibt an ob die App gerade im Vordergrund ist (wird von LinkUpApp.swift gesetzt)
     var isAppActive: Bool = true
 
+    // MARK: - Points-Toast
+    //
+    // Zeigt eine kleine animierte Pille mit "+X Punkte" wann immer der
+    // ReliabilityScore steigt. Die Pille wird per Combine-Observer auf
+    // `reliabilityScore.points` angefangen — so erfasst er ALLE Punkte-
+    // Events (Show-Up, Streak, Boost, Power-Hour, Invite, etc.) ohne
+    // dass jede einzelne Score-Update-Stelle den Toast manuell triggern
+    // muss.
+    struct PointsToast: Identifiable, Equatable {
+        let id = UUID()
+        let delta: Int
+        /// Nur wahr wenn der Punkt-Push aus einer aktiven Power-Hour kam.
+        /// Steuert eine kleine Bolt-Variation in der Toast-UI.
+        let isPowerHour: Bool
+    }
+    @Published var pointsToast: PointsToast? = nil
+
+    /// Letzter beobachteter Punktestand. Initial bei loadAll() gesetzt,
+    /// damit die Hydration aus UserDefaults/Firebase keinen Toast triggert.
+    private var lastObservedPoints: Int = ReliabilityScore.startingPoints
+    /// Toast-Observer ist erst aktiv NACH initialer Score-Hydration.
+    private var pointsToastReady: Bool = false
+    private var pointsToastCancellable: AnyCancellable? = nil
+
     /// Eingehende Beitrittsanfragen für den eigenen Drop (Host-Ansicht)
     @Published var pendingJoinRequests: [IncomingJoinRequest] = []
 
@@ -1129,6 +1157,10 @@ class AppStore: ObservableObject {
         }
 
         loadAll()
+
+        // Points-Toast-Observer NACH Hydration starten — sonst triggert
+        // die Score-Initialisierung aus UserDefaults selbst einen Toast.
+        startPointsToastObserver()
 
         // ── Eigene aktive Drops aus Firebase rehydrieren ─────────────────
         // activeDrops und joinRequests werden lokal nicht persistiert, aber nach
@@ -1395,6 +1427,17 @@ class AppStore: ObservableObject {
             // Namen ein, ohne alte Defaults.
             UserDefaults.standard.removeObject(forKey: "ud_appleGivenName")
             UserDefaults.standard.removeObject(forKey: "ud_appleEmail")
+            // Heimzone (persönliche Standort-Präferenz) wird beim normalen
+            // Logout absichtlich behalten — nur bei Account-Löschung weg.
+            self.homeZoneCoordinate = nil
+            self.homeZoneRadius     = 150
+            UserDefaults.standard.removeObject(forKey: UDKey.homeZoneLat)
+            UserDefaults.standard.removeObject(forKey: UDKey.homeZoneLng)
+            UserDefaults.standard.removeObject(forKey: UDKey.homeZoneRadius)
+            // Erst-Host-Bonus-Flag zurücksetzen, damit ein wiederkehrender
+            // User (Re-Register nach Account-Löschung) den +10-Bonus
+            // erneut beim ersten erfolgreichen Hosten bekommen kann.
+            UserDefaults.standard.removeObject(forKey: UDKey.firstHostBonusReceived)
             self.clearLocalData()
             print("[deleteAccount] Fertig — isAuthenticated=\(self.isAuthenticated)")
 
@@ -1506,13 +1549,12 @@ class AppStore: ObservableObject {
         unavailabilityReason      = ""
         reliabilityScore          = ReliabilityScore(totalCommits: 0, showUps: 0, noShows: 0)
         activeDrops               = []
-        homeZoneCoordinate        = nil
-        homeZoneRadius            = 150
+        // Heimzone bleibt erhalten — sie ist eine persönliche Standort-
+        // Präferenz, kein Session-Datum. Beim normalen Logout (Re-Login auf
+        // demselben Gerät) soll der User seinen Heim-Anker behalten. Erst
+        // bei Account-Löschung entfernt deleteAccount() sie explizit.
         profileImageURL           = nil
         geocodedDropLocationTitle = ""
-        ud.removeObject(forKey: UDKey.homeZoneLat)
-        ud.removeObject(forKey: UDKey.homeZoneLng)
-        ud.removeObject(forKey: UDKey.homeZoneRadius)
 
         // ── 4. Dynamic Island beenden ─────────────────────────────────────
         endDropLiveActivity()
@@ -2136,14 +2178,69 @@ class AppStore: ObservableObject {
         reliabilityScore.currentStreak = 0
     }
 
-    // MARK: - Boost-Phase (Umgebungs-Tab leer → +5 Bonus)
+    // MARK: - Points-Toast Observer
+
+    /// Startet den Combine-Observer, der bei jedem Anstieg des ReliabilityScores
+    /// einen Toast emittiert. Wird einmalig nach `loadAll()` in `init` aufgerufen.
+    private func startPointsToastObserver() {
+        guard pointsToastCancellable == nil else { return }
+        lastObservedPoints = reliabilityScore.points
+        pointsToastReady = true
+
+        pointsToastCancellable = $reliabilityScore
+            .map(\.points)
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] newPoints in
+                guard let self = self, self.pointsToastReady else { return }
+                let delta = newPoints - self.lastObservedPoints
+                self.lastObservedPoints = newPoints
+                guard delta > 0 else { return }
+                // Letzter Toast wird durch neuen ersetzt — neue ID damit
+                // SwiftUI ein .transition triggert.
+                self.pointsToast = PointsToast(
+                    delta: delta,
+                    isPowerHour: self.isPowerHourActive
+                )
+            }
+    }
+
+    // MARK: - Boost-Phase (Umgebungs-Tab leer → +Bonus)
     //
     // Wenn weniger als 5 Drops in der näheren Umgebung des Users sind, ist
     // die App "leer" — wir incentivieren in dem Moment Aktionen mit einem
-    // +5-Boost: einmal beim Erstellen, einmal beim Bestätigen eines Treffens
-    // (entweder als Joiner via confirmEncounter oder als Host via recordHostSuccess).
+    // Punkte-Bonus: einmal beim Erstellen, einmal beim Bestätigen eines
+    // Treffens (entweder als Joiner via confirmEncounter oder als Host via
+    // recordHostSuccess).
+    //
+    // Power-Hour: zu festgelegten Stoßzeiten verdoppelt sich der Boost-Bonus
+    // (von +15 auf +25). Die Logik bleibt: BOOST-Bedingung muss erfüllt sein
+    // (leere Umgebung). Power-Hour ist nur ein höherer Multiplikator on-top.
     static let boostThreshold = 5
     static let boostBonus     = 15
+    static let powerHourBonus = 25
+
+    /// Definition eines Power-Hour-Zeitfensters: Wochentage + Uhrzeit-Spanne.
+    /// `weekdays` nutzt die Apple-Convention (1 = Sonntag … 7 = Samstag).
+    /// `endHour` ist exklusiv (z.B. 18..<20 = 18:00 bis 19:59).
+    struct PowerHourWindow {
+        let weekdays: Set<Int>
+        let startHour: Int
+        let endHour: Int
+        let label: String
+    }
+
+    static let powerHourWindows: [PowerHourWindow] = [
+        // Werktag-Abend: Mo–Do 18–20 Uhr
+        PowerHourWindow(weekdays: [2, 3, 4, 5], startHour: 18, endHour: 20,
+                        label: "Werktag-Abend"),
+        // Weekend Prime: Fr–Sa 19–23 Uhr
+        PowerHourWindow(weekdays: [6, 7], startHour: 19, endHour: 23,
+                        label: "Weekend Prime"),
+        // Sonntag-Brunch: So 11–14 Uhr
+        PowerHourWindow(weekdays: [1], startHour: 11, endHour: 14,
+                        label: "Sonntag-Brunch"),
+    ]
 
     /// True wenn aktuell weniger als `boostThreshold` Drops in Reichweite des
     /// Users sind. Quelle: `allMapAnnotations` gefiltert auf den Radius-Filter
@@ -2154,17 +2251,109 @@ class AppStore: ObservableObject {
         return visible.count < Self.boostThreshold
     }
 
-    /// Vergibt den Boost-Bonus wenn die Umgebung gerade leer ist.
+    /// Admin-Debug-Override: zwingt Power-Hour permanent an, unabhängig von
+    /// Wochentag/Uhrzeit. Wird im Admin-Panel umgeschaltet (debugSection)
+    /// damit Tests nicht erst auf 18 Uhr warten müssen. Persistiert
+    /// in UserDefaults, damit der Modus über App-Restarts hält.
+    @Published var debugForcePowerHour: Bool = UserDefaults.standard.bool(forKey: "ud_debugForcePowerHour") {
+        didSet {
+            UserDefaults.standard.set(debugForcePowerHour, forKey: "ud_debugForcePowerHour")
+        }
+    }
+
+    /// True wenn gerade ein Power-Hour-Zeitfenster läuft. Unabhängig von der
+    /// Boost-Bedingung — die UI kann beide Flags kombinieren um den richtigen
+    /// Banner-Text und Bonus-Wert anzuzeigen. Admin-Debug-Override gewinnt.
+    var isPowerHourActive: Bool {
+        if debugForcePowerHour { return true }
+        let now = Date()
+        let cal = Calendar.current
+        let weekday = cal.component(.weekday, from: now)
+        let hour = cal.component(.hour, from: now)
+        return Self.powerHourWindows.contains { window in
+            window.weekdays.contains(weekday)
+                && hour >= window.startHour
+                && hour < window.endHour
+        }
+    }
+
+    /// Aktueller Bonus-Wert (15 oder 25). UI nutzt das, der Code unten auch.
+    var currentBoostBonus: Int {
+        isPowerHourActive ? Self.powerHourBonus : Self.boostBonus
+    }
+
+    /// Countdown-Info für die Map-UI. Drei Phasen:
+    ///   - .startingSoon: ≤60 Min vor Start des nächsten Slots heute
+    ///   - .running:      mittendrin im Slot, noch >60 Min Zeit
+    ///   - .endingSoon:   in den letzten 60 Min eines aktiven Slots
+    /// Außerhalb aller Slots (oder >60 Min vor Start): nil.
+    struct PowerHourCountdown {
+        enum Phase { case startingSoon, running, endingSoon }
+        let phase: Phase
+        let minutesRemaining: Int
+        let windowLabel: String
+    }
+
+    static func powerHourCountdown(at date: Date) -> PowerHourCountdown? {
+        let cal = Calendar.current
+        let weekday = cal.component(.weekday, from: date)
+        let hour = cal.component(.hour, from: date)
+        let minute = cal.component(.minute, from: date)
+        let nowMin = hour * 60 + minute
+
+        // 1) Aktiver Slot? → immer Countdown zeigen (running oder endingSoon)
+        for w in powerHourWindows where w.weekdays.contains(weekday) {
+            if hour >= w.startHour && hour < w.endHour {
+                let endMin = w.endHour * 60
+                let remaining = endMin - nowMin
+                guard remaining > 0 else { return nil }
+                let phase: PowerHourCountdown.Phase = remaining <= 60 ? .endingSoon : .running
+                return PowerHourCountdown(
+                    phase: phase,
+                    minutesRemaining: remaining,
+                    windowLabel: w.label
+                )
+            }
+        }
+
+        // 2) Heutiger upcoming Slot in den nächsten 60 Min?
+        for w in powerHourWindows where w.weekdays.contains(weekday) {
+            if hour < w.startHour {
+                let startMin = w.startHour * 60
+                let untilStart = startMin - nowMin
+                if untilStart > 0 && untilStart <= 60 {
+                    return PowerHourCountdown(
+                        phase: .startingSoon,
+                        minutesRemaining: untilStart,
+                        windowLabel: w.label
+                    )
+                }
+            }
+        }
+
+        return nil
+    }
+
+    /// Vergibt den Boost-Bonus. Zwei unabhängige Trigger:
+    ///   1. Boost-Phase: Umgebung gerade leer (<5 Drops) → +15
+    ///   2. Power-Hour: konfiguriertes Zeitfenster läuft → +25
+    /// Wenn beide zutreffen gewinnt Power-Hour (höherer Wert).
+    /// Außerhalb beider Bedingungen: kein Bonus.
     /// Wird von createDrop / confirmEncounter / recordHostSuccess aufgerufen.
     /// Persistierung + Firestore-Push übernimmt der Aufrufer (saveAll).
     fileprivate func applyBoostBonusIfActive(reason: String) {
-        guard isBoostPhaseActive else { return }
-        reliabilityScore.boostBonusPoints += Self.boostBonus
+        let powerHour = isPowerHourActive
+        let boost     = isBoostPhaseActive
+        guard powerHour || boost else { return }
+
+        let bonus  = powerHour ? Self.powerHourBonus : Self.boostBonus
+        let prefix = powerHour ? "Power-Hour: " : "Boost: "
+        reliabilityScore.boostBonusPoints += bonus
         Task { @MainActor in
             PushNotificationManager.shared.notifyPointsEarned(
-                delta: Self.boostBonus,
+                delta: bonus,
                 totalPoints: reliabilityScore.points,
-                reason: "Boost: \(reason)"
+                reason: prefix + reason
             )
         }
     }
@@ -2223,6 +2412,15 @@ class AppStore: ObservableObject {
                 || ReliabilityScore.badge(forPoints: $0.reliabilityScore) == "Neustart"
         }
         reliabilityScore.newcomerHostPoints += newcomers.count * 5
+        // Erst-Host-Bonus: einmaliger +10 wenn der erste eigene Drop
+        // tatsächlich Teilnehmer hatte. Belohnt erfolgreiches Hosten ohne
+        // farmbar zu sein — kann genau einmal pro User vergeben werden.
+        let ud = UserDefaults.standard
+        if !arrivedParticipants.isEmpty,
+           !ud.bool(forKey: UDKey.firstHostBonusReceived) {
+            reliabilityScore.creationBonusPoints += 10
+            ud.set(true, forKey: UDKey.firstHostBonusReceived)
+        }
         // Boost: +5 wenn die Umgebung gerade leer ist
         applyBoostBonusIfActive(reason: "Drop gehostet")
         saveAll()
@@ -3591,13 +3789,14 @@ class AppStore: ObservableObject {
             expiresAt: drop.expiresAt, scheduledTime: scheduledTime, hostGender: userGender,
             maxParticipants: drop.maxParticipants
         )
-        // +10 Bonus für jeden erstellten Drop — Launch-Motivation, belohnt Mut zum Hosten
-        // unabhängig vom Outcome.
-        reliabilityScore.creationBonusPoints += 10
-        // Zusätzlicher +5 Boost wenn die Umgebung gerade leer ist (<5 Drops in Reichweite).
-        // ⚠ Vor dem `activeDrops.append(...)` würde der eigene Drop nicht mitzählen,
-        // hier zählt er aber schon — daher echte Lücken-Aktivierung wenn vorher leer.
-        applyBoostBonusIfActive(reason: "Drop erstellt")
+        // KEINE Punkte mehr fürs reine Erstellen — alle Boni (creation,
+        // boost, power-hour) müssen erarbeitet werden:
+        //   - jemand kommt zu meinem Drop → recordHostSuccess
+        //   - ich treffe jemanden bei fremdem Drop → confirmEncounter
+        // Sonst wäre Punkte-Farming durch Erstellen + sofortiges Beenden
+        // möglich. `creationBonusPoints` bleibt als Feld erhalten damit
+        // alte gespeicherte Werte nicht verloren gehen, wird aber nicht
+        // mehr inkrementiert.
         saveAll()
         pushReliabilityScoreToFirestore()
         DropNotificationManager.requestPermission()   // Lazy: erst beim ersten Drop fragen

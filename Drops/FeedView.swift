@@ -403,6 +403,22 @@ struct FeedView: View {
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 0) {
 
+                        // ── Power-Hour Countdown-Pille (≤60 Min vor Start
+                        //    oder vor Ende eines aktiven Slots) ──
+                        // Auto-update jede Minute über TimelineView; gleiche
+                        // Komponente wie in der Map-View, damit beide Tabs
+                        // konsistent sind.
+                        TimelineView(.periodic(from: .now, by: 60)) { ctx in
+                            if let cd = AppStore.powerHourCountdown(at: ctx.date) {
+                                PowerHourCountdownPill(countdown: cd)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.horizontal, 16)
+                                    .padding(.top, 6)
+                                    .padding(.bottom, 2)
+                                    .transition(.move(edge: .top).combined(with: .opacity))
+                            }
+                        }
+
                         // ── Filter — scrollen mit (wie im Profil-Tab) ──
                         if store.userGender == "weiblich" {
                             femaleOnlyFilterBar
@@ -458,20 +474,19 @@ struct FeedView: View {
                         }
 
                         // ── Leer-State ──
+                        // Boost-Bonus wird direkt im EmptyState als kleine
+                        // Capsule angezeigt (statt früher separater
+                        // BoostBanner-Sektion). So gibt es eine einzige,
+                        // konsistente Botschaft: "Sei der erste — und du
+                        // bekommst +15 Bonus dafür".
                         if sortedFriendDrops.isEmpty && strangerAnnotations.isEmpty {
-                            DropsEmptyState(onCreateTap: {
-                                store.selectedTab = .create
-                            })
+                            DropsEmptyState(
+                                onCreateTap: { store.selectedTab = .create },
+                                boostActive: store.isBoostPhaseActive,
+                                boostBonus: store.currentBoostBonus,
+                                isPowerHour: store.isPowerHourActive
+                            )
                                 .padding(.top, 48)
-                        }
-
-                        // ── Boost-Banner: unten, wenn <5 Drops in Reichweite ──
-                        // Reine Info — kein eigener Drop-Button, der ist schon im
-                        // DropsEmptyState bzw. der Tab-Bar.
-                        if (sortedFriendDrops.count + strangerAnnotations.count) < AppStore.boostThreshold {
-                            BoostBanner()
-                                .padding(.horizontal, 16)
-                                .padding(.top, 16)
                         }
 
                         // "Nicht verfügbar"-Sektion ist aus dem Umgebungs-Feed raus —

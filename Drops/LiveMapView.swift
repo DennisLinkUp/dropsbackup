@@ -92,6 +92,10 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 struct LiveMapView: View {
     @EnvironmentObject var store: AppStore
     @AppStorage("appLanguage") private var appLanguage = "de"
+    /// Einmaliger Power-Hour-Hinweis nach Update. Wird auf true gesetzt
+    /// sobald der User den Hinweis-Sheet einmal gesehen hat.
+    @AppStorage("hasSeenPowerHourIntro") private var hasSeenPowerHourIntro = false
+    @State private var showPowerHourIntro = false
     @StateObject private var locationManager = LocationManager()
     @State private var mapPosition: MapCameraPosition = .region(MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 48.1371, longitude: 11.5754),
@@ -110,12 +114,6 @@ struct LiveMapView: View {
     @State private var joinedIDs: Set<UUID> = []
     @State private var showSafety = false
     @State private var mapId = UUID()
-    /// Boost-Phase Banner auf der Karte: zugeklappt → kleine Pille links neben Recenter-Button.
-    @State private var boostCollapsed = false
-    /// Live-Drag-Offset während der User die Karte runterzieht.
-    @State private var boostDragOffset: CGFloat = 0
-    /// Namespace für matchedGeometryEffect (smoother Morph zwischen Karte und Pille).
-    @Namespace private var boostNS
     let activities = ["Alle", "☕️ Kaffee", "🍺 Drink", "🏃 Sport", "🍕 Essen", "🎮 Zocken"]
 
     /// Eigener 8-Char BLE-Token — wird explizit an DropMapPin übergeben (nicht per @EnvironmentObject,
@@ -256,104 +254,87 @@ struct LiveMapView: View {
             }
 
             VStack {
-                Spacer()
-
-                // ── Boost-Phase Banner auf der Map ──────────────────────
-                // Zeigt sich wenn weniger als 5 Drops in Reichweite sind. User
-                // kann nach unten ziehen → tropft in Liquid-Glass-Manier zur
-                // kleinen Bolt-Pille links neben dem Recenter-Button. Tap auf
-                // Pille → springt wieder hoch.
-                //
-                // Der matchedGeometryEffect zwischen Karte und Pille sorgt für
-                // den durchgängigen Morph; rubber-band-Drag mit interactiveSpring
-                // gibt das „Apple-liquid-glass-Tab-Bar-Pull"-Feeling.
-                let boostShowsBanner = store.isBoostPhaseActive && !boostCollapsed
-                if boostShowsBanner {
-                    MapBoostCard(
-                        onCollapse: {
-                            withAnimation(.interpolatingSpring(stiffness: 200, damping: 18)) {
-                                boostCollapsed = true
-                                boostDragOffset = 0
-                            }
-                        }
-                    )
-                    .matchedGeometryEffect(id: "boostPill", in: boostNS, properties: .position, anchor: .bottomLeading, isSource: false)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 10)
-                    .offset(y: max(-12, dampedDragOffset(boostDragOffset)))
-                    .scaleEffect(
-                        1.0 - min(0.05, max(0, boostDragOffset) / 1500),
-                        anchor: .bottom
-                    )
-                    .gesture(
-                        DragGesture()
-                            .onChanged { value in
-                                withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.85)) {
-                                    boostDragOffset = value.translation.height
-                                }
-                            }
-                            .onEnded { value in
-                                if value.translation.height > 60 {
-                                    // Tropfen → Pille
-                                    withAnimation(.interpolatingSpring(stiffness: 180, damping: 20)) {
-                                        boostCollapsed = true
-                                        boostDragOffset = 0
-                                    }
-                                } else {
-                                    // Zurück snappen
-                                    withAnimation(.interpolatingSpring(stiffness: 240, damping: 16)) {
-                                        boostDragOffset = 0
-                                    }
-                                }
-                            }
-                    )
-                    .transition(
-                        .asymmetric(
-                            insertion: .move(edge: .bottom).combined(with: .opacity),
-                            removal: .scale(scale: 0.2, anchor: .bottomLeading)
-                                .combined(with: .opacity)
-                        )
-                    )
+                // ── Power-Hour Countdown-Pille (oben) ────────────────────
+                // Auto-updates jede Minute via TimelineView. Sichtbar in
+                // zwei Phasen:
+                //   – ≤60 Min vor Start → "Power-Hour in 47 Min"
+                //   – ≤60 Min vor Ende eines aktiven Slots → "endet in 23 Min"
+                // Sonst nil → keine Pille.
+                TimelineView(.periodic(from: .now, by: 60)) { ctx in
+                    if let cd = AppStore.powerHourCountdown(at: ctx.date) {
+                        PowerHourCountdownPill(countdown: cd)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 8)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                 }
 
-                // Bottom-Row: collapsed Boost-Pille (links) + Recenter-Button (rechts)
-                HStack(alignment: .bottom) {
-                    // Collapsed-Pille — nur sichtbar wenn Boost aktiv UND zugeklappt.
-                    if store.isBoostPhaseActive && boostCollapsed {
+                Spacer()
+
+                // ── Bottom-Row: Boost-Phase-Banner (links, full-width) +
+                //               Recenter-Button (rechts) ──────────────────
+                // Banner ist DAUERHAFT solange Boost-Phase aktiv ist:
+                //   – nicht aus-/einklappbar
+                //   – nicht draggable / verschiebbar
+                //   – Tap überall am Banner → öffnet Drop-Erstellen
+                // Banner spannt von der linken Bildschirmkante bis kurz vor
+                // dem Recenter-Button (`maxWidth: .infinity` im HStack
+                // teilt sich den verfügbaren Platz gegen den Recenter).
+                HStack(alignment: .center, spacing: 10) {
+                    // Banner zeigt sich bei Boost-Phase ODER Power-Hour —
+                    // beides sind unabhängige Trigger für den Bonus.
+                    if store.isBoostPhaseActive || store.isPowerHourActive {
                         Button {
-                            withAnimation(.interpolatingSpring(stiffness: 220, damping: 16)) {
-                                boostCollapsed = false
-                            }
+                            store.selectedTab = .create
                         } label: {
-                            ZStack {
-                                Circle()
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [Color.accentOrange, Color.brand],
-                                            startPoint: .topLeading, endPoint: .bottomTrailing
-                                        )
-                                    )
-                                    .frame(width: 44, height: 44)
-                                    .shadow(color: Color.accentOrange.opacity(0.35), radius: 10, y: 3)
+                            HStack(spacing: 12) {
+                                // Bolt im weißen Glas-Kreis links
                                 Image(systemName: "bolt.fill")
-                                    .font(.system(size: 18, weight: .bold))
+                                    .font(.system(size: 16, weight: .bold))
                                     .foregroundColor(.white)
+                                    .frame(width: 32, height: 32)
+                                    .background(
+                                        Circle().fill(Color.white.opacity(0.18))
+                                    )
+
+                                // Power-Hour ändert NUR Titel + Punktzahl —
+                                // Bonus wird in store.currentBoostBonus
+                                // berechnet (15 normal, 25 in Power-Hour).
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(store.isPowerHourActive
+                                         ? "Power-Hour aktiv"
+                                         : "Boost-Phase aktiv")
+                                        .font(.system(size: 14, weight: .bold))
+                                        .foregroundColor(.white)
+                                    Text("+\(store.currentBoostBonus) Punkte für jeden Drop, den du jetzt erstellst")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.white.opacity(0.88))
+                                        .lineLimit(2)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .multilineTextAlignment(.leading)
+                                }
+
+                                Spacer(minLength: 0)
                             }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            // Capsule statt RoundedRectangle → maximal runde
+                            // Ecken (Radius = Hälfte der Höhe), so wie die
+                            // iOS 26 Tab Bar es auch macht.
+                            .background(
+                                Capsule().fill(
+                                    LinearGradient(
+                                        colors: [Color.accentOrange, Color.brand],
+                                        startPoint: .topLeading, endPoint: .bottomTrailing
+                                    )
+                                )
+                            )
+                            .shadow(color: Color.accentOrange.opacity(0.35), radius: 10, y: 3)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Boost-Phase ausklappen")
-                        .matchedGeometryEffect(id: "boostPill", in: boostNS, properties: .position, anchor: .bottomLeading, isSource: true)
-                        .padding(.leading, 16)
-                        .transition(
-                            .asymmetric(
-                                insertion: .scale(scale: 0.4, anchor: .top)
-                                    .combined(with: .opacity),
-                                removal: .opacity
-                            )
-                        )
+                        .accessibilityLabel("Boost-Phase aktiv – Drop erstellen")
                     }
-
-                    Spacer()
 
                     Button(action: {
                         let loc = locationManager.userLocation
@@ -372,8 +353,8 @@ struct LiveMapView: View {
                             .liquidGlassCircle()
                     }
                     .accessibilityLabel(tr("map.recenter"))
-                    .padding(.trailing, 16)
                 }
+                .padding(.horizontal, 16)
                 .padding(.bottom, 8)
             }
         }
@@ -398,7 +379,27 @@ struct LiveMapView: View {
         .sheet(isPresented: $showSafety) {
             SafetySheetView().environmentObject(store)
         }
+        // Power-Hour Onboarding-Hinweis: einmalig nach Update.
+        // Verzögerter Trigger im onAppear, damit er nicht direkt mit dem
+        // Map-Camera-Setup konkurriert.
+        .sheet(isPresented: $showPowerHourIntro) {
+            PowerHourIntroSheet {
+                hasSeenPowerHourIntro = true
+                showPowerHourIntro = false
+            }
+            .presentationDetents([.fraction(0.55)])
+            .presentationDragIndicator(.visible)
+            .sheetBackground()
+        }
+        .onAppear {
+            if !hasSeenPowerHourIntro {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    showPowerHourIntro = true
+                }
+            }
+        }
     }
+
 }
 
 // MARK: - Drop Map Pin

@@ -865,10 +865,15 @@ struct FreundeView: View {
                 }
                 Spacer()
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 2)
 
             // ── Kacheln (2×2) ───────────────────────────────────
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+            // Ein gemeinsamer Glas-Container (wie der Kontakte-Bereich
+            // weiter unten), damit die Sektion gut sichtbar ist. StatTile
+            // selbst rendert KEINEN eigenen Hintergrund mehr — sonst
+            // entsteht ein doppeltes Glas, was die Section optisch
+            // breiter & busier wirken lässt.
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                 StatTile(value: "\(total)",
                          label: "Drops gesamt",
                          icon: "bolt.fill",
@@ -886,8 +891,8 @@ struct FreundeView: View {
                          icon: "checkmark.seal.fill",
                          color: rs.totalCommits == 0 ? .textSecondary : rs.color)
             }
-            .padding(12)
-            .liquidGlass(cornerRadius: 18)
+            .padding(10)
+            .liquidGlass(cornerRadius: 20)
 
             // ── Lieblings-Aktivität (nur wenn schon Drops da) ─────
             if total > 0 {
@@ -913,7 +918,7 @@ struct FreundeView: View {
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
             }
         }
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 16)
         .padding(.bottom, 8)
     }
 
@@ -2049,6 +2054,14 @@ struct ProfileView: View {
                         settingsSection(icon: "house.fill", color: Color.accentOrange, title: "Heimzone") {
                             homeZoneSection
                         }
+
+                        // Power-Hour Übersicht — Referenz wann der höhere
+                        // Bonus läuft. Dauerhaft sichtbar, aktive Slots
+                        // werden farblich hervorgehoben.
+                        settingsSection(icon: "bolt.fill", color: Color.accentOrange, title: "Power-Hour Zeiten") {
+                            powerHourSection
+                        }
+
                         settingsSection(icon: "person.2.fill", color: Color(hex: "FF6B35"), title: tr("settings.age_groups")) {
                             ageGroupSection
                         }
@@ -2536,6 +2549,110 @@ struct ProfileView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Power-Hour Section
+    //
+    // Statische Übersicht aller konfigurierten Power-Hour-Slots aus
+    // AppStore.powerHourWindows. Aktive Slots werden orange hervorgehoben.
+    // Erinnert den User wann der höhere Bonus läuft, ohne dass er erst
+    // eine Push-Notification abwarten muss.
+    @ViewBuilder private var powerHourSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Mini-Beschreibung
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "info.circle.fill")
+                    .font(.system(size: 13))
+                    .foregroundColor(.textTertiary)
+                    .padding(.top, 1)
+                Text("Während dieser Zeitfenster gibt's +\(AppStore.powerHourBonus) Punkte für jeden Drop, den du erstellst oder triffst.")
+                    .font(.system(size: 12))
+                    .foregroundColor(.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider().padding(.leading, 16)
+
+            // Slot-Liste
+            ForEach(Array(AppStore.powerHourWindows.enumerated()), id: \.offset) { idx, window in
+                powerHourRow(window: window)
+                if idx < AppStore.powerHourWindows.count - 1 {
+                    Divider().padding(.leading, 16)
+                }
+            }
+        }
+    }
+
+    /// Eine Zeile pro Power-Hour-Window. Zeigt Label, Wochentag-Range,
+    /// Zeit-Range und einen "Aktiv jetzt"-Badge wenn der Slot gerade läuft.
+    @ViewBuilder
+    private func powerHourRow(window: AppStore.PowerHourWindow) -> some View {
+        let active = isWindowActive(window)
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(window.label)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.textPrimary)
+                    if active {
+                        Text("Jetzt aktiv")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 7).padding(.vertical, 2)
+                            .background(Capsule().fill(Color.accentOrange))
+                    }
+                }
+                Text("\(weekdayLabel(window.weekdays)) · \(window.startHour)–\(window.endHour) Uhr")
+                    .font(.system(size: 12))
+                    .foregroundColor(.textSecondary)
+            }
+            Spacer()
+            HStack(spacing: 3) {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 11, weight: .bold))
+                Text("+\(AppStore.powerHourBonus)")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+            }
+            .foregroundColor(.accentOrange)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(Capsule().fill(Color.accentOrange.opacity(0.12)))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(active ? Color.accentOrange.opacity(0.06) : Color.clear)
+    }
+
+    /// Formatiert eine Set<Int> mit Apple-Wochentagen (1=So…7=Sa) zu
+    /// einem deutschen Range-String wie "Mo–Do" oder "Fr–Sa" oder "So".
+    /// Bei nicht-zusammenhängenden Tagen werden sie kommasepariert.
+    private func weekdayLabel(_ days: Set<Int>) -> String {
+        // Apple weekday → Index in deutscher Wochenreihenfolge (Mo=0…So=6)
+        let names = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
+        let mondayFirst = days.map { ($0 == 1 ? 6 : $0 - 2) }.sorted()
+        guard let first = mondayFirst.first, let last = mondayFirst.last else { return "" }
+
+        // Zusammenhängend? → Range
+        let isContiguous = mondayFirst.count == (last - first + 1)
+        if isContiguous {
+            return mondayFirst.count == 1
+                ? names[first]
+                : "\(names[first])–\(names[last])"
+        }
+        // Sonst kommasepariert
+        return mondayFirst.map { names[$0] }.joined(separator: ", ")
+    }
+
+    /// True wenn der gegebene Slot gerade läuft (Wochentag + Stunde matchen).
+    private func isWindowActive(_ window: AppStore.PowerHourWindow) -> Bool {
+        let now = Date()
+        let cal = Calendar.current
+        let weekday = cal.component(.weekday, from: now)
+        let hour = cal.component(.hour, from: now)
+        return window.weekdays.contains(weekday)
+            && hour >= window.startHour
+            && hour < window.endHour
     }
 
     // MARK: - Age Group Section
@@ -3207,9 +3324,12 @@ private struct StatTile: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        // Hinweis: Kein eigener Background mehr — die Section rendert
+        // einen gemeinsamen liquidGlass-Container drumherum (wie der
+        // Kontakte-Bereich). Würde hier wieder ein Material stehen,
+        // entstünde ein doppeltes Glas.
     }
 }
 

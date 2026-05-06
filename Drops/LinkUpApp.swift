@@ -135,6 +135,10 @@ struct LinkUpApp: App {
                     PushNotificationManager.shared.cancelReEngagementNotification()
                     PushNotificationManager.shared.resetSession()
                     PushNotificationManager.shared.requestPermissionIfNeeded()
+                    // Power-Hour-Pushs als wiederkehrende lokale Notifications
+                    // anlegen / refreshen — iOS feuert sie dann jede Woche zur
+                    // konfigurierten Uhrzeit auch wenn die App nicht läuft.
+                    PushNotificationManager.shared.schedulePowerHourNotifications()
                 }
                 // Online-Heartbeat für Freundes-Anzeige (users/{uid}/lastActiveAt)
                 RealtimeDBManager.shared.markOnlineHeartbeat()

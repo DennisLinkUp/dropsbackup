@@ -17,6 +17,9 @@ final class PushNotificationManager {
         static let dropin       = "dropin"
         static let encounter    = "encounter"
         static let homeZone     = "drops_homezone"
+        /// Prefix für die mehreren wiederholenden Power-Hour-Trigger
+        /// (pro Wochentag × Window-Startzeit ein eigener Identifier).
+        static let powerHourPrefix = "drops_powerhour_"
     }
 
     // MARK: - UserDefaults Keys
@@ -171,6 +174,143 @@ final class PushNotificationManager {
         center.removePendingNotificationRequests(withIdentifiers: [ID.nearbyDrops])
         center.add(request)
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: UDKey.lastNearbyNotif)
+    }
+
+    // MARK: - Power-Hour Notifications
+    //
+    // Planen wir wiederkehrend lokal: pro Power-Hour-Window × Wochentag wird
+    // ein eigener UNCalendarNotificationTrigger angelegt. iOS feuert die
+    // automatisch jede Woche zur passenden Uhrzeit, ohne dass die App
+    // running sein muss. Beim App-Start räumen wir alte Power-Hour-Pushs
+    // weg und planen sie frisch — so bleiben Änderungen am Window-Schema
+    // automatisch in Sync.
+    //
+    // Texte sind variabel ausgewählt aus einem kleinen Pool, damit der
+    // User nicht jede Woche exakt denselben Wortlaut sieht (Push-Müdigkeit).
+    func schedulePowerHourNotifications() {
+        let center = UNUserNotificationCenter.current()
+        Task { @MainActor in
+            // 1. Alte Power-Hour-Requests entfernen (Prefix-basiert)
+            let pending = await center.pendingNotificationRequests()
+            let staleIDs = pending
+                .map { $0.identifier }
+                .filter { $0.hasPrefix(ID.powerHourPrefix) }
+            if !staleIDs.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: staleIDs)
+            }
+
+            // 2. Drei Notification-Typen pro Window + Weekday:
+            //    a) "Pre" — 1h vor Start ("Power-Hour startet bald")
+            //    b) "Start" — exakt zum Start
+            //    c) "End-Warn" — 1h vor Ende ("letzte Chance")
+            //
+            // Texte sind variabel ausgewählt aus einem kleinen Pool, damit der
+            // User nicht jede Woche exakt denselben Wortlaut sieht.
+            let startMessages: [(title: String, body: String)] = [
+                ("⚡ Power-Hour startet",
+                 "Doppelter Boost-Bonus aktiv — +25 Punkte für jeden Drop, den du jetzt erstellst oder triffst."),
+                ("⚡ Bonus-Zeit läuft",
+                 "Wer jetzt einen Drop startet, bekommt +25 Punkte — sieh wer in der Nähe Lust auf was hat."),
+                ("⚡ Drops Power-Hour",
+                 "Mehr Punkte als sonst (+25 statt +15). Perfekter Moment für nen Spontan-Drop."),
+            ]
+            let preMessages: [(title: String, body: String)] = [
+                ("⚡ Power-Hour in 1 Stunde",
+                 "Gleich gibt's +25 Punkte für jeden Drop — bereite dich vor."),
+                ("Bald Power-Hour",
+                 "In einer Stunde startet der doppelte Boost-Bonus."),
+                ("⚡ 1 Stunde bis Power-Hour",
+                 "Plan deinen Drop — gleich gibt's +25 statt +15 Punkte."),
+            ]
+            let endMessages: [(title: String, body: String)] = [
+                ("⚡ Power-Hour endet in 1 Stunde",
+                 "Letzte Chance auf +25 Punkte — wer jetzt noch einen Drop startet, kassiert den Bonus."),
+                ("Letzte Stunde Bonus",
+                 "Power-Hour läuft noch 60 Minuten. Jetzt einen Drop erstellen lohnt sich extra."),
+                ("⚡ Endspurt",
+                 "Eine Stunde übrig für den Power-Hour-Bonus."),
+            ]
+
+            for window in AppStore.powerHourWindows {
+                for weekday in window.weekdays {
+                    // a) Pre-Notification 1h vor Start
+                    let preHour = window.startHour - 1
+                    if preHour >= 0 {
+                        try? await scheduleRecurring(
+                            on: center,
+                            id: "\(ID.powerHourPrefix)\(weekday)_\(window.startHour)_pre",
+                            weekday: weekday, hour: preHour, minute: 0,
+                            messages: preMessages,
+                            type: "powerhour_pre",
+                            windowLabel: window.label
+                        )
+                    }
+
+                    // b) Start-Notification
+                    try? await scheduleRecurring(
+                        on: center,
+                        id: "\(ID.powerHourPrefix)\(weekday)_\(window.startHour)_start",
+                        weekday: weekday, hour: window.startHour, minute: 0,
+                        messages: startMessages,
+                        type: "powerhour_start",
+                        windowLabel: window.label
+                    )
+
+                    // c) End-Warn-Notification 1h vor Ende
+                    let endWarnHour = window.endHour - 1
+                    if endWarnHour > window.startHour {
+                        try? await scheduleRecurring(
+                            on: center,
+                            id: "\(ID.powerHourPrefix)\(weekday)_\(window.startHour)_endwarn",
+                            weekday: weekday, hour: endWarnHour, minute: 0,
+                            messages: endMessages,
+                            type: "powerhour_endwarn",
+                            windowLabel: window.label
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /// Helper: legt einen wiederkehrenden Calendar-Trigger an.
+    private func scheduleRecurring(
+        on center: UNUserNotificationCenter,
+        id: String,
+        weekday: Int, hour: Int, minute: Int,
+        messages: [(title: String, body: String)],
+        type: String,
+        windowLabel: String
+    ) async throws {
+        var comps = DateComponents()
+        comps.weekday = weekday
+        comps.hour    = hour
+        comps.minute  = minute
+
+        let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: true)
+
+        let pick = messages[Int.random(in: 0 ..< messages.count)]
+        let content = UNMutableNotificationContent()
+        content.title = pick.title
+        content.body  = pick.body
+        content.sound = .default
+        content.userInfo = ["type": type, "window": windowLabel]
+
+        let req = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
+        try await center.add(req)
+    }
+
+    /// Entfernt alle geplanten Power-Hour-Pushs. Praktisch beim Logout
+    /// oder wenn der User Push-Benachrichtigungen abschaltet.
+    func cancelAllPowerHourNotifications() {
+        let center = UNUserNotificationCenter.current()
+        Task { @MainActor in
+            let pending = await center.pendingNotificationRequests()
+            let ids = pending
+                .map { $0.identifier }
+                .filter { $0.hasPrefix(ID.powerHourPrefix) }
+            center.removePendingNotificationRequests(withIdentifiers: ids)
+        }
     }
 
     // MARK: - Home Zone Warning Notification

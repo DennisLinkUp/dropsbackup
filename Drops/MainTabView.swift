@@ -76,6 +76,24 @@ struct MainTabView: View {
         }
 
         } // ZStack
+        // ── Globaler Punkte-Toast ─────────────────────────────────────────
+        // Liegt über der ganzen Tab-View, damit egal in welchem Tab Punkte
+        // vergeben werden, der User die "+X Punkte"-Pille zentral oben
+        // sieht. Die Pille selbst dismisst sich nach 2.5s; wir nullen den
+        // Store-State im onDismiss-Callback.
+        .overlay(alignment: .top) {
+            if let toast = store.pointsToast {
+                PointsToastView(toast: toast) {
+                    store.pointsToast = nil
+                }
+                .id(toast.id)
+                .padding(.top, 8)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .allowsHitTesting(false)
+            }
+        }
+        .animation(.spring(response: 0.45, dampingFraction: 0.8),
+                   value: store.pointsToast?.id)
         .safeAreaInset(edge: .top, spacing: 0) {
             OfflineBanner()
         }

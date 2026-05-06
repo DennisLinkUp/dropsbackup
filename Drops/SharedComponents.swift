@@ -178,6 +178,18 @@ struct AppAuroraBackground: View {
 
 struct DropsEmptyState: View {
     var onCreateTap: (() -> Void)? = nil
+    /// Wenn true → kleine Boost-Bonus-Zeile unter der Beschreibung
+    /// ("+15 / +25 Punkte als Bonus für deinen Drop"). Triggert wenn weniger
+    /// als `AppStore.boostThreshold` Drops in der Umgebung sind — die
+    /// gleiche Bedingung, unter der dieser Empty-State sichtbar ist.
+    /// Der frühere separate `BoostBanner` weiter unten im Feed entfällt
+    /// damit, weil sonst zwei UI-Elemente die gleiche Info doppelt zeigen.
+    var boostActive: Bool = false
+    /// Während Power-Hour-Slots ist `boostBonus` 25 statt 15 — wird vom
+    /// Aufrufer durchgereicht, damit der Empty-State den richtigen Wert
+    /// + ein "Power-Hour"-Label statt "Bonus" zeigen kann.
+    var boostBonus: Int = 15
+    var isPowerHour: Bool = false
     @State private var pulse0 = false
     @State private var pulse1 = false
     @State private var pulse2 = false
@@ -210,7 +222,7 @@ struct DropsEmptyState: View {
             .frame(width: 180, height: 180)
 
             VStack(spacing: 6) {
-                Text("Hier ist's gerade ruhig 🌅")
+                Text("Noch ist hier nichts los")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                     .foregroundColor(.textPrimary)
                 Text("Sei der erste der was startet —\nSpaziergang, Kaffee, Sport. Wer in der Nähe ist, sieht's sofort.")
@@ -219,6 +231,32 @@ struct DropsEmptyState: View {
                     .multilineTextAlignment(.center)
                     .lineSpacing(3)
                     .padding(.horizontal, 32)
+
+                // Boost-Bonus-Zeile — sichtbar wenn Boost-Phase aktiv ist.
+                // Schmale Capsule mit Bolt-Icon + Hinweis auf die +15
+                // Punkte. Belohnung statt eigener Werbe-Banner — die
+                // Botschaft "sei der erste" oben bleibt der primäre CTA,
+                // der Bonus untermauert ihn nur.
+                if boostActive {
+                    HStack(spacing: 6) {
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.accentOrange)
+                        Text(isPowerHour
+                             ? "+\(boostBonus) Punkte Power-Hour Bonus"
+                             : "+\(boostBonus) Punkte Bonus für deinen Drop")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.accentOrange)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(
+                        Capsule().fill(Color.accentOrange.opacity(0.12))
+                    )
+                    .overlay(
+                        Capsule().stroke(Color.accentOrange.opacity(0.30), lineWidth: 1)
+                    )
+                    .padding(.top, 8)
+                }
             }
 
             if let action = onCreateTap {
@@ -637,6 +675,363 @@ struct EmojiPickerSheet: View {
                 .padding(.horizontal, 14)
                 .padding(.bottom, 20)
             }
+        }
+    }
+}
+
+// MARK: - Power-Hour Countdown Pill
+//
+// Wird sowohl im LiveMapView als auch im FeedView angezeigt — extrahiert
+// damit beide Tabs konsistent dieselbe Pille rendern. Sichtbar ≤60 Min vor
+// einem Window-Start oder ≤60 Min vor Ende eines aktiven Slots; sonst nil.
+//
+// Hostende Views wickeln den Aufruf in eine TimelineView, damit der
+// Countdown jede Minute neu berechnet wird.
+struct PowerHourCountdownPill: View {
+    let countdown: AppStore.PowerHourCountdown
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "bolt.fill")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(.white)
+            Text(label)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(
+            Capsule().fill(
+                LinearGradient(
+                    colors: gradientColors,
+                    startPoint: .leading, endPoint: .trailing
+                )
+            )
+        )
+        .shadow(color: Color.accentOrange.opacity(0.30), radius: 6, y: 2)
+    }
+
+    private var label: String {
+        let mins = formatMinutes(countdown.minutesRemaining)
+        switch countdown.phase {
+        case .startingSoon: return "Power-Hour in \(mins)"
+        case .running:      return "Power-Hour läuft · noch \(mins)"
+        case .endingSoon:   return "Power-Hour endet in \(mins)"
+        }
+    }
+
+    /// Visuelle Differenzierung: endingSoon kriegt umgekehrten Verlauf
+    /// (brand → orange) für mehr Dringlichkeit, die anderen orange → brand.
+    private var gradientColors: [Color] {
+        switch countdown.phase {
+        case .endingSoon:   return [Color.brand, Color.accentOrange]
+        default:            return [Color.accentOrange, Color.brand]
+        }
+    }
+
+    private func formatMinutes(_ minutes: Int) -> String {
+        if minutes < 60 { return "\(minutes) Min" }
+        let h = minutes / 60
+        let m = minutes % 60
+        return m == 0 ? "\(h)h" : "\(h)h \(m)min"
+    }
+}
+
+// MARK: - Home Zone Warning Sheet
+//
+// Eigene Warnung statt System-Alert: visuell wärmer, mit Icon und
+// strukturierten Hinweisen. Gibt dem User mehr Kontext was passiert
+// und ist visuell konsistent mit dem restlichen App-Design (Aurora-
+// Hintergrund, Brand-Farben, Liquid-Glass-Card).
+struct HomeZoneWarningSheet: View {
+    /// User wählt "Trotzdem hier starten".
+    let onProceed: () -> Void
+    /// User wählt "Abbrechen" oder Drag-to-dismiss.
+    let onCancel: () -> Void
+
+    @State private var pulse = false
+
+    var body: some View {
+        VStack(spacing: 22) {
+            Spacer(minLength: 4)
+
+            // Visual: pulsierendes Haus mit Schild-Overlay
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.accentOrange.opacity(0.22),
+                                     Color.brand.opacity(0.14)],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 110, height: 110)
+                    .scaleEffect(pulse ? 1.05 : 0.96)
+                Image(systemName: "house.fill")
+                    .font(.system(size: 42, weight: .bold))
+                    .foregroundColor(.accentOrange)
+                    .shadow(color: Color.accentOrange.opacity(0.4), radius: 10)
+                // Schild-Overlay rechts unten am Haus
+                Image(systemName: "exclamationmark.shield.fill")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundColor(.white)
+                    .shadow(color: Color.black.opacity(0.18), radius: 4, y: 2)
+                    .padding(6)
+                    .background(Circle().fill(Color.accentOrange))
+                    .offset(x: 30, y: 30)
+            }
+
+            VStack(spacing: 8) {
+                Text("Drop in deiner Heimzone")
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .foregroundColor(.textPrimary)
+                Text("Du startest gerade einen Drop nahe deinem Zuhause.")
+                    .font(.system(size: 14))
+                    .foregroundColor(.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 36)
+            }
+
+            // Konkrete Hinweis-Liste
+            VStack(spacing: 12) {
+                warningRow(
+                    icon: "eye.fill",
+                    text: "Andere können auf der Karte ungefähr sehen wo du wohnst — solange der Drop läuft."
+                )
+                warningRow(
+                    icon: "person.fill",
+                    text: "Treffe lieber an einem öffentlichen Ort: Café, Park, Platz."
+                )
+            }
+            .padding(.horizontal, 22)
+
+            Spacer()
+
+            // Aktionen
+            VStack(spacing: 10) {
+                // Primär: sicherer Weg
+                Button(action: onCancel) {
+                    Text("Anderen Ort wählen")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            Capsule().fill(
+                                LinearGradient(
+                                    colors: [Color.brand, Color.accentOrange],
+                                    startPoint: .leading, endPoint: .trailing
+                                )
+                            )
+                        )
+                        .shadow(color: Color.brand.opacity(0.30), radius: 10, y: 3)
+                }
+                .buttonStyle(.plain)
+
+                // Sekundär (destruktiv): trotzdem hier
+                Button(action: onProceed) {
+                    Text("Trotzdem hier starten")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.accentRed)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 22)
+            .padding(.bottom, 22)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func warningRow(icon: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.accentOrange)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(Color.accentOrange.opacity(0.14)))
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundColor(.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(.ultraThinMaterial)
+        )
+    }
+}
+
+// MARK: - Power-Hour Intro Sheet
+//
+// Einmaliger Hinweis nach App-Update, gezeigt beim ersten Map-Open.
+// Erklärt Power-Hour kurz mit Bonus-Wert und den drei Slots — danach
+// wird der Hinweis via @AppStorage("hasSeenPowerHourIntro") nicht mehr
+// angezeigt. Auch ohne nochmal in die Settings zu gehen, weiß der User
+// dann was Power-Hour ist und wann.
+struct PowerHourIntroSheet: View {
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(spacing: 22) {
+            // Visual: pulsing bolt
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.accentOrange.opacity(0.25), Color.brand.opacity(0.18)],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 90, height: 90)
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 38, weight: .bold))
+                    .foregroundColor(.accentOrange)
+                    .shadow(color: Color.accentOrange.opacity(0.5), radius: 12)
+            }
+            .padding(.top, 18)
+
+            VStack(spacing: 10) {
+                Text("Neu: Power-Hour")
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                    .foregroundColor(.textPrimary)
+                Text("Zu festen Zeiten gibt's +\(AppStore.powerHourBonus) statt +\(AppStore.boostBonus) Punkte für jeden Drop, den du erstellst oder triffst.")
+                    .font(.system(size: 14))
+                    .foregroundColor(.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+                    .lineSpacing(2)
+            }
+
+            // Window-Übersicht kompakt
+            VStack(spacing: 0) {
+                ForEach(Array(AppStore.powerHourWindows.enumerated()), id: \.offset) { idx, window in
+                    HStack {
+                        Text(window.label)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.textPrimary)
+                        Spacer()
+                        Text(formatWindow(window))
+                            .font(.system(size: 13))
+                            .foregroundColor(.textSecondary)
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    if idx < AppStore.powerHourWindows.count - 1 {
+                        Divider().padding(.leading, 16)
+                    }
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(.ultraThinMaterial)
+            )
+            .padding(.horizontal, 22)
+
+            Spacer()
+
+            Button(action: onDismiss) {
+                Text("Verstanden")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(
+                        Capsule().fill(
+                            LinearGradient(
+                                colors: [Color.accentOrange, Color.brand],
+                                startPoint: .leading, endPoint: .trailing
+                            )
+                        )
+                    )
+                    .shadow(color: Color.accentOrange.opacity(0.35), radius: 10, y: 3)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 22)
+            .padding(.bottom, 22)
+        }
+    }
+
+    /// Formatiert ein Window für die Intro-Liste z.B. "Mo–Do · 18–20".
+    private func formatWindow(_ w: AppStore.PowerHourWindow) -> String {
+        let names = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
+        let mondayFirst = w.weekdays.map { ($0 == 1 ? 6 : $0 - 2) }.sorted()
+        guard let first = mondayFirst.first, let last = mondayFirst.last else { return "" }
+        let isContiguous = mondayFirst.count == (last - first + 1)
+        let dayLabel: String
+        if isContiguous {
+            dayLabel = mondayFirst.count == 1 ? names[first] : "\(names[first])–\(names[last])"
+        } else {
+            dayLabel = mondayFirst.map { names[$0] }.joined(separator: ", ")
+        }
+        return "\(dayLabel) · \(w.startHour)–\(w.endHour) Uhr"
+    }
+}
+
+// MARK: - Points Toast
+//
+// Globaler Toast für jeden Punkte-Gewinn. Wird vom AppStore via
+// `pointsToast` getriggert — die View hier ist rein visuell und
+// auto-dismisst sich nach 2.5 Sekunden via `.task`. Gradient + Bolt
+// imitieren die Optik von Boost/Power-Hour-Hinweisen, im Power-Hour-
+// Modus mit hellerem Akzent für mehr "pop".
+struct PointsToastView: View {
+    let toast: AppStore.PointsToast
+    /// Wird beim Auto-Dismiss aufgerufen (setzt store.pointsToast = nil).
+    let onDismiss: () -> Void
+
+    @State private var visible = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: toast.isPowerHour ? "bolt.fill" : "sparkles")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundColor(.white)
+            Text("+\(toast.delta) Punkte")
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+            if toast.isPowerHour {
+                Text("Power-Hour")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.85))
+                    .padding(.horizontal, 8).padding(.vertical, 2)
+                    .background(Capsule().fill(Color.white.opacity(0.18)))
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .background(
+            Capsule().fill(
+                LinearGradient(
+                    colors: toast.isPowerHour
+                        ? [Color.accentOrange, Color.brand]
+                        : [Color.brand, Color.brand.opacity(0.85)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+            )
+        )
+        .shadow(color: Color.accentOrange.opacity(0.32), radius: 12, y: 4)
+        .scaleEffect(visible ? 1.0 : 0.85)
+        .opacity(visible ? 1.0 : 0.0)
+        .onAppear {
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.7)) {
+                visible = true
+            }
+        }
+        .task(id: toast.id) {
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            withAnimation(.easeOut(duration: 0.25)) {
+                visible = false
+            }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            onDismiss()
         }
     }
 }

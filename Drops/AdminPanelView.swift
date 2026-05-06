@@ -224,6 +224,38 @@ struct AdminPanelView: View {
                         }
                         .buttonStyle(.plain)
 
+                        // Power-Hour Force-Toggle: zwingt Power-Hour permanent
+                        // an, unabhängig von Wochentag/Uhrzeit. Praktisch zum
+                        // Testen von Banner, Toast und Bonus-Logik ohne 18-Uhr
+                        // abwarten zu müssen.
+                        HStack(spacing: 12) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.accentOrange.opacity(0.15))
+                                    .frame(width: 40, height: 40)
+                                Image(systemName: "bolt.fill")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundColor(.accentOrange)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Power-Hour erzwingen")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundColor(.textPrimary)
+                                Text(store.debugForcePowerHour
+                                     ? "Aktiv — Bonus +25 immer"
+                                     : "Aus — folgt dem Zeitplan")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.textSecondary)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $store.debugForcePowerHour)
+                                .tint(.accentOrange)
+                                .labelsHidden()
+                        }
+                        .padding(12)
+                        .liquidGlass(cornerRadius: 14)
+                        .padding(.horizontal, 20)
+
                         // Live Drops Monitor — öffnet Sheet
                         Button {
                             showDropsMonitor = true

@@ -252,30 +252,40 @@ struct CreateDropView: View {
             .ignoresSafeArea()
             .allowsHitTesting(false)
 
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 8) {
-                    // ── Navigationszeile: Titel + Schließen-Button ─────────
-                    HStack {
-                        Text("Drop erstellen")
-                            .font(.system(size: 28, weight: .bold, design: .rounded))
-                            .foregroundColor(.textPrimary)
-                        Spacer()
-                        Button {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            dismiss()
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.secondary)
-                                .padding(8)
-                                .background(Color(UIColor.systemGray5).opacity(0.8),
-                                            in: Circle())
-                        }
-                        .buttonStyle(.plain)
+            VStack(spacing: 0) {
+                // ── Sticky Navigationszeile: Titel + Schließen-Button ────
+                // Liegt OBERHALB des ScrollViews und scrollt nicht mit —
+                // damit "Drop erstellen" beim Scrollen nicht hinter dem
+                // Status-Bar / der Uhrzeit verschwindet.
+                //
+                // Bewusst KEIN eigener Material-Hintergrund: Inhalt scrollt
+                // im ScrollView darunter, nicht hinter dem Header durch.
+                // Eine Material-Schicht würde sich farblich vom darunter
+                // liegenden AppAuroraBackground absetzen und unschön
+                // aussehen.
+                HStack {
+                    Text("Drop erstellen")
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .foregroundColor(.textPrimary)
+                    Spacer()
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.secondary)
+                            .padding(8)
+                            .background(Color(UIColor.systemGray5).opacity(0.8),
+                                        in: Circle())
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 6)
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
 
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 8) {
                     // ── Quick-Templates: dynamisch aus Interests + Past Drops
                     if activityName.trimmingCharacters(in: .whitespaces).isEmpty {
                         DropQuickTemplatesBar { tpl in
@@ -790,10 +800,11 @@ struct CreateDropView: View {
                     }
                     Spacer(minLength: 20)
                 }
+                }
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
+                .scrollDismissesKeyboard(.immediately)
             }
-            .scrollContentBackground(.hidden)
-            .background(Color.clear)
-            .scrollDismissesKeyboard(.immediately)
         }
         .sheet(isPresented: $showEmojiPicker) {
             EmojiPickerSheet(selected: selectedEmoji) { emoji in
@@ -804,22 +815,27 @@ struct CreateDropView: View {
             .presentationDragIndicator(.hidden)
             .sheetBackground()
         }
-        .alert("🏠 Drop in deiner Heimzone",
-               isPresented: Binding(
-                get: { pendingHomeZoneCoord != nil },
-                set: { if !$0 { pendingHomeZoneCoord = nil } }
-               )) {
-            Button("Trotzdem erstellen", role: .destructive) {
-                if let coord = pendingHomeZoneCoord {
+        // Custom Heimzone-Warn-Sheet (statt System-Alert) — bietet wärmere
+        // Optik, klare Hinweise und einen "Anderen Ort wählen"-Primärbutton
+        // damit die sichere Wahl die offensichtliche bleibt.
+        .sheet(isPresented: Binding(
+            get: { pendingHomeZoneCoord != nil },
+            set: { if !$0 { pendingHomeZoneCoord = nil } }
+        )) {
+            HomeZoneWarningSheet(
+                onProceed: {
+                    if let coord = pendingHomeZoneCoord {
+                        pendingHomeZoneCoord = nil
+                        performCreate(coord: coord)
+                    }
+                },
+                onCancel: {
                     pendingHomeZoneCoord = nil
-                    performCreate(coord: coord)
                 }
-            }
-            Button("Abbrechen", role: .cancel) {
-                pendingHomeZoneCoord = nil
-            }
-        } message: {
-            Text("Dieser Drop liegt in deiner Heimzone. Andere Nutzer können auf der Karte ungefähr sehen wo du wohnst, solange der Drop läuft.\n\nWillst du wirklich hier einen Drop starten?")
+            )
+            .presentationDetents([.fraction(0.65)])
+            .presentationDragIndicator(.visible)
+            .sheetBackground()
         }
         .fullScreenCover(isPresented: $showPinMap) {
             ZStack(alignment: .bottom) {
@@ -1287,8 +1303,9 @@ struct DropQuickTemplatesBar: View {
                             }
                             .padding(.horizontal, 14).padding(.vertical, 10)
                             // Brand-getöntes Glass — gleiche Optik wie die
-                            // Sektions-Container der CreateDropView, statt eines
-                            // grauen Material-Lookups.
+                            // anderen Sektions-Container in CreateDropView,
+                            // damit sich die Pillen nicht visuell vom Rest
+                            // abheben.
                             .background(
                                 ZStack {
                                     Capsule().fill(.ultraThinMaterial)
