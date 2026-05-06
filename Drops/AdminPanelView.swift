@@ -12,13 +12,51 @@ struct AdminPanelView: View {
     @State private var isLoading = true
     @State private var searchText = ""
     @State private var activeFilter: UserFilter = .all
+    @State private var sortMode: SortMode = .createdAt
     @State private var confirmAction: ConfirmAction? = nil
     @State private var selectedUser: AdminUserEntry? = nil
     @State private var auroraAnimate = false
     @State private var showReports = false
     @State private var showDropsMonitor = false
+    @State private var debugResetToast: String? = nil
 
     enum UserFilter { case all, banned, active, plus }
+    enum SortMode: String, CaseIterable, Identifiable {
+        case createdAt   // Neueste zuerst (Default)
+        case city        // A→Z nach Stadt, dann name
+        case name        // A→Z nach Name
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .createdAt: return "Neueste"
+            case .city:      return "Stadt"
+            case .name:      return "Name"
+            }
+        }
+    }
+
+    /// UserDefaults-Keys, die beim Debug-Reset zurückgesetzt werden.
+    private static let debugResetKeys: [String] = [
+        "ud_pushReaskShown",
+        "ud_firstDrop_created",
+        "ud_firstDrop_joined",
+        "hasSeenWelcome",
+    ]
+
+    private var debugResetSubtitle: String {
+        if let toast = debugResetToast { return toast }
+        return "Konfetti, Push-Reask, Welcome neu auslösen"
+    }
+
+    private func resetOnboardingFlags() {
+        let ud = UserDefaults.standard
+        Self.debugResetKeys.forEach { ud.removeObject(forKey: $0) }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        debugResetToast = "Zurückgesetzt ✓"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            debugResetToast = nil
+        }
+    }
 
     struct ConfirmAction: Identifiable {
         let id = UUID()
@@ -36,14 +74,30 @@ struct AdminPanelView: View {
         case .active: base = base.filter { $0.hasActiveDrop }
         case .plus:   base = base.filter { $0.isPlusUser }
         }
-        if searchText.isEmpty { return base }
-        let q = searchText.lowercased()
-        return base.filter {
-            $0.name.lowercased().contains(q) ||
-            $0.email.lowercased().contains(q) ||
-            $0.phoneNumber.lowercased().contains(q) ||
-            $0.id.lowercased().hasPrefix(q)        // UID-Prefix-Match
+        if !searchText.isEmpty {
+            let q = searchText.lowercased()
+            base = base.filter {
+                $0.name.lowercased().contains(q) ||
+                $0.email.lowercased().contains(q) ||
+                $0.phoneNumber.lowercased().contains(q) ||
+                $0.id.lowercased().hasPrefix(q)        // UID-Prefix-Match
+            }
         }
+        switch sortMode {
+        case .createdAt:
+            base.sort { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }
+        case .city:
+            // Stadt A→Z, "—" (keine Stadt) ans Ende; Tiebreaker = Name
+            base.sort { lhs, rhs in
+                let l = lhs.cityName ?? "zzz_unknown"
+                let r = rhs.cityName ?? "zzz_unknown"
+                if l == r { return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending }
+                return l.localizedCaseInsensitiveCompare(r) == .orderedAscending
+            }
+        case .name:
+            base.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        }
+        return base
     }
 
     var body: some View {
@@ -137,6 +191,39 @@ struct AdminPanelView: View {
                         }
                         .buttonStyle(.plain)
 
+                        // Debug: Onboarding-Flags zurücksetzen — für Demo/Testing.
+                        // Setzt alle einmaligen Trigger zurück (Konfetti, Push-Reask, Welcome).
+                        Button {
+                            resetOnboardingFlags()
+                        } label: {
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .fill(Color.purple.opacity(0.15))
+                                        .frame(width: 40, height: 40)
+                                    Image(systemName: "arrow.counterclockwise.circle.fill")
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundColor(.purple)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Debug — Onboarding zurücksetzen")
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundColor(.textPrimary)
+                                    Text(debugResetSubtitle)
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.textSecondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(.textTertiary)
+                            }
+                            .padding(12)
+                            .liquidGlass(cornerRadius: 14)
+                            .padding(.horizontal, 20)
+                        }
+                        .buttonStyle(.plain)
+
                         // Live Drops Monitor — öffnet Sheet
                         Button {
                             showDropsMonitor = true
@@ -189,6 +276,23 @@ struct AdminPanelView: View {
                     }
                     .padding(12)
                     .liquidGlass(cornerRadius: 14)
+                    .padding(.horizontal, 20)
+
+                    // ── Sortier-Picker ────────────────────────────────────
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.up.arrow.down")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.textSecondary)
+                        Text("Sortieren:")
+                            .font(.system(size: 13))
+                            .foregroundColor(.textSecondary)
+                        Picker("Sortierung", selection: $sortMode) {
+                            ForEach(SortMode.allCases) { mode in
+                                Text(mode.label).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
                     .padding(.horizontal, 20)
 
                     // ── Nutzerliste ───────────────────────────────────────
@@ -447,6 +551,9 @@ private struct AdminUserDetailSheet: View {
                         }
 
                         HStack(spacing: 6) {
+                            if let city = user.cityName {
+                                AdminBadge(text: city, icon: "mappin.circle.fill", color: .blue)
+                            }
                             if user.hasActiveDrop {
                                 AdminBadge(text: user.activeDropActivity ?? "Drop aktiv",
                                            icon: "dot.radiowaves.left.and.right", color: .green)

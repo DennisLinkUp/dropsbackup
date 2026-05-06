@@ -46,3 +46,37 @@ secrets.plist
 .vscode/
 .idea/
 *.swp
+
+# Claude Code worktrees & state
+.claude/
+
+# Node modules (Cloud Functions — werden lokal installiert)
+functions/node_modules/
+functions/lib/
+functions/.firebaserc
+
+# Mac OS
+.DS_Store
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+
+# Claude Code worktrees & state
+.claude/
+
+# Node modules (Cloud Functions — werden lokal installiert)
+functions/node_modules/
+functions/lib/
+functions/.firebaserc
+
+# Mac OS
+.DS_Store
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/

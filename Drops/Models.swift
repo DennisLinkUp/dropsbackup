@@ -643,6 +643,8 @@ private enum UDKey {
     static let reliabilityInviteB   = "ud_reliabilityInviteB"
     static let reliabilityNewcB     = "ud_reliabilityNewcB"
     static let reliabilityAppInvB   = "ud_reliabilityAppInvB"
+    static let reliabilityCreateB   = "ud_reliabilityCreateB"   // +5 pro Drop-Erstellung
+    static let reliabilityBoostB    = "ud_reliabilityBoostB"    // +5 für Aktion während Boost-Phase
     static let reliabilityStreak    = "ud_reliabilityStreak"
     static let firebaseUID          = "ud_firebaseUID"   // Stabile UID für Drop-Filter
     static let appleEmail           = "ud_appleEmail"    // Apple relay E-Mail (nur beim 1. Login verfügbar)
@@ -655,6 +657,65 @@ private enum UDKey {
     static let activityCategoryFilter = "ud_activity_category_filter"
     static let ageFilterMin        = "ud_ageFilterMin"
     static let ageFilterMax        = "ud_ageFilterMax"
+    static let feedDistanceFilter  = "ud_feed_distance_filter"
+    static let feedTonightOnly     = "ud_feed_tonight_only"
+}
+
+/// Distanz-Filter im Umgebungs-Tab. Default: `.city` (verhält sich wie vorher
+/// — alle Drops in der eigenen Stadt). `.nearby` und `.quarter` schränken auf
+/// Distanz vom User-Standort ein.
+enum FeedDistanceFilter: String, CaseIterable {
+    case nearby   // 1 km
+    case quarter  // 3 km
+    case city     // ganze Stadt
+
+    var meters: Double {
+        switch self {
+        case .nearby:  return 1000
+        case .quarter: return 3000
+        case .city:    return .infinity
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .nearby:  return "1 km"
+        case .quarter: return "3 km"
+        case .city:    return "Stadt"
+        }
+    }
+
+    var detailLabel: String {
+        switch self {
+        case .nearby:  return "Nähe · 1 km"
+        case .quarter: return "Viertel · 3 km"
+        case .city:    return "Ganze Stadt"
+        }
+    }
+}
+
+/// Variante des First-Drop-Celebration-Sheets — wird einmal pro Variante
+/// pro User getriggert.
+enum FirstDropCelebration: String, Identifiable {
+    case created   // Erster eigener Drop erstellt
+    case joined    // Erstem fremden Drop beigetreten
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .created: return "Dein erster Drop! 🎉"
+        case .joined:  return "Erster Drop dabei! 🙌"
+        }
+    }
+
+    var body: String {
+        switch self {
+        case .created:
+            return "Drop läuft. Wer in der Nähe ist sieht's jetzt auf der Karte. Halte dein Telefon dabei — Bluetooth bestätigt, wer wirklich vorbeikommt."
+        case .joined:
+            return "Drop joined! Schau auf der Karte wo's lang geht. Vor Ort wirst du automatisch via Bluetooth bestätigt — kein manueller Check-In."
+        }
+    }
 }
 
 // MARK: - Session Timeout Konfiguration
@@ -764,9 +825,17 @@ enum DropNotificationManager {
 
 @MainActor
 class AppStore: ObservableObject {
+    /// Schwache Referenz für AppDelegate-Hooks (z.B. Quick Actions die VOR der
+    /// SwiftUI-Scene laufen). Wird in LinkUpApp init gesetzt.
+    nonisolated(unsafe) static weak var shared: AppStore?
+
     @Published var isAuthenticated = false
     /// true = App ist gesperrt nach Timeout → Face ID erforderlich, kein Logout
     @Published var isSessionLocked = false
+    /// Pending Quick-Action — gesetzt von AppDelegate.routeQuickAction wenn
+    /// bei Cold-Start noch keine MainTabView da ist (Auth restoration läuft).
+    /// MainTabView konsumiert es beim onAppear.
+    @Published var pendingQuickAction: String? = nil
 
     @Published var currentUser = User(
         name: "Alex", emoji: "😊", isAvailable: false,
@@ -787,6 +856,11 @@ class AppStore: ObservableObject {
     /// Aktuelle Aktivitäts-Kategorie im Umgebungs-Tab-Filter. Leer = "Alle".
     /// Gültige Werte: "Kaffee", "Drink", "Sport", "Essen", "Zocken"
     @Published var activityCategoryFilter: String = ""
+    /// Distanz-Filter im Umgebungs-Tab (Nähe/Viertel/Stadt).
+    @Published var feedDistanceFilter: FeedDistanceFilter = .city
+    /// „Heute Abend"-Filter im Umgebungs-Tab — zeigt nur Drops mit
+    /// scheduledTime == "Heute Abend" oder solche die heute nach 17 Uhr starten.
+    @Published var feedTonightOnly: Bool = false
 
     // MARK: - Heimzone
     @Published var homeZoneCoordinate: CLLocationCoordinate2D? = nil
@@ -829,216 +903,6 @@ class AppStore: ObservableObject {
     ]
     private var strangerDropsCache: [MapAnnotationItem] = []
     private var strangerDropsPlaced = false
-    /// True wenn der Demo-Seed aktiv ist — verhindert dass `placeStrangerDrops`
-    /// den Cache beim ersten GPS-Update wegwischt.
-    private var isDemoSeedActive = false
-
-    // MARK: - Demo Data für App-Store-Screenshots
-    //
-    // Trigger: starte die App mit Launch-Argument `DROPS_DEMO_SEED`
-    // (in Xcode: Edit Scheme → Run → Arguments → + "DROPS_DEMO_SEED").
-    // Oder setze UserDefault: `UserDefaults.standard.set(true, forKey: "dropsDemoSeed")`.
-    //
-    // Daten sind NUR lokal — keine Firebase-Writes. Screenshots zeigen das
-    // echte App-UI mit realistischer Density, ohne Produktions-Daten zu pollen.
-
-    /// Demo-Seed: injiziert realistische Fake-Drops verteilt über alle 5 Städte
-    /// + 3 Fake-Freunde mit Avataren. Löscht vorher bestehende Seeds.
-    func seedDemoData() {
-        // Demo-Seed-Flag setzen → verhindert dass `placeStrangerDrops`
-        // den Cache beim ersten GPS-Update wipet.
-        isDemoSeedActive = true
-        strangerDropsPlaced = true   // blockiert auch reguläre Place-Logik
-
-        // Clear any previous seeds
-        strangerDropsCache = []
-
-        // Basis-Zeit: wir stagger'n Created-At ein paar Minuten bis Stunden zurück
-        let now = Date()
-
-        // Drop-Blueprint: (emoji, activity, name, age, offset-from-city-center, ageGroup)
-        typealias DropBlueprint = (emoji: String, activity: String, name: String, age: Int,
-                                   latOff: Double, lonOff: Double, minutesAgo: Int)
-        let blueprintsPerCity: [String: [DropBlueprint]] = [
-            "berlin": [
-                ("🍜", "Ramen", "Tim", 19, -0.0259, +0.0302, 150),
-                ("🌊", "See", "Laura", 18, -0.0440, -0.0359, 80),
-                ("🍺", "Feierabend", "Julia", 33, -0.0075, -0.0065, 25),
-                ("☕️", "Kaffee", "Julian", 41, -0.0149, -0.0439, 35),
-                ("🥐", "Frühstück", "Emma", 20, +0.0325, +0.0132, 5),
-                ("🚶", "Spaziergang", "Noah", 26, +0.0049, +0.0420, 100),
-                ("🎬", "Kino", "Sara", 26, -0.0425, -0.0347, 25),
-                ("🍣", "Sushi", "Andrea", 51, -0.0208, +0.0173, 35),
-                ("🏃", "Laufen", "Lena", 29, +0.0189, +0.0234, 10),
-                ("🏃", "Laufen", "Max", 27, -0.0035, -0.0293, 150),
-                ("♟️", "Schach", "Niklas", 24, +0.0251, -0.0566, 5),
-                ("🎲", "Brettspiele", "Anna", 28, +0.0386, +0.0086, 200),
-                ("🎲", "Brettspiele", "Sophie", 21, +0.0360, +0.0182, 15),
-                ("🎾", "Tennis", "Sarah", 22, -0.0222, +0.0108, 100),
-                ("🎤", "Karaoke", "Clara", 33, -0.0006, +0.0326, 10),
-                ("🍰", "Kuchen", "Ali", 34, -0.0408, -0.0151, 60),
-                ("🐕", "Hunderunde", "Finn", 24, +0.0414, +0.0230, 10),
-                ("🌊", "See", "Jessica", 40, -0.0363, -0.0083, 60),
-                ("☕️", "Kaffee", "Rolf", 65, +0.0007, -0.0502, 150),
-                ("🎮", "Zocken", "Lisa", 44, -0.0282, -0.0161, 15),
-            ],
-            "hamburg": [
-                ("🌊", "See", "Dieter", 60, +0.0084, -0.0015, 10),
-                ("🎬", "Kino", "Jochen", 48, -0.0376, +0.0514, 10),
-                ("🍣", "Sushi", "Jessica", 36, +0.0406, +0.0044, 15),
-                ("🍝", "Pasta", "Daniel", 37, -0.0200, +0.0507, 45),
-                ("🧘", "Yoga", "Sandra", 56, -0.0160, +0.0673, 150),
-                ("🎬", "Kino", "David", 32, -0.0322, -0.0374, 35),
-                ("🍺", "Feierabend", "Lena", 34, -0.0238, -0.0583, 150),
-                ("🍕", "Pizza", "Finn", 18, +0.0306, -0.0584, 20),
-                ("🏀", "Basketball", "Katrin", 43, -0.0313, +0.0592, 100),
-                ("🎸", "Jam Session", "Moritz", 32, +0.0261, -0.0421, 10),
-                ("💃", "Tanzen", "Marie", 32, +0.0309, -0.0606, 150),
-                ("🥐", "Frühstück", "Sophie", 20, +0.0256, -0.0531, 20),
-                ("🥾", "Wandern", "Tom", 31, -0.0269, -0.0051, 10),
-                ("🌳", "Park", "Andreas", 36, -0.0382, +0.0679, 5),
-                ("🍣", "Sushi", "Silke", 47, -0.0080, -0.0025, 45),
-                ("🍕", "Pizza", "Felix", 21, -0.0200, +0.0386, 60),
-                ("🏊", "Schwimmen", "Ali", 32, -0.0293, -0.0276, 5),
-                ("🍦", "Eis", "Sebastian", 40, -0.0376, +0.0114, 80),
-                ("🐕", "Hunderunde", "Hanna", 18, +0.0299, -0.0587, 10),
-                ("⚽", "Fußball", "Clara", 34, +0.0080, +0.0162, 45),
-            ],
-            "muenchen": [
-                ("🍦", "Eis", "Clara", 29, -0.0176, +0.0202, 20),
-                ("🎾", "Tennis", "Julia", 29, -0.0025, +0.0401, 10),
-                ("☕️", "Kaffee", "Jan", 26, -0.0254, -0.0268, 25),
-                ("🍝", "Pasta", "Andrea", 59, -0.0152, -0.0201, 60),
-                ("🌊", "See", "Lisa", 43, -0.0293, +0.0296, 25),
-                ("🥐", "Frühstück", "Sandra", 49, -0.0229, -0.0367, 80),
-                ("🍰", "Kuchen", "Hanna", 19, +0.0129, -0.0277, 150),
-                ("🎾", "Tennis", "Max", 25, -0.0243, -0.0071, 25),
-                ("🍷", "Wein", "Sarah", 19, +0.0082, -0.0223, 200),
-                ("🌳", "Park", "David", 33, -0.0292, -0.0397, 200),
-                ("🍰", "Kuchen", "Marie", 34, +0.0031, -0.0066, 5),
-                ("🎮", "Zocken", "Lukas", 30, -0.0173, -0.0234, 10),
-                ("🎭", "Theater", "Tobias", 44, +0.0148, +0.0398, 20),
-                ("🏃", "Laufen", "Horst", 73, -0.0283, +0.0221, 35),
-                ("📸", "Fotografieren", "Jessica", 38, -0.0139, +0.0269, 10),
-                ("🎵", "Konzert", "Monika", 48, -0.0179, +0.0391, 35),
-                ("🎮", "Zocken", "Katrin", 38, -0.0283, -0.0287, 35),
-                ("🏀", "Basketball", "Ralf", 50, +0.0084, -0.0094, 80),
-                ("🎨", "Malen", "Thomas", 59, +0.0280, -0.0301, 25),
-                ("🍷", "Wein", "Jonas", 20, +0.0136, -0.0174, 100),
-            ],
-            "koeln": [
-                ("🎳", "Bowling", "Finn", 22, -0.0211, -0.0387, 45),
-                ("☕️", "Kaffee", "Ali", 33, +0.0127, +0.0374, 200),
-                ("🥾", "Wandern", "Anna", 30, +0.0084, +0.0139, 10),
-                ("🎮", "Zocken", "Julia", 31, -0.0118, +0.0168, 80),
-                ("🍝", "Pasta", "Paul", 21, +0.0121, +0.0342, 100),
-                ("🎸", "Jam Session", "Nina", 25, -0.0133, -0.0246, 100),
-                ("🎲", "Brettspiele", "David", 28, +0.0008, +0.0250, 200),
-                ("🏃", "Laufen", "Stefan", 43, +0.0111, +0.0101, 10),
-                ("⚽", "Fußball", "Katrin", 38, -0.0240, -0.0386, 60),
-                ("🍔", "Burger", "Moritz", 28, +0.0148, -0.0099, 45),
-                ("⚽", "Fußball", "Ben", 18, +0.0267, +0.0306, 10),
-                ("💃", "Tanzen", "Sarah", 22, -0.0024, +0.0049, 10),
-                ("🚶", "Spaziergang", "Laura", 23, +0.0021, +0.0050, 35),
-                ("🌳", "Park", "Sara", 31, +0.0225, +0.0041, 15),
-                ("🏛️", "Museum", "Max", 29, +0.0181, +0.0018, 150),
-                ("⚽", "Fußball", "Emma", 23, -0.0146, -0.0194, 35),
-                ("🌊", "See", "Lea", 19, -0.0080, -0.0295, 20),
-                ("🍔", "Burger", "Lena", 33, -0.0023, -0.0372, 45),
-                ("🎵", "Konzert", "Monika", 56, -0.0327, +0.0324, 100),
-                ("🎵", "Konzert", "Clara", 29, +0.0172, +0.0300, 45),
-            ],
-            "frankfurt": [
-                ("🌊", "See", "Daniel", 44, +0.0237, -0.0011, 25),
-                ("💃", "Tanzen", "Noah", 30, +0.0100, +0.0279, 200),
-                ("🏃", "Laufen", "Julian", 44, +0.0020, +0.0380, 100),
-                ("🎸", "Jam Session", "Nadine", 41, -0.0217, -0.0036, 5),
-                ("🎾", "Tennis", "Lena", 32, -0.0103, +0.0244, 45),
-                ("🏀", "Basketball", "Lisa", 39, +0.0199, -0.0028, 200),
-                ("🌊", "See", "Mia", 19, +0.0089, +0.0263, 150),
-                ("🍷", "Wein", "Maya", 38, +0.0202, +0.0113, 20),
-                ("🍝", "Pasta", "Anna", 34, +0.0266, -0.0033, 25),
-                ("🎬", "Kino", "Paul", 23, +0.0130, +0.0260, 15),
-                ("🎮", "Zocken", "Felix", 20, +0.0045, +0.0382, 45),
-                ("🎤", "Karaoke", "Sandra", 46, +0.0055, +0.0309, 20),
-                ("🥐", "Frühstück", "Eva", 44, +0.0182, +0.0277, 100),
-                ("🍷", "Wein", "Nina", 30, -0.0256, +0.0138, 5),
-                ("📸", "Fotografieren", "Katrin", 41, +0.0274, +0.0127, 60),
-                ("🍰", "Kuchen", "Ali", 29, +0.0069, +0.0392, 60),
-                ("🚶", "Spaziergang", "Moritz", 29, -0.0106, -0.0238, 10),
-                ("🏀", "Basketball", "Jochen", 57, -0.0021, +0.0103, 45),
-                ("🎨", "Malen", "Laura", 19, -0.0007, -0.0136, 25),
-                ("🎨", "Malen", "Sarah", 23, +0.0226, +0.0052, 80),
-            ],
-        ]
-
-        for city in ServiceCities.all {
-            guard let bps = blueprintsPerCity[city.id] else { continue }
-            for bp in bps {
-                let coord = CLLocationCoordinate2D(
-                    latitude:  city.center.latitude  + bp.latOff,
-                    longitude: city.center.longitude + bp.lonOff
-                )
-                let ageGroup = AgeGroup.group(for: bp.age)
-                let host = DropParticipant(
-                    name: bp.name, emoji: bp.emoji,
-                    reliabilityScore: 100 + Int.random(in: -30...60),
-                    reliabilityCommits: Int.random(in: 3...25),
-                    age: bp.age
-                )
-                let item = MapAnnotationItem(
-                    id: UUID(),
-                    name: bp.name,
-                    emoji: bp.emoji,
-                    activity: bp.activity,
-                    coordinate: coord,
-                    type: .stranger,
-                    dropDescription: nil,
-                    scheduledTime: "Jetzt",
-                    participants: [host],
-                    createdAt: now.addingTimeInterval(-Double(bp.minutesAgo) * 60),
-                    maxParticipants: Int.random(in: 4...10),
-                    durationMinutes: 120,
-                    dropLocationType: .current,
-                    isFuzzy: false,
-                    creatorAgeGroup: ageGroup,
-                    creatorAge: bp.age,
-                    locationTitle: city.name,
-                    realCoordinate: nil,
-                    hostGender: nil,
-                    isBoosted: false,
-                    hostUID: nil
-                )
-                strangerDropsCache.append(item)
-            }
-        }
-
-        // Fake-Freunde (3 Stück, online & offline gemischt)
-        friends = [
-            User(name: "Sophie", emoji: "☕️",
-                 isAvailable: true, statusMessage: "Ist verfügbar",
-                 coordinate: ServiceCities.all[0].center,
-                 firebaseUID: "demo_friend_1",
-                 reliabilityPoints: 185),
-            User(name: "Max",    emoji: "🏃",
-                 isAvailable: true, statusMessage: "Ist verfügbar",
-                 coordinate: ServiceCities.all[0].center,
-                 firebaseUID: "demo_friend_2",
-                 reliabilityPoints: 230),
-            User(name: "Lena",   emoji: "🎨",
-                 isAvailable: false, statusMessage: "Offline",
-                 coordinate: ServiceCities.all[0].center,
-                 firebaseUID: "demo_friend_3",
-                 reliabilityPoints: 95),
-        ]
-        knownFriendUIDs = Set(friends.compactMap { $0.firebaseUID })
-
-        // strangerDropsCache ist privat (nicht @Published) → View-Refresh manuell
-        // triggern damit die Pins auf der Karte sofort erscheinen.
-        objectWillChange.send()
-
-        print("[demo] Seed geladen: \(strangerDropsCache.count) Drops + \(friends.count) Freunde")
-    }
     private var expiryTimer: Timer?
 
     @Published var friends: [User] = []
@@ -1142,6 +1006,11 @@ class AppStore: ObservableObject {
         // DIAGNOSTIC: wenn du diese Zeile in der Console siehst, läuft init().
         print("🚀🚀🚀 [AppStore.init] START — args=\(CommandLine.arguments)")
 
+        // Singleton-Referenz IMMEDIATELY setzen — vor jedem AppDelegate-Hook.
+        // AppDelegate.routeQuickAction prüft AppStore.shared, daher muss die
+        // Referenz vor `application(_:didFinishLaunchingWithOptions:)` da sein.
+        Self.shared = self
+
         // ── Firebase-Session beim App-Start wiederherstellen ──────────────
         // isAuthenticated startet als false. Wenn Firebase einen gültigen User
         // hat UND das Onboarding abgeschlossen wurde, direkt in die App.
@@ -1233,6 +1102,7 @@ class AppStore: ObservableObject {
                     DispatchQueue.main.async {
                         if p.isAdmin    { self.isAdmin    = true }
                         if p.isPlusUser { self.isPlusUser = true }   // Admin-gewährtes Plus
+
                         if let name = p.name, !name.isEmpty {
                             self.currentUser.name = name
                         }
@@ -1352,17 +1222,10 @@ class AppStore: ObservableObject {
 
         startExpiryTimer()
 
-        // ── Demo-Seed für App-Store-Screenshots ──────────────────────────
-        // Trigger: Launch-Argument `DROPS_DEMO_SEED` oder UserDefault
-        // `dropsDemoSeed`. SYNCHRON hier aufrufen — nicht async dispatchen,
-        // sonst könnte zwischenzeitlich `placeStrangerDrops` (via GPS-Update)
-        // den Cache leeren bevor wir ihn befüllen.
-        let demoEnabled = CommandLine.arguments.contains("DROPS_DEMO_SEED")
-            || UserDefaults.standard.bool(forKey: "dropsDemoSeed")
-        print("[demo] Launch check — arg=\(CommandLine.arguments), enabled=\(demoEnabled)")
-        if demoEnabled {
-            seedDemoData()
-        }
+        // Stale Demo-UserDefaults aus früheren Builds aufräumen — falls jemand
+        // diese Keys noch von der Beta-Phase im UserDefaults stehen hat.
+        UserDefaults.standard.removeObject(forKey: "dropsDemoSeed")
+        UserDefaults.standard.removeObject(forKey: "dropsDemoOff")
 
         // ── Drops+ Entitlements prüfen ────────────────────────────────────
         Task {
@@ -1384,7 +1247,8 @@ class AppStore: ObservableObject {
             guard let self = self,
                   let isPlus = notification.userInfo?["isPlus"] as? Bool
             else { return }
-            self.isPlusUser = isPlus
+            // Trotz queue: .main verlangt Swift 6 explizites MainActor-Hopping.
+            Task { @MainActor in self.isPlusUser = isPlus }
         }
 
         // Benachrichtigungs-, Standort- und Bluetooth-Berechtigungen werden NICHT
@@ -1398,7 +1262,7 @@ class AppStore: ObservableObject {
         }
 
         // Auth-Listener: reagiert auf Logout/Token-Ablauf zur Laufzeit
-        FirebaseAuth.Auth.auth().addStateDidChangeListener { [weak self] _, user in
+        _ = FirebaseAuth.Auth.auth().addStateDidChangeListener { [weak self] _, user in
             DispatchQueue.main.async {
                 let onboarded = UserDefaults.standard.bool(forKey: "hasOnboarded")
                 if user == nil && onboarded && self?.isAuthenticated == true {
@@ -1680,6 +1544,8 @@ class AppStore: ObservableObject {
         ud.set(userPhone,            forKey: UDKey.userPhone)
         ud.set(genderFilterEnabled,  forKey: UDKey.genderFilterEnabled)
         ud.set(activityCategoryFilter, forKey: UDKey.activityCategoryFilter)
+        ud.set(feedDistanceFilter.rawValue, forKey: UDKey.feedDistanceFilter)
+        ud.set(feedTonightOnly,      forKey: UDKey.feedTonightOnly)
         ud.set(Array(blockedUserNames),                       forKey: UDKey.blockedUsers)
         ud.set(selectedAgeGroups.map { $0.rawValue },         forKey: UDKey.selectedAgeGroups)
         ud.set(ageFilterMin, forKey: UDKey.ageFilterMin)
@@ -1705,6 +1571,8 @@ class AppStore: ObservableObject {
         ud.set(reliabilityScore.dropInvitesPoints, forKey: UDKey.reliabilityInviteB)
         ud.set(reliabilityScore.newcomerHostPoints, forKey: UDKey.reliabilityNewcB)
         ud.set(reliabilityScore.appInvitesPoints,  forKey: UDKey.reliabilityAppInvB)
+        ud.set(reliabilityScore.creationBonusPoints, forKey: UDKey.reliabilityCreateB)
+        ud.set(reliabilityScore.boostBonusPoints, forKey: UDKey.reliabilityBoostB)
         ud.set(reliabilityScore.currentStreak,     forKey: UDKey.reliabilityStreak)
         saveSelfie()
 
@@ -1797,6 +1665,8 @@ class AppStore: ObservableObject {
                 "reliabilityInviteBonus":  reliabilityScore.dropInvitesPoints,
                 "reliabilityNewcomerBonus": reliabilityScore.newcomerHostPoints,
                 "reliabilityAppInviteBonus": reliabilityScore.appInvitesPoints,
+                "reliabilityCreationBonus": reliabilityScore.creationBonusPoints,
+                "reliabilityBoostBonus":   reliabilityScore.boostBonusPoints,
                 "reliabilityCurrentStreak": reliabilityScore.currentStreak,
                 "reliabilityPoints":       points
             ], merge: true)
@@ -1893,7 +1763,7 @@ class AppStore: ObservableObject {
                     } else {
                         print("[selfie] loadProfileImageURL Firestore-Fehler (\(ns.code)): \(error.localizedDescription)")
                         // Harter Fehler → RTDB als Fallback (dort liegt die URL auch)
-                        self.loadProfileImageURLFromRTDBFallback()
+                        DispatchQueue.main.async { self.loadProfileImageURLFromRTDBFallback() }
                     }
                     return
                 }
@@ -1914,7 +1784,7 @@ class AppStore: ObservableObject {
                     }
                 } else {
                     print("[selfie] loadProfileImageURL: keine profileImageURL im Firestore-Dokument — RTDB-Fallback")
-                    self.loadProfileImageURLFromRTDBFallback()
+                    DispatchQueue.main.async { self.loadProfileImageURLFromRTDBFallback() }
                 }
                 if let phone = data?["phoneNumber"] as? String, !phone.isEmpty {
                     DispatchQueue.main.async {
@@ -1984,6 +1854,11 @@ class AppStore: ObservableObject {
         userPhone           = ud.string(forKey: UDKey.userPhone)  ?? ""
         genderFilterEnabled = ud.bool(forKey: UDKey.genderFilterEnabled)
         activityCategoryFilter = ud.string(forKey: UDKey.activityCategoryFilter) ?? ""
+        if let raw = ud.string(forKey: UDKey.feedDistanceFilter),
+           let v = FeedDistanceFilter(rawValue: raw) {
+            feedDistanceFilter = v
+        }
+        feedTonightOnly = ud.bool(forKey: UDKey.feedTonightOnly)
         if let blocked = ud.stringArray(forKey: UDKey.blockedUsers) {
             blockedUserNames = Set(blocked)
         }
@@ -2034,6 +1909,8 @@ class AppStore: ObservableObject {
                 dropInvitesPoints:  ud.integer(forKey: UDKey.reliabilityInviteB),
                 newcomerHostPoints: ud.integer(forKey: UDKey.reliabilityNewcB),
                 appInvitesPoints:   ud.integer(forKey: UDKey.reliabilityAppInvB),
+                creationBonusPoints:ud.integer(forKey: UDKey.reliabilityCreateB),
+                boostBonusPoints:   ud.integer(forKey: UDKey.reliabilityBoostB),
                 currentStreak:      ud.integer(forKey: UDKey.reliabilityStreak)
             )
         }
@@ -2084,6 +1961,10 @@ class AppStore: ObservableObject {
         // Kein Beitritt wenn eigener Drop aktiv oder bereits einem anderen beigetreten
         guard !isInActiveDrop else { return false }
         guard !hasJoinedDrop(dropID: drop.id) else { return false }
+        // Service-Zone-Gate: User muss in einer der 5 Launch-Städte sein um zu joinen.
+        guard !BetaConfig.cityRestrictionEnabled
+                || ServiceCities.isInside(currentUser.coordinate)
+        else { return false }
         // Cooldown prüfen: nach Verlassen 10 Min sperren
         if let leftAt = dropLeaveTimes[drop.id],
            Date().timeIntervalSince(leftAt) < AppStore.joinCooldown {
@@ -2117,10 +1998,15 @@ class AppStore: ObservableObject {
             joinerID: uid,
             joinerName: currentUser.name,
             joinerEmoji: currentUser.emoji,
-            joinerAge: userAge
+            joinerAge: userAge,
+            joinerLat: currentUser.coordinate.latitude,
+            joinerLng: currentUser.coordinate.longitude
         )
         // Auf DropIns des Hosts hören (falls der Host derselbe User auf anderem Gerät ist – Schutz)
         startObservingDropIns(forDropID: drop.id.uuidString)
+
+        // First-Drop-Celebration: nur beim allerersten Join.
+        maybeCelebrateFirstDrop(.joined)
         return true
     }
 
@@ -2228,8 +2114,11 @@ class AppStore: ObservableObject {
             reliabilityScore.totalCommits += 1
             reliabilityScore.showUps += 1
             applyStreakBonus()
+            // Boost: +5 wenn die Umgebung gerade leer ist
+            applyBoostBonusIfActive(reason: "Treffen bestätigt")
             saveAll()                           // Score lokal persistieren
             pushReliabilityScoreToFirestore()   // Score für andere sichtbar machen
+            maybeAskForReview()                 // Review nach guten Show-Up-Meilensteinen
         }
     }
 
@@ -2238,13 +2127,46 @@ class AppStore: ObservableObject {
     private func applyStreakBonus() {
         reliabilityScore.currentStreak += 1
         if reliabilityScore.currentStreak % 5 == 0 {
-            reliabilityScore.streakBonusPoints += 20
+            reliabilityScore.streakBonusPoints += 30
         }
     }
 
     /// Bricht den Streak bei einem No-Show.
     private func breakStreak() {
         reliabilityScore.currentStreak = 0
+    }
+
+    // MARK: - Boost-Phase (Umgebungs-Tab leer → +5 Bonus)
+    //
+    // Wenn weniger als 5 Drops in der näheren Umgebung des Users sind, ist
+    // die App "leer" — wir incentivieren in dem Moment Aktionen mit einem
+    // +5-Boost: einmal beim Erstellen, einmal beim Bestätigen eines Treffens
+    // (entweder als Joiner via confirmEncounter oder als Host via recordHostSuccess).
+    static let boostThreshold = 5
+    static let boostBonus     = 15
+
+    /// True wenn aktuell weniger als `boostThreshold` Drops in Reichweite des
+    /// Users sind. Quelle: `allMapAnnotations` gefiltert auf den Radius-Filter
+    /// — gleiche Logik wie die Karte/Feed sieht. Eigene Drops zählen mit (Host
+    /// macht für die Region trotzdem Aktivität sichtbar).
+    var isBoostPhaseActive: Bool {
+        let visible = allMapAnnotations.filter { isWithinRadius($0.coordinate) }
+        return visible.count < Self.boostThreshold
+    }
+
+    /// Vergibt den Boost-Bonus wenn die Umgebung gerade leer ist.
+    /// Wird von createDrop / confirmEncounter / recordHostSuccess aufgerufen.
+    /// Persistierung + Firestore-Push übernimmt der Aufrufer (saveAll).
+    fileprivate func applyBoostBonusIfActive(reason: String) {
+        guard isBoostPhaseActive else { return }
+        reliabilityScore.boostBonusPoints += Self.boostBonus
+        Task { @MainActor in
+            PushNotificationManager.shared.notifyPointsEarned(
+                delta: Self.boostBonus,
+                totalPoints: reliabilityScore.points,
+                reason: "Boost: \(reason)"
+            )
+        }
     }
 
     // MARK: - Drop-Invite-Bonus-Tracking
@@ -2285,30 +2207,33 @@ class AppStore: ObservableObject {
     private func maybeAwardFirstArrivalBonus() {
         guard activeJoinedDropID != nil else { return }           // Nur bei gejointem Drop
         guard bluetoothMeetup.confirmedTokens.isEmpty else { return } // Schon jemand anderes da
-        reliabilityScore.firstArrivalPoints += 5
+        reliabilityScore.firstArrivalPoints += 10
     }
 
     /// Wird aufgerufen wenn ein eigener Drop zustande gekommen ist (min. 1 weiterer Teilnehmer
-    /// war vor Ort). +8 Host-Bonus + Prüfung Neuling-Host-Bonus (+3 pro Drop-Entdecker).
+    /// war vor Ort). +12 Host-Bonus + Prüfung Neuling-Host-Bonus (+5 pro Drop-Entdecker).
     func recordHostSuccess(arrivedParticipants: [DropParticipant]) {
         reliabilityScore.hostSuccesses += 1
         reliabilityScore.totalCommits += 1
         reliabilityScore.showUps += 1
         applyStreakBonus()
-        // Neuling-Bonus: für jeden gejointen Drop-Entdecker (<200 Pkt) +3
+        // Neuling-Bonus: für jeden gejointen Drop-Entdecker (<200 Pkt) +5
         let newcomers = arrivedParticipants.filter {
             ReliabilityScore.badge(forPoints: $0.reliabilityScore) == "Drop-Entdecker"
                 || ReliabilityScore.badge(forPoints: $0.reliabilityScore) == "Neustart"
         }
-        reliabilityScore.newcomerHostPoints += newcomers.count * 3
+        reliabilityScore.newcomerHostPoints += newcomers.count * 5
+        // Boost: +5 wenn die Umgebung gerade leer ist
+        applyBoostBonusIfActive(reason: "Drop gehostet")
         saveAll()
         pushReliabilityScoreToFirestore()
+        maybeAskForReview()
     }
 
     /// Wird aufgerufen wenn jemand den Drop via deiner Einladung gejoint hat.
     /// Aufrufer muss sicherstellen, dass der Joiner via Link vom aktuellen User kam.
     func recordDropInviteJoined() {
-        reliabilityScore.dropInvitesPoints += 5
+        reliabilityScore.dropInvitesPoints += 10
         saveAll()
         pushReliabilityScoreToFirestore()
     }
@@ -2316,7 +2241,7 @@ class AppStore: ObservableObject {
     /// Wird aufgerufen wenn ein von diesem User eingeladener Freund Drops neu installiert
     /// und das Onboarding abgeschlossen hat (via deeplink-Zuordnung).
     func recordAppInviteCompleted() {
-        reliabilityScore.appInvitesPoints += 10
+        reliabilityScore.appInvitesPoints += 25
         saveAll()
         pushReliabilityScoreToFirestore()
     }
@@ -2715,6 +2640,10 @@ class AppStore: ObservableObject {
     func sendJoinRequest(to drop: MapAnnotationItem) {
         guard !isInActiveDrop else { return }
         guard !hasJoinedDrop(dropID: drop.id) else { return }
+        // Service-Zone-Gate: User muss in einer der 5 Launch-Städte sein um zu joinen.
+        guard !BetaConfig.cityRestrictionEnabled
+                || ServiceCities.isInside(currentUser.coordinate)
+        else { return }
         if let leftAt = dropLeaveTimes[drop.id],
            Date().timeIntervalSince(leftAt) < AppStore.joinCooldown { return }
 
@@ -2762,7 +2691,6 @@ class AppStore: ObservableObject {
     /// Nach Accept: echte Koordinate (realCoordinate) verwenden statt fuzzy.
     private func completeJoin(drop: MapAnnotationItem) {
         if let handle = myJoinStatusObserverHandle {
-            let uid = FirebaseAuth.Auth.auth().currentUser?.uid ?? currentUser.id.uuidString
             RealtimeDBManager.shared.removeJoinRequestObserver(handle, dropID: drop.id.uuidString)
             myJoinStatusObserverHandle = nil
         }
@@ -2789,8 +2717,13 @@ class AppStore: ObservableObject {
             dropID: drop.id.uuidString,
             joinerID: FirebaseAuth.Auth.auth().currentUser?.uid ?? currentUser.id.uuidString,
             joinerName: currentUser.name, joinerEmoji: currentUser.emoji,
-            joinerAge: userAge
+            joinerAge: userAge,
+            joinerLat: currentUser.coordinate.latitude,
+            joinerLng: currentUser.coordinate.longitude
         )
+
+        // First-Drop-Celebration: nur beim allerersten Join.
+        maybeCelebrateFirstDrop(.joined)
     }
 
     func setActiveJoin(_ id: UUID) {
@@ -2883,7 +2816,94 @@ class AppStore: ObservableObject {
         pushReliabilityScoreToFirestore()   // Score für andere sichtbar machen
     }
 
-    @Published var reliabilityScore = ReliabilityScore(totalCommits: 0, showUps: 0, noShows: 0)
+    @Published var reliabilityScore = ReliabilityScore(totalCommits: 0, showUps: 0, noShows: 0) {
+        didSet {
+            // Erster ShowUp eines Users → höflicher Push-Reask-Sheet falls er
+            // im Onboarding abgelehnt hatte. Apple erlaubt keinen zweiten
+            // System-Dialog, der Sheet leitet ihn dann zu den Einstellungen.
+            if reliabilityScore.showUps == 1 && oldValue.showUps == 0 {
+                maybeShowPushReask()
+            }
+
+            // Notification bei Punkt-Gewinn (Show-Up = +5, etc.).
+            // Skip beim allerersten Set (App-Start mit 0:0:0 Default).
+            let delta = reliabilityScore.points - oldValue.points
+            if delta > 0 && oldValue.totalCommits > 0 {
+                let reason: String
+                if reliabilityScore.showUps > oldValue.showUps {
+                    reason = "Drop besucht"
+                } else if reliabilityScore.totalCommits > oldValue.totalCommits {
+                    reason = "Drop verbindlich erstellt"
+                } else {
+                    reason = "Aktivität bestätigt"
+                }
+                PushNotificationManager.shared.notifyPointsEarned(
+                    delta: delta,
+                    totalPoints: reliabilityScore.points,
+                    reason: reason
+                )
+            }
+        }
+    }
+
+    /// Steuert das Push-Reask-Sheet (siehe `maybeShowPushReask()`).
+    @Published var showPushReaskSheet: Bool = false
+
+    /// Trigger-Flag für das native In-App-Review-Sheet (StoreKit `requestReview`).
+    /// Wird gesetzt nach „guten Momenten" (3./10./25. Show-Up). LinkUpApp's
+    /// ReviewPromptModifier reagiert darauf und ruft `requestReview()` auf.
+    @Published var shouldShowReviewPrompt: Bool = false
+
+    /// Wird intern aufgerufen wenn ein guter Moment vorbei ist (Show-Up bestätigt etc.).
+    /// Trigger-Schwelle: showUps ∈ {3, 10, 25} und letzte Anfrage ≥90 Tage her.
+    /// Apple's StoreKit limitiert intern auf 3× pro 365 Tage — falls schon erreicht
+    /// ist `requestReview()` ein No-Op.
+    func maybeAskForReview() {
+        let triggerCounts: Set<Int> = [3, 10, 25]
+        guard triggerCounts.contains(reliabilityScore.showUps) else { return }
+
+        let last = UserDefaults.standard.double(forKey: "ud_lastReviewRequestedAt")
+        if last > 0 {
+            let daysAgo = (Date().timeIntervalSince1970 - last) / 86_400
+            guard daysAgo >= 90 else { return }
+        }
+        // 0.8s Delay damit Confetti / Erfolgs-Toast erst zu Ende läuft, dann Sheet
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.shouldShowReviewPrompt = true
+        }
+    }
+
+    /// Steuert das First-Drop-Celebration-Sheet — Konfetti + Welcome-Text
+    /// wenn der User seinen ersten Drop erstellt oder beigetreten ist.
+    /// Wert: nil = nicht zeigen, "created" / "joined" für Variante.
+    @Published var firstDropCelebrationKind: FirstDropCelebration? = nil
+
+    /// Triggert das First-Drop-Celebration-Sheet einmalig pro Variante
+    /// (created / joined). Wird in UserDefaults persistiert.
+    func maybeCelebrateFirstDrop(_ kind: FirstDropCelebration) {
+        let ud = UserDefaults.standard
+        let key = "ud_firstDrop_\(kind.rawValue)"
+        guard !ud.bool(forKey: key) else { return }
+        ud.set(true, forKey: key)
+        firstDropCelebrationKind = kind
+    }
+
+    /// Zeigt den Reask-Sheet einmalig nach dem ersten ShowUp wenn Push nicht
+    /// authorisiert ist. Der Trigger wird in UserDefaults persistiert, damit
+    /// er pro User nur einmal erscheint — egal wie viele ShowUps folgen.
+    private func maybeShowPushReask() {
+        let ud = UserDefaults.standard
+        guard !ud.bool(forKey: "ud_pushReaskShown") else { return }
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            guard settings.authorizationStatus != .authorized,
+                  settings.authorizationStatus != .provisional
+            else { return }
+            DispatchQueue.main.async {
+                self.showPushReaskSheet = true
+                ud.set(true, forKey: "ud_pushReaskShown")
+            }
+        }
+    }
 
     @Published var alerts: [AlertItem] = []
 
@@ -2950,10 +2970,8 @@ class AppStore: ObservableObject {
                 isBoosted: drop.isBoosted
             ))
         }
-        // Demo-Seed oder keine Live-Drops → lokaler Cache. Bei aktivem Seed
-        // überschreiben wir den Firebase-Pfad IMMER, damit Screenshots auch
-        // bei vorhandenen Production-Drops immer die gleichen Fake-Pins zeigen.
-        if isDemoSeedActive || liveStrangerDrops.isEmpty {
+        // Wenn keine Live-Drops da sind → lokaler Cache (kann leer sein in Production)
+        if liveStrangerDrops.isEmpty {
             items += strangerDropsCache.filter {
                 !blockedUserNames.contains($0.name)
                     && !$0.isFull
@@ -3022,8 +3040,6 @@ class AppStore: ObservableObject {
     }
 
     func placeStrangerDrops(around center: CLLocationCoordinate2D) {
-        // Demo-Seed darf nicht überschrieben werden!
-        if isDemoSeedActive { return }
         // Reguläre Logik: Drops kommen live aus Firebase, Cache bleibt leer.
         guard !strangerDropsPlaced else { return }
         strangerDropsPlaced = true
@@ -3128,6 +3144,10 @@ class AppStore: ObservableObject {
                 lng: coord.longitude
             )
         }
+
+        // Last-Known-Location für „Drop in der Nähe"-Pushes (Cloud Function).
+        // Throttled auf 1× pro 10 Min, gerundet auf ~100m (3 Nachkommastellen) für Privacy.
+        RealtimeDBManager.shared.maybeUpdateLastKnownLocation(coord: coord)
 
         let isNowInHomeZone = isInHomeZone(coord)
 
@@ -3571,10 +3591,22 @@ class AppStore: ObservableObject {
             expiresAt: drop.expiresAt, scheduledTime: scheduledTime, hostGender: userGender,
             maxParticipants: drop.maxParticipants
         )
+        // +10 Bonus für jeden erstellten Drop — Launch-Motivation, belohnt Mut zum Hosten
+        // unabhängig vom Outcome.
+        reliabilityScore.creationBonusPoints += 10
+        // Zusätzlicher +5 Boost wenn die Umgebung gerade leer ist (<5 Drops in Reichweite).
+        // ⚠ Vor dem `activeDrops.append(...)` würde der eigene Drop nicht mitzählen,
+        // hier zählt er aber schon — daher echte Lücken-Aktivierung wenn vorher leer.
+        applyBoostBonusIfActive(reason: "Drop erstellt")
+        saveAll()
+        pushReliabilityScoreToFirestore()
         DropNotificationManager.requestPermission()   // Lazy: erst beim ersten Drop fragen
         DropNotificationManager.scheduleExpiryReminders(for: drop)
         startDropLiveActivity(drop: drop, isHost: true)
         Task { @MainActor in PushNotificationManager.shared.trackAction() }
+
+        // First-Drop-Celebration: nur beim allerersten eigenen Drop.
+        maybeCelebrateFirstDrop(.created)
 
         // Host beobachtet eingehende DropIns (nach Accept) und neue Join-Requests
         startObservingDropIns(forDropID: drop.id.uuidString)
@@ -3610,17 +3642,38 @@ class AppStore: ObservableObject {
         stopObservingJoinRequests()
         RealtimeDBManager.shared.cleanupJoinRequests(dropID: id.uuidString)
         RealtimeDBManager.shared.cleanupDropIns(dropID: id.uuidString)
-        // Host-Erfolg: wenn min. 1 weiterer Teilnehmer dabei war → +8 Bonus
-        // + Neuling-Host-Bonus wenn darunter Drop-Entdecker/Neustart-User sind
-        if let drop = activeDrops.first(where: { $0.id == id }),
-           drop.participants.count >= 2 {
-            let others = Array(drop.participants.dropFirst())
-            let asDropParts = others.map { user in
-                DropParticipant(name: user.name, emoji: user.emoji,
-                                reliabilityScore: 100,  // Tatsächliche Punkte unbekannt — neutral
-                                reliabilityCommits: 0)
+        // Drei Fälle bei Host-Cancel:
+        //   1) ≥2 Teilnehmer da → Host-Erfolg (+8) + Neuling-Bonus
+        //   2) Pending Joiner wartet ≥12 min → Host-No-Show (-25)
+        //   3) Sonst (kein Joiner, oder noch frische Anfrage <12 min) → KEINE Buchung
+        //
+        // Launch-Phase-Toleranz: solange kein Joiner unterwegs war, wird ein Cancel
+        // gar nicht in der Quote sichtbar. Verhindert dass User in Städten mit wenig
+        // Aktivität durch reines Trying „bestraft" werden.
+        if let drop = activeDrops.first(where: { $0.id == id }) {
+            let pendingForThisDrop = pendingJoinRequests.filter { $0.dropID == id.uuidString }
+            let hasOldPending = pendingForThisDrop.contains {
+                Date().timeIntervalSince($0.requestedAt) >= 12 * 60
             }
-            recordHostSuccess(arrivedParticipants: asDropParts)
+
+            if drop.participants.count >= 2 {
+                // (1) Erfolg
+                let others = Array(drop.participants.dropFirst())
+                let asDropParts = others.map { user in
+                    DropParticipant(name: user.name, emoji: user.emoji,
+                                    reliabilityScore: 100,  // Tatsächliche Punkte unbekannt — neutral
+                                    reliabilityCommits: 0)
+                }
+                recordHostSuccess(arrivedParticipants: asDropParts)
+            } else if hasOldPending {
+                // (2) Host-No-Show: jemand wartet schon ≥12 min, Host bricht ab
+                reliabilityScore.totalCommits += 1
+                reliabilityScore.noShows += 1
+                breakStreak()
+                saveAll()
+                pushReliabilityScoreToFirestore()
+            }
+            // (3) Sonst: clean cancel, keine Buchung — egal wie lange der Drop offen war.
         }
         activeDrops.removeAll { $0.id == id }
         currentUser.isAvailable = false

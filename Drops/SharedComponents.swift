@@ -50,7 +50,7 @@ struct RemoteProfileImage: View {
             }
         }
         .onAppear { loadImage() }
-        .onChange(of: url) { _ in loadImage() }
+        .onChange(of: url) { _, _ in loadImage() }
     }
 
     private func loadImage() {
@@ -177,6 +177,7 @@ struct AppAuroraBackground: View {
 // MARK: - Empty State: Keine Drops in der Nähe
 
 struct DropsEmptyState: View {
+    var onCreateTap: (() -> Void)? = nil
     @State private var pulse0 = false
     @State private var pulse1 = false
     @State private var pulse2 = false
@@ -209,15 +210,32 @@ struct DropsEmptyState: View {
             .frame(width: 180, height: 180)
 
             VStack(spacing: 6) {
-                Text("Keine Drops in der Nähe")
+                Text("Hier ist's gerade ruhig 🌅")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                     .foregroundColor(.textPrimary)
-                Text("Sei der Erste und erstell einen Drop –\noder erweitere deinen Radius in den Einstellungen.")
+                Text("Sei der erste der was startet —\nSpaziergang, Kaffee, Sport. Wer in der Nähe ist, sieht's sofort.")
                     .font(.system(size: 13))
                     .foregroundColor(.textTertiary)
                     .multilineTextAlignment(.center)
                     .lineSpacing(3)
                     .padding(.horizontal, 32)
+            }
+
+            if let action = onCreateTap {
+                Button(action: action) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                        Text("Drop erstellen")
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 22).padding(.vertical, 12)
+                    .background(Capsule().fill(Color.brand))
+                    .shadow(color: Color.brand.opacity(0.35), radius: 10, y: 4)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 6)
             }
         }
         .onAppear {
@@ -307,7 +325,8 @@ struct DropShareButton: View {
 
     private func shareDrops() {
         let deepLink = "https://drops-app.de/drop/\(item.id.uuidString)"
-        let text = "\(item.emoji) \(item.activity) – \(item.name) teilt gerade einen Drop auf Drops."
+        let location = item.locationTitle.isEmpty ? "" : " · \(item.locationTitle)"
+        let text = "\(item.emoji) \(item.activity)\(location) — komm vorbei. Spontan, vor Ort, kein Smalltalk. 👋"
         let items: [Any] = [text, URL(string: deepLink) ?? deepLink]
 
         let av = UIActivityViewController(activityItems: items, applicationActivities: nil)
@@ -319,6 +338,173 @@ struct DropShareButton: View {
             while let presented = top.presentedViewController { top = presented }
             top.present(av, animated: true)
         }
+    }
+}
+
+
+// MARK: - Profile Hero Background Templates
+
+/// Vordefinierte Hintergrund-Vorlagen für die Profil-Hero-Karte.
+/// User kann via Picker zwischen den 6 Varianten wählen — wird in
+/// UserDefaults persistiert (`ud_profileHeroTemplate`).
+enum ProfileHeroTemplate: String, CaseIterable, Identifiable {
+    case tester, aurora, sunset, ocean, forest, neon, midnight
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .tester:   return "Tester"
+        case .aurora:   return "Aurora"
+        case .sunset:   return "Sunset"
+        case .ocean:    return "Ocean"
+        case .forest:   return "Forest"
+        case .neon:     return "Neon"
+        case .midnight: return "Midnight"
+        }
+    }
+
+    /// Exklusive Tester-Variante — holographisch / iridescent. Symbolisiert
+    /// die Beta-Tester-Identität visuell. Default für Beta-User.
+    var isExclusive: Bool { self == .tester }
+
+    /// Hauptfarben — auch für Thumbnail-Vorschau im Picker genutzt.
+    var colors: [Color] {
+        switch self {
+        case .tester:
+            // Holographic/iridescent — pink → cyan → gold → violet
+            return [Color(hex: "ec4899"), Color(hex: "06b6d4"),
+                    Color(hex: "fbbf24"), Color(hex: "a855f7")]
+        case .aurora:
+            return [Color(hex: "22c55e"), Color(hex: "06b6d4"), Color(hex: "a855f7")]
+        case .sunset:
+            return [Color(hex: "fb923c"), Color(hex: "ec4899"), Color(hex: "8b5cf6")]
+        case .ocean:
+            return [Color(hex: "0ea5e9"), Color(hex: "06b6d4"), Color(hex: "14b8a6")]
+        case .forest:
+            return [Color(hex: "166534"), Color(hex: "65a30d"), Color(hex: "facc15")]
+        case .neon:
+            return [Color(hex: "ec4899"), Color(hex: "f59e0b"), Color(hex: "06b6d4")]
+        case .midnight:
+            return [Color(hex: "0f172a"), Color(hex: "1e293b"), Color(hex: "334155")]
+        }
+    }
+
+    var gradient: LinearGradient {
+        // Tester nutzt steileren Winkel für mehr "Iridescent"-Effekt
+        if self == .tester {
+            return LinearGradient(colors: colors,
+                                  startPoint: UnitPoint(x: 0, y: 0),
+                                  endPoint: UnitPoint(x: 1, y: 1))
+        }
+        return LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+}
+
+/// Tap-Picker-Sheet zum Wechseln des Hero-Backgrounds.
+struct ProfileHeroPickerSheet: View {
+    @Binding var selection: ProfileHeroTemplate
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    Text("Wähle einen Hintergrund für deine Profil-Karte. Wechselbar jederzeit.")
+                        .font(.system(size: 13))
+                        .foregroundColor(.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 28).padding(.top, 8)
+
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
+                        ForEach(ProfileHeroTemplate.allCases) { tpl in
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                selection = tpl
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { dismiss() }
+                            } label: {
+                                VStack(spacing: 8) {
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .fill(tpl.gradient)
+                                        .frame(height: 110)
+                                        .overlay(alignment: .topTrailing) {
+                                            // Exklusiv-Marker für Tester-Variante
+                                            if tpl.isExclusive {
+                                                HStack(spacing: 3) {
+                                                    Image(systemName: "sparkle")
+                                                        .font(.system(size: 7, weight: .bold))
+                                                    Text("BETA")
+                                                        .font(.system(size: 8, weight: .bold))
+                                                        .kerning(0.3)
+                                                }
+                                                .foregroundColor(.white)
+                                                .padding(.horizontal, 5).padding(.vertical, 2)
+                                                .background(.ultraThinMaterial, in: Capsule())
+                                                .overlay(Capsule().stroke(Color.white.opacity(0.4), lineWidth: 0.6))
+                                                .padding(8)
+                                            }
+                                        }
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                                .stroke(
+                                                    selection == tpl ? Color.brand : Color.white.opacity(0.15),
+                                                    lineWidth: selection == tpl ? 3 : 1
+                                                )
+                                        )
+                                        .shadow(color: tpl.colors.first?.opacity(0.35) ?? .clear, radius: 8, y: 4)
+                                    HStack(spacing: 5) {
+                                        if selection == tpl {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .font(.system(size: 12))
+                                                .foregroundColor(.brand)
+                                        }
+                                        Text(tpl.label)
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(.textPrimary)
+                                    }
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    Spacer(minLength: 24)
+                }
+            }
+            .navigationTitle("Hintergrund")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Fertig") { dismiss() }
+                        .font(.system(size: 15, weight: .semibold))
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Beta Badge
+
+/// Kleiner Badge für Early-Adopter / Beta-User. Wird neben dem Namen
+/// im Profil + auf User-Karten angezeigt.
+struct BetaBadge: View {
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "sparkle")
+                .font(.system(size: 8, weight: .bold))
+            Text("BETA")
+                .font(.system(size: 9, weight: .bold))
+                .kerning(0.4)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 6).padding(.vertical, 2)
+        .background(
+            LinearGradient(
+                colors: [Color.brand, Color(hex: "06b6d4")],
+                startPoint: .leading, endPoint: .trailing
+            ),
+            in: Capsule()
+        )
+        .shadow(color: Color.brand.opacity(0.35), radius: 4, y: 1)
     }
 }
 

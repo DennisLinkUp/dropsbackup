@@ -441,7 +441,7 @@ private let strings: [String: [String: String]] = [
     "onboard.age_private":           ["de": "Dein genaues Alter wird nie öffentlich angezeigt.", "en": "Your exact age will never be shown publicly."],
     "onboard.already_registered":    ["de": "Bereits registriert?",         "en": "Already registered?"],
     "onboard.analyzing_id":          ["de": "Ausweis wird analysiert…",     "en": "Analyzing ID…"],
-    "onboard.beta_quick_start":      ["de": "Beta-Schnelleinstieg (ohne Account)", "en": "Beta Quick Start (no account)"],
+    "onboard.beta_quick_start":      ["de": "Schnelleinstieg (ohne Account)", "en": "Quick Start (no account)"],
     "onboard.birthdate":             ["de": "Geburtsdatum",                 "en": "Birthdate"],
     "onboard.birthdate_mismatch":    ["de": "Das Geburtsdatum auf deinem Ausweis stimmt nicht mit dem angegebenen Datum überein. Für dieses Ausweis-Dokument muss ein neues Konto erstellt werden.", "en": "The birthdate on your ID does not match the entered date. A new account must be created for this ID document."],
     "onboard.birthdate_usage":       ["de": "Wird nur für die Altersverifikation\nund passende Drops verwendet.", "en": "Used only for age verification\nand matching Drops."],

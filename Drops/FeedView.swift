@@ -90,20 +90,38 @@ struct FeedView: View {
         return cat.keywords.contains(where: { activity.contains($0) })
     }
 
+    /// Match für den „Heute Abend"-Filter. Greift wenn entweder das
+    /// scheduledTime explizit „Abend" enthält oder der Drop heute erstellt
+    /// wurde und nach 17 Uhr aktiv wird.
+    private func matchesTonight(_ item: MapAnnotationItem) -> Bool {
+        if let st = item.scheduledTime, st.localizedCaseInsensitiveContains("abend") {
+            return true
+        }
+        let cal = Calendar.current
+        guard cal.isDateInToday(item.createdAt) else { return false }
+        let hour = cal.component(.hour, from: Date())
+        return hour >= 17
+    }
+
     // Öffentliche Drops — Drops+ Boost zuerst, dann nach Interessen-Match priorisiert.
+    // Distanz-Filter: `.nearby`/`.quarter` schränken auf Radius vom User-Standort
+    // ein, `.city` zeigt die ganze aktuelle Stadt (Verhalten wie vorher).
     // „Nur weiblich"-Filter blendet alle Nicht-weiblich-Hosts aus (nur für weibliche Userinnen).
     // Aktivitäts-Filter blendet Drops raus deren Kategorie nicht gewählt ist.
     private var strangerAnnotations: [MapAnnotationItem] {
         var base = store.allMapAnnotations.filter { $0.isStranger }
-        // Stadt-Filter: Umgebungs-Feed zeigt nur Drops aus der Stadt, in der
-        // sich der User gerade befindet. Berlin-User sieht keine München-Drops
-        // und umgekehrt. Wenn User außerhalb aller 5 Städte ist → leerer Feed
-        // (greift eh das CityGate dann).
-        if let myCity = ServiceCities.city(for: store.currentUser.coordinate) {
-            base = base.filter { myCity.contains($0.coordinate) }
-        } else if let myCityNear = ServiceCities.cityNear(store.currentUser.coordinate) {
-            // User im Vorort (40km-Buffer) → zeig Drops aus der nächstgelegenen Stadt
-            base = base.filter { myCityNear.contains($0.coordinate) }
+        let userCoord = store.currentUser.coordinate
+        switch store.feedDistanceFilter {
+        case .nearby, .quarter:
+            let radius = store.feedDistanceFilter.meters
+            base = base.filter { $0.distance(from: userCoord) <= radius }
+        case .city:
+            if let myCity = ServiceCities.city(for: userCoord) {
+                base = base.filter { myCity.contains($0.coordinate) }
+            } else if let myCityNear = ServiceCities.cityNear(userCoord) {
+                // User im Vorort (40km-Buffer) → zeig Drops aus der nächstgelegenen Stadt
+                base = base.filter { myCityNear.contains($0.coordinate) }
+            }
         }
         if store.genderFilterEnabled && store.userGender == "weiblich" {
             base = base.filter { ($0.hostGender?.lowercased() ?? "") == "weiblich" }
@@ -173,6 +191,71 @@ struct FeedView: View {
                 )
             )
             .shadow(color: selected ? Color.brand.opacity(0.30) : .clear, radius: 8, y: 3)
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Segmented Control: Drop-Radius (1km / 3km / Stadt) + „Heute Abend"-Toggle.
+    /// Sichtbarer Label-Header macht klar, dass es um den Suchradius geht.
+    private var distanceTimeFilterBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                Image(systemName: "scope")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.brand)
+                Text("Drop-Radius")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.textSecondary)
+                    .textCase(.uppercase)
+                    .tracking(0.5)
+                Text("· \(store.feedDistanceFilter.detailLabel)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.textTertiary)
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+
+            HStack(spacing: 8) {
+                ForEach(FeedDistanceFilter.allCases, id: \.self) { dist in
+                    segmentChip(
+                        title: dist.label,
+                        selected: store.feedDistanceFilter == dist
+                    ) {
+                        store.feedDistanceFilter = dist
+                        store.saveAll()
+                    }
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+        }
+    }
+
+    @ViewBuilder
+    private func segmentChip(title: String, icon: String? = nil, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { action() }
+        } label: {
+            HStack(spacing: 5) {
+                if let icon = icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(selected ? .white : .brand)
+                }
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(selected ? .white : .textPrimary)
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 7)
+            .background(
+                Capsule().fill(
+                    selected
+                        ? Color.brand
+                        : Color(UIColor.secondarySystemGroupedBackground)
+                )
+            )
+            .shadow(color: selected ? Color.brand.opacity(0.25) : .clear, radius: 6, y: 2)
         }
         .buttonStyle(.plain)
     }
@@ -320,18 +403,19 @@ struct FeedView: View {
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 0) {
 
-                        // ── „Nur weiblich"-Filter (nur für weibliche Userinnen) ──
+                        // ── Filter — scrollen mit (wie im Profil-Tab) ──
                         if store.userGender == "weiblich" {
                             femaleOnlyFilterBar
                                 .padding(.horizontal, 16)
                                 .padding(.top, 8)
                                 .padding(.bottom, 4)
                         }
-
-                        // ── Aktivitäts-Filter (Chip-Leiste) ──
-                        activityFilterChips
+                        distanceTimeFilterBar
                             .padding(.top, store.userGender == "weiblich" ? 4 : 8)
                             .padding(.bottom, 4)
+                        activityFilterChips
+                            .padding(.top, 2)
+                            .padding(.bottom, 8)
 
                         // ── Freunde in der Nähe (prominent) ──
                         if !sortedFriendDrops.isEmpty {
@@ -375,8 +459,19 @@ struct FeedView: View {
 
                         // ── Leer-State ──
                         if sortedFriendDrops.isEmpty && strangerAnnotations.isEmpty {
-                            DropsEmptyState()
+                            DropsEmptyState(onCreateTap: {
+                                store.selectedTab = .create
+                            })
                                 .padding(.top, 48)
+                        }
+
+                        // ── Boost-Banner: unten, wenn <5 Drops in Reichweite ──
+                        // Reine Info — kein eigener Drop-Button, der ist schon im
+                        // DropsEmptyState bzw. der Tab-Bar.
+                        if (sortedFriendDrops.count + strangerAnnotations.count) < AppStore.boostThreshold {
+                            BoostBanner()
+                                .padding(.horizontal, 16)
+                                .padding(.top, 16)
                         }
 
                         // "Nicht verfügbar"-Sektion ist aus dem Umgebungs-Feed raus —
@@ -389,32 +484,25 @@ struct FeedView: View {
                 }
             }
             .navigationTitle(tr("feed.title"))
-            .sheet(isPresented: Binding(
-                get: { profileParticipant != nil },
-                set: { if !$0 { profileParticipant = nil } }
-            )) {
-                if let p = profileParticipant {
-                    if #available(iOS 16.4, *) {
-                        MiniProfileSheet(
-                            name: p.name,
-                            emoji: p.emoji,
-                            selfie: p.selfie,
-                            profileImageURL: p.profileImageURL,
-                            reliabilityScore: p.reliabilityScore,
-                            totalCommits: p.reliabilityCommits,
-                            subtitle: profileSubtitle,
-                            accentColor: profileAccent,
-                            isVerified: p.isVerified,
-                            userUID: p.firebaseUID,
-                            canBlock: profileCanBlock
-                        ) { profileParticipant = nil }
-                            .environmentObject(store)
-                            .presentationDetents([.height(360)])
-                            .presentationDragIndicator(.hidden)
-                            .modifier(AvailabilityPresentationBackground())
-                    } else {
-                        // Fallback on earlier versions
-                    }
+            .sheet(item: $profileParticipant) { p in
+                if #available(iOS 16.4, *) {
+                    MiniProfileSheet(
+                        name: p.name,
+                        emoji: p.emoji,
+                        selfie: p.selfie,
+                        profileImageURL: p.profileImageURL,
+                        reliabilityScore: p.reliabilityScore,
+                        totalCommits: p.reliabilityCommits,
+                        subtitle: profileSubtitle,
+                        accentColor: profileAccent,
+                        isVerified: p.isVerified,
+                        userUID: p.firebaseUID,
+                        canBlock: profileCanBlock
+                    ) { profileParticipant = nil }
+                        .environmentObject(store)
+                        .presentationDetents([.height(360), .medium])
+                        .presentationDragIndicator(.hidden)
+                        .modifier(AvailabilityPresentationBackground())
                 }
             }
         }
@@ -708,9 +796,15 @@ struct StrangerDropFeedCard: View {
                         Circle()
                             .fill(accentColor.opacity(0.15))
                             .frame(width: 50, height: 50)
-                        Text(isVerified ? item.emoji : "❓")
-                            .font(.system(size: 24))
-                            .blur(radius: isVerified ? 0 : 4)
+                        if isVerified {
+                            Text(item.emoji.isEmpty ? "✨" : item.emoji)
+                                .font(.system(size: 24))
+                        } else {
+                            Image(systemName: "questionmark")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundColor(accentColor)
+                                .blur(radius: 4)
+                        }
                     }
                 }
                 .buttonStyle(.plain)
@@ -723,13 +817,16 @@ struct StrangerDropFeedCard: View {
                             .blur(radius: isVerified ? 0 : 5)
                         // Zeitfenster-Badge statt "Offen für alle" — das ist die relevante Info
                         let timeLabel = item.scheduledTime ?? "Jetzt"
-                        let timeIcon  = timeLabel == "Jetzt" ? "🟢" : "🕐"
-                        Text("\(timeIcon) \(timeLabel)")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(accentColor)
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(accentColor.opacity(0.12))
-                            .cornerRadius(5)
+                        HStack(spacing: 3) {
+                            Image(systemName: timeLabel == "Jetzt" ? "circle.fill" : "clock.fill")
+                                .font(.system(size: 7, weight: .bold))
+                            Text(timeLabel)
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundColor(accentColor)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(accentColor.opacity(0.12))
+                        .cornerRadius(5)
                     }
                     // Creator-Chip — nur tappbar wenn verifiziert
                     Button {
@@ -916,6 +1013,71 @@ struct JoinConfirmSheet: View {
             .padding(.bottom, 16)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Boost Banner
+//
+// Erscheint im Umgebungs-Tab unten wenn weniger als `AppStore.boostThreshold`
+// Drops in Reichweite sind. Reine Info-Karte — der „Drop erstellen"-Button
+// ist im DropsEmptyState bzw. in der Tab-Bar; doppelt wäre verwirrend.
+// Der eigentliche Bonus wird in AppStore.applyBoostBonusIfActive vergeben
+// (createDrop / confirmEncounter / recordHostSuccess).
+struct BoostBanner: View {
+    @State private var pulse = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.accentOrange, Color.brand],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 38, height: 38)
+                    .shadow(color: Color.accentOrange.opacity(pulse ? 0.55 : 0.25), radius: pulse ? 14 : 6)
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(.white)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Boost-Phase aktiv")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.textPrimary)
+                Text("+15 Extra-Punkte für jeden Drop, den du jetzt erstellst oder triffst.")
+                    .font(.system(size: 12))
+                    .foregroundColor(.textPrimary.opacity(0.72))
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 6)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.accentOrange.opacity(0.10),
+                            Color.brand.opacity(0.10),
+                        ],
+                        startPoint: .leading, endPoint: .trailing
+                    )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.accentOrange.opacity(0.35), lineWidth: 1)
+                )
+        )
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
     }
 }
 

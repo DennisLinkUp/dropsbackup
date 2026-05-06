@@ -6,10 +6,16 @@ import CoreLocation
 // ─────────────────────────────────────────────────
 
 enum BetaConfig {
-    /// Auf `false` setzen um das Geo-Gate komplett zu deaktivieren.
-    /// Steuert sowohl App-Access-Gate (CityGateView) als auch die
-    /// Drop-Erstellen-Beschränkung in CreateDropView.
-    static let cityRestrictionEnabled = true
+    /// Steuert die Drop-Erstellen- und Drop-Join-Beschränkung auf die 5
+    /// Service-Städte (Berlin/Hamburg/München/Köln/Frankfurt).
+    ///
+    /// **Default `false`** für den App-Store-Submit-Build, damit der Apple
+    /// Reviewer die App von überall testen kann. Nach Approval setzt du in
+    /// der Firebase Console unter `/config/cityRestrictionEnabled` den Wert
+    /// `true` — alle Apps ziehen das innerhalb von Sekunden via RTDB-Listener.
+    ///
+    /// Wird beim App-Start in `bootstrapRemoteFlags()` aus RTDB überschrieben.
+    static var cityRestrictionEnabled: Bool = false
 
     /// Anzeige-Name der Service-Zone (für Gate-Text + Map-Overlay-Logik).
     static let cityName    = "Deutschland"
@@ -465,6 +471,18 @@ enum ServiceCities {
                 .init(latitude: 48.23973, longitude: 11.49192),
                 .init(latitude: 48.23208, longitude: 11.48775),
                 .init(latitude: 48.22310, longitude: 11.49108),
+                // ── Karlsfeld + Dachau-Lobe ──
+                // Eine zusammenhängende Lobe nach NW: bindet Karlsfeld und Dachau
+                // ohne Lücke an München an (kein Loch zwischen den Orten).
+                .init(latitude: 48.23200, longitude: 11.49500),  // Karlsfeld-NO
+                .init(latitude: 48.25500, longitude: 11.48800),  // Übergang Karlsfeld → Dachau
+                .init(latitude: 48.27500, longitude: 11.48000),  // Dachau-NE
+                .init(latitude: 48.28500, longitude: 11.46000),  // Dachau-N-O
+                .init(latitude: 48.28800, longitude: 11.43500),  // Dachau-N
+                .init(latitude: 48.28800, longitude: 11.40500),  // Dachau-NW
+                .init(latitude: 48.26500, longitude: 11.39200),  // Dachau-W
+                .init(latitude: 48.24500, longitude: 11.39500),  // Karlsfeld/Dachau-W
+                .init(latitude: 48.22000, longitude: 11.45800),  // Bridge zurück Richtung 482
                 .init(latitude: 48.21850, longitude: 11.47026),
                 .init(latitude: 48.20880, longitude: 11.45760),
                 .init(latitude: 48.20046, longitude: 11.39083),
@@ -1123,7 +1141,7 @@ struct CityGateView: View {
                                 .scaleEffect(pulse ? 1.2 : 1.0)
                                 .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: pulse)
                         )
-                    Text("Beta aktiv in \(BetaConfig.cityName)")
+                    Text("Live in \(BetaConfig.cityName)")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(Color(hex: "34D36E"))
                 }

@@ -1,6 +1,7 @@
 import SwiftUI
 import CoreLocation
 import UserNotifications
+import StoreKit
 
 @main
 struct LinkUpApp: App {
@@ -8,7 +9,11 @@ struct LinkUpApp: App {
     // AppDelegate übernimmt Firebase.configure() + APNs-Setup
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
-    @StateObject private var store = AppStore()
+    @StateObject private var store: AppStore = {
+        let s = AppStore()
+        AppStore.shared = s
+        return s
+    }()
     @AppStorage("mapStyleMode") private var mapStyleModeRaw = MapStyleMode.auto.rawValue
     @Environment(\.scenePhase) private var scenePhase
 
@@ -81,8 +86,19 @@ struct LinkUpApp: App {
                 MainTabView()
                     .environmentObject(store)
                     .preferredColorScheme(preferredScheme)
+                    .reviewPromptHandler(store: store)
                     .onOpenURL { url in handleUniversalLink(url) }
-                    .onAppear { requestPermissionsIfNeeded() }
+                    .onAppear {
+                        requestPermissionsIfNeeded()
+                        // Cold-Start: scenePhase = .active feuert kein onChange.
+                        // Hier nochmal pollen falls AppDelegate ein Pending hat.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                            if let pending = UserDefaults.standard.string(forKey: "ud_pendingQuickAction") {
+                                UserDefaults.standard.removeObject(forKey: "ud_pendingQuickAction")
+                                handlePendingQuickAction(pending)
+                            }
+                        }
+                    }
             } else {
                 OnboardingView()
                     .environmentObject(store)
@@ -92,7 +108,7 @@ struct LinkUpApp: App {
                     }
             }
         }
-        .onChange(of: scenePhase) { phase in
+        .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .background:
                 store.isAppActive = false
@@ -103,6 +119,16 @@ struct LinkUpApp: App {
             case .active:
                 store.isAppActive = true
                 store.checkSessionTimeout()
+                // Quick-Action vom AppDelegate konsumieren (Cold-Start oder
+                // Background→Foreground). Kleine Verzögerung damit MainTabView
+                // sicher gerendert ist.
+                if store.isAuthenticated,
+                   let pending = UserDefaults.standard.string(forKey: "ud_pendingQuickAction") {
+                    UserDefaults.standard.removeObject(forKey: "ud_pendingQuickAction")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        handlePendingQuickAction(pending)
+                    }
+                }
                 // Permissions + Session-Reset nur nach Login
                 guard store.isAuthenticated else { break }
                 Task { @MainActor in
@@ -116,5 +142,56 @@ struct LinkUpApp: App {
                 break
             }
         }
+    }
+
+    /// Routet eine Home-Screen Quick Action auf den entsprechenden Tab/Sheet.
+    /// Setzt selectedTab direkt am Store + postet zusätzlich Notification damit
+    /// MainTabView (für Create-Sheet) reagieren kann.
+    private func handlePendingQuickAction(_ type: String) {
+        switch type {
+        case "com.dennis.drops.shortcut.create":
+            store.selectedTab = .map
+            NotificationCenter.default.post(
+                name: Notification.Name("DropsQuickAction"),
+                object: nil,
+                userInfo: ["type": type]
+            )
+        case "com.dennis.drops.shortcut.map":
+            store.selectedTab = .map
+        case "com.dennis.drops.shortcut.feed":
+            store.selectedTab = .feed
+        case "com.dennis.drops.shortcut.profile":
+            store.selectedTab = .profile
+        default:
+            break
+        }
+    }
+}
+
+// MARK: - In-App Review Prompt
+//
+// Apple-Limit: max 3 Prompts pro User pro 365 Tage. Beste Trigger sind „positive
+// Momente" — wir feuern bei meaningful Show-Up-Counts (3, 10, 25). System-Sheet
+// erscheint nur wenn das Limit nicht erreicht ist; sonst ist der Aufruf ein No-Op.
+private struct ReviewPromptModifier: ViewModifier {
+    @ObservedObject var store: AppStore
+    @Environment(\.requestReview) private var requestReview
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: store.shouldShowReviewPrompt) { _, newValue in
+                guard newValue else { return }
+                requestReview()
+                // Persistiere Zeitpunkt damit AppStore das nicht zu schnell wieder triggert
+                UserDefaults.standard.set(Date().timeIntervalSince1970,
+                                          forKey: "ud_lastReviewRequestedAt")
+                store.shouldShowReviewPrompt = false
+            }
+    }
+}
+
+extension View {
+    func reviewPromptHandler(store: AppStore) -> some View {
+        modifier(ReviewPromptModifier(store: store))
     }
 }

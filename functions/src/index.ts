@@ -320,3 +320,281 @@ export const onFriendshipAdded = onValueCreated(
         }
     }
 );
+
+// ── New-Drop Nearby Push ──────────────────────────────────────────────────
+//
+// Wenn jemand einen Drop erstellt → benachrichtige alle User mit lastLat/lastLng
+// im Umkreis von NEARBY_RADIUS_METERS (1500m für Launch-Phase, später runter
+// auf 600m). Der Host selbst wird ausgeschlossen.
+//
+// users/{uid}/lastLat, lastLng werden vom iOS-Client throttled geschrieben
+// (1× pro 10 Min, gerundet auf ~110m für Privacy).
+
+const NEARBY_RADIUS_METERS = 1500;
+
+function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+    const R = 6371000;
+    const toRad = (d: number) => (d * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+export const onDropCreatedNearbyPush = onValueCreated(
+    { ref: "/drops/{dropID}", region: "europe-west1" },
+    async (event) => {
+        const drop = event.data.val() ?? {};
+        const dropLat = drop.latitude as number | undefined;
+        const dropLng = drop.longitude as number | undefined;
+        const hostUID = drop.userID as string | undefined;
+        const emoji = (drop.emoji as string) || "📍";
+        const activity = (drop.activityName as string) || "Drop";
+
+        if (typeof dropLat !== "number" || typeof dropLng !== "number") {
+            logger.info("onDropCreatedNearbyPush: drop has no coords, skipping");
+            return;
+        }
+
+        const db = getDatabase();
+        const usersSnap = await db.ref("users").once("value");
+        const users = (usersSnap.val() ?? {}) as Record<string, any>;
+
+        const recipients: { uid: string; token: string; distM: number }[] = [];
+        for (const [uid, u] of Object.entries(users)) {
+            if (uid === hostUID) continue;                  // Host nicht selber benachrichtigen
+            if (u?.isBanned === true) continue;
+            const token = u?.fcmToken as string | undefined;
+            const lat = u?.lastLat as number | undefined;
+            const lng = u?.lastLng as number | undefined;
+            if (!token || typeof lat !== "number" || typeof lng !== "number") continue;
+            const d = haversineMeters(dropLat, dropLng, lat, lng);
+            if (d <= NEARBY_RADIUS_METERS) {
+                recipients.push({ uid, token, distM: d });
+            }
+        }
+
+        if (recipients.length === 0) {
+            logger.info("onDropCreatedNearbyPush: no nearby users", { hostUID });
+            return;
+        }
+
+        // Distanz-String pro Empfänger personalisieren ("400 m" / "1.2 km")
+        const sends = recipients.map(async (r) => {
+            const distStr =
+                r.distM < 1000 ? `${Math.round(r.distM)} m` : `${(r.distM / 1000).toFixed(1)} km`;
+            try {
+                await getMessaging().send({
+                    token: r.token,
+                    notification: {
+                        title: `${emoji} ${activity} in der Nähe`,
+                        body: `Nur ${distStr} entfernt — schau auf die Karte.`,
+                    },
+                    apns: {
+                        payload: { aps: { sound: "default", category: "NEARBY_DROP" } },
+                    },
+                    data: {
+                        type: "nearby_drop",
+                        dropID: event.params.dropID,
+                        hostUID: hostUID ?? "",
+                    },
+                });
+            } catch (e: any) {
+                logger.warn("nearby push send failed", { uid: r.uid, error: e?.message });
+            }
+        });
+        await Promise.allSettled(sends);
+        logger.info("onDropCreatedNearbyPush done", {
+            dropID: event.params.dropID,
+            recipients: recipients.length,
+        });
+    }
+);
+
+// ── City Inactivity Push ──────────────────────────────────────────────────
+//
+// Täglich 18:00 Europe/Berlin: pro Service-Stadt zählen wir aktive Drops der
+// letzten 3 Tage. Wenn 0 → einmal pro Stadt einen "Sei der Erste"-Push an
+// alle User in dieser Stadt. User-Stadt wird aus letzter bekannter Position
+// (lastLat/lastLng) abgeleitet.
+//
+// Service-Cities (in sync mit iOS Drops/CityGateView.swift)
+const SERVICE_CITIES: { name: string; lat: number; lng: number; radiusKm: number }[] = [
+    { name: "München",   lat: 48.1371, lng: 11.5754, radiusKm: 25 },
+    { name: "Berlin",    lat: 52.5200, lng: 13.4050, radiusKm: 30 },
+    { name: "Hamburg",   lat: 53.5511, lng: 9.9937,  radiusKm: 25 },
+    { name: "Köln",      lat: 50.9375, lng: 6.9603,  radiusKm: 22 },
+    { name: "Frankfurt", lat: 50.1109, lng: 8.6821,  radiusKm: 22 },
+];
+
+function cityForCoord(lat: number, lng: number): string | null {
+    for (const c of SERVICE_CITIES) {
+        const d = haversineMeters(lat, lng, c.lat, c.lng);
+        if (d <= c.radiusKm * 1000) return c.name;
+    }
+    return null;
+}
+
+export const cityInactivityPush = onSchedule(
+    { schedule: "0 18 * * *", timeZone: TZ, region: "europe-west1" },
+    async () => {
+        const db = getDatabase();
+        const dropsSnap = await db.ref("drops").once("value");
+        const usersSnap = await db.ref("users").once("value");
+        const now = Date.now();
+        const threeDaysAgo = now - 3 * 24 * 60 * 60 * 1000;
+
+        // 1) Pro Stadt: aktive Drops der letzten 3 Tage zählen
+        const activityByCity: Record<string, number> = {};
+        SERVICE_CITIES.forEach((c) => (activityByCity[c.name] = 0));
+        const drops = (dropsSnap.val() ?? {}) as Record<string, any>;
+        for (const d of Object.values(drops)) {
+            const lat = d?.latitude as number | undefined;
+            const lng = d?.longitude as number | undefined;
+            const created = d?.createdAt as number | undefined;
+            if (typeof lat !== "number" || typeof lng !== "number") continue;
+            if (typeof created !== "number" || created < threeDaysAgo) continue;
+            const city = cityForCoord(lat, lng);
+            if (city) activityByCity[city]++;
+        }
+
+        // 2) Pro inaktiver Stadt: Push an alle User dort
+        const inactiveCities = SERVICE_CITIES.filter((c) => activityByCity[c.name] === 0);
+        if (inactiveCities.length === 0) {
+            logger.info("cityInactivityPush: alle Städte aktiv ✓");
+            return;
+        }
+
+        const users = (usersSnap.val() ?? {}) as Record<string, any>;
+        for (const city of inactiveCities) {
+            const tokens: string[] = [];
+            for (const u of Object.values(users)) {
+                if (u?.isBanned === true) continue;
+                const token = u?.fcmToken as string | undefined;
+                const lat = u?.lastLat as number | undefined;
+                const lng = u?.lastLng as number | undefined;
+                if (!token || typeof lat !== "number" || typeof lng !== "number") continue;
+                if (cityForCoord(lat, lng) === city.name) tokens.push(token);
+            }
+            if (tokens.length === 0) continue;
+
+            // Batch via sendEachForMulticast (max 500 per call)
+            try {
+                await getMessaging().sendEachForMulticast({
+                    tokens,
+                    notification: {
+                        title: `${city.name} braucht dich`,
+                        body: "Niemand droppt gerade — sei heute Abend der Erste.",
+                    },
+                    apns: {
+                        payload: { aps: { sound: "default", category: "CITY_INACTIVE" } },
+                    },
+                    data: { type: "city_inactive", city: city.name },
+                });
+                logger.info("cityInactivityPush sent", {
+                    city: city.name,
+                    recipients: tokens.length,
+                });
+            } catch (e: any) {
+                logger.warn("cityInactivityPush failed", { city: city.name, error: e?.message });
+            }
+        }
+    }
+);
+
+// ── 30-Min-Reminder vor Drop-Start ────────────────────────────────────────
+//
+// Läuft alle 5 Minuten: findet Drops mit `startAt` in [now+25min, now+35min]
+// und `reminderSent != true`. Sendet Push an Host + alle Joiner (aus dropins/),
+// markiert dann `reminderSent: true` damit nicht doppelt gefeuert wird.
+//
+// startAt wird vom iOS-Client beim Publish geschrieben (parseDropStartAt in
+// RealtimeDBManager.swift). Drops mit scheduledTime "Jetzt" haben startAt ≈
+// createdAt → fallen NICHT ins 25–35min-Fenster, kein Reminder.
+
+export const dropStartReminder = onSchedule(
+    { schedule: "every 5 minutes", timeZone: TZ, region: "europe-west1" },
+    async () => {
+        const db = getDatabase();
+        const now = Date.now();
+        const windowStart = now + 25 * 60 * 1000;
+        const windowEnd   = now + 35 * 60 * 1000;
+
+        const [dropsSnap, usersSnap] = await Promise.all([
+            db.ref("drops").once("value"),
+            db.ref("users").once("value"),
+        ]);
+        const drops = (dropsSnap.val() ?? {}) as Record<string, any>;
+        const users = (usersSnap.val() ?? {}) as Record<string, any>;
+
+        let triggeredDrops = 0;
+        let totalSends = 0;
+
+        for (const [dropID, drop] of Object.entries(drops)) {
+            if (!drop || drop.active === false) continue;
+            if (drop.reminderSent === true) continue;
+            const startAtSec = drop.startAt as number | undefined;
+            if (typeof startAtSec !== "number") continue;
+            const startAtMs = startAtSec * 1000;
+            if (startAtMs < windowStart || startAtMs > windowEnd) continue;
+
+            const hostUID  = (drop.userID as string | undefined) ?? "";
+            const emoji    = (drop.emoji as string) || "📍";
+            const activity = (drop.activityName as string) || "Drop";
+
+            // Empfänger sammeln: Host + alle Joiner aus dropins/{dropID}
+            const recipientUIDs = new Set<string>();
+            if (hostUID) recipientUIDs.add(hostUID);
+            const dropinsSnap = await db.ref(`dropins/${dropID}`).once("value");
+            dropinsSnap.forEach((c) => {
+                if (c.key) recipientUIDs.add(c.key);
+                return false;
+            });
+
+            const tokenSends: Promise<any>[] = [];
+            for (const uid of recipientUIDs) {
+                const u = users[uid];
+                const token = u?.fcmToken as string | undefined;
+                if (!token || u?.isBanned === true) continue;
+                const isHost = uid === hostUID;
+                tokenSends.push(
+                    getMessaging().send({
+                        token,
+                        notification: {
+                            title: isHost
+                                ? `Dein Drop startet in 30 Min`
+                                : `${emoji} ${activity} startet in 30 Min`,
+                            body: isHost
+                                ? "Mach dich bereit — die anderen kommen gleich."
+                                : "Zeit, sich auf den Weg zu machen.",
+                        },
+                        apns: {
+                            payload: { aps: { sound: "default", category: "DROP_REMINDER" } },
+                        },
+                        data: {
+                            type: "drop_reminder",
+                            dropID,
+                            hostUID,
+                        },
+                    }).catch((e: any) => {
+                        logger.warn("dropStartReminder send failed", {
+                            uid, dropID, error: e?.message,
+                        });
+                    })
+                );
+            }
+
+            await Promise.allSettled(tokenSends);
+            // Markieren — auch wenn keine Tokens da waren, sonst feuert es endlos
+            await db.ref(`drops/${dropID}/reminderSent`).set(true);
+            triggeredDrops++;
+            totalSends += tokenSends.length;
+        }
+
+        if (triggeredDrops > 0) {
+            logger.info("dropStartReminder done", { triggeredDrops, totalSends });
+        }
+    }
+);

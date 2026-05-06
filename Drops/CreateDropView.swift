@@ -209,6 +209,7 @@ struct CreateDropView: View {
     @State private var pinnedCoordinate: CLLocationCoordinate2D? = nil
 
     @State private var sheetPulse = false
+    @State private var pendingHomeZoneCoord: CLLocationCoordinate2D? = nil
     @State private var showEmojiPicker = false
 
     var suggestedEmojis: [String] { suggestEmojis(for: activityName) }
@@ -275,6 +276,18 @@ struct CreateDropView: View {
                     .padding(.horizontal, 20)
                     .padding(.top, 6)
 
+                    // ── Quick-Templates: dynamisch aus Interests + Past Drops
+                    if activityName.trimmingCharacters(in: .whitespaces).isEmpty {
+                        DropQuickTemplatesBar { tpl in
+                            activityName = tpl.name
+                            selectedEmoji = tpl.emoji
+                            emojiLockedByUser = true
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        }
+                        .padding(.horizontal, 4)
+                        .padding(.bottom, 4)
+                    }
+
                     // ── Aktivität ──────────────────────────────────────────
                     createSection(label: "Was macht ihr?", aurora: true) {
                         // Emoji + Textfeld
@@ -306,7 +319,7 @@ struct CreateDropView: View {
                             TextField("z.B. Fußball, Kaffee, Wandern…", text: $activityName)
                                 .font(.system(size: 15))
                                 .foregroundColor(.textPrimary)
-                                .onChange(of: activityName) { _ in
+                                .onChange(of: activityName) { _, _ in
                                     if activityName.trimmingCharacters(in: .whitespaces).isEmpty {
                                         selectedEmoji = ""
                                         emojiLockedByUser = false
@@ -495,7 +508,7 @@ struct CreateDropView: View {
                                 .datePickerStyle(.compact)
                                 .labelsHidden()
                                 .tint(.brand)
-                                .onChange(of: customDate) { _ in
+                                .onChange(of: customDate) { _, _ in
                                     let f = DateFormatter()
                                     f.dateFormat = "HH:mm 'Uhr'"
                                     scheduledTime = f.string(from: customDate)
@@ -635,7 +648,7 @@ struct CreateDropView: View {
                                     TextField("Café, Bar, Park, Adresse…", text: $searchVM.searchText)
                                         .font(.system(size: 14))
                                         .foregroundColor(.textPrimary)
-                                        .onChange(of: searchVM.searchText) { searchVM.search($0) }
+                                        .onChange(of: searchVM.searchText) { _, newValue in searchVM.search(newValue) }
                                         .submitLabel(.search)
                                     if !searchVM.searchText.isEmpty {
                                         Button { searchVM.searchText = "" } label: {
@@ -746,7 +759,13 @@ struct CreateDropView: View {
                             || ServiceCities.isInside(dropCoordPreview)
                         AuroraDropButton(isLoading: isCreating, isEnabled: isValid && isInServiceArea) {
                             guard isValid && isInServiceArea else { return }
-                            performCreate(coord: dropCoordPreview)
+                            // Heimzone-Warnung: wenn der Drop in der Heimzone des
+                            // Users liegt, zeigen wir vorher einen Privacy-Hinweis.
+                            if store.isInHomeZone(dropCoordPreview) {
+                                pendingHomeZoneCoord = dropCoordPreview
+                            } else {
+                                performCreate(coord: dropCoordPreview)
+                            }
                         }
                         .padding(.horizontal, 16)
                         if !isValid {
@@ -784,6 +803,23 @@ struct CreateDropView: View {
             .presentationDetents([.height(460)])
             .presentationDragIndicator(.hidden)
             .sheetBackground()
+        }
+        .alert("🏠 Drop in deiner Heimzone",
+               isPresented: Binding(
+                get: { pendingHomeZoneCoord != nil },
+                set: { if !$0 { pendingHomeZoneCoord = nil } }
+               )) {
+            Button("Trotzdem erstellen", role: .destructive) {
+                if let coord = pendingHomeZoneCoord {
+                    pendingHomeZoneCoord = nil
+                    performCreate(coord: coord)
+                }
+            }
+            Button("Abbrechen", role: .cancel) {
+                pendingHomeZoneCoord = nil
+            }
+        } message: {
+            Text("Dieser Drop liegt in deiner Heimzone. Andere Nutzer können auf der Karte ungefähr sehen wo du wohnst, solange der Drop läuft.\n\nWillst du wirklich hier einen Drop starten?")
         }
         .fullScreenCover(isPresented: $showPinMap) {
             ZStack(alignment: .bottom) {
@@ -944,9 +980,16 @@ struct CreateDropView: View {
                 coordinate: coord, type: selectedLocationType
             )
             let name = activityName.trimmingCharacters(in: .whitespaces).isEmpty ? "Drop" : activityName.trimmingCharacters(in: .whitespaces)
-            // Reihenfolge: 1) explizite User-Auswahl, 2) erster Auto-Match
-            // (wenn Keyword passt), 3) leer (kein generisches ✨-Fallback mehr).
-            let emoji = displayEmoji.isEmpty ? (suggestedEmojis.first ?? "") : displayEmoji
+            // Reihenfolge: 1) explizite User-Auswahl, 2) erster Auto-Match,
+            // 3) ✨-Fallback damit der Drop-Pin auf der Karte nie leer ist.
+            let emoji: String
+            if !displayEmoji.isEmpty {
+                emoji = displayEmoji
+            } else if let auto = suggestedEmojis.first {
+                emoji = auto
+            } else {
+                emoji = "✨"
+            }
             let finalActivity = Activity(id: UUID(), name: name, emoji: emoji)
             store.createDrop(activity: finalActivity, location: loc,
                              description: dropDescription, scheduledTime: scheduledTime,
@@ -1018,7 +1061,7 @@ struct DropLocationSearchSheet: View {
                     Image(systemName: "magnifyingglass").foregroundColor(.textTertiary)
                     TextField("Café, Bar, Park…", text: $searchVM.searchText)
                         .font(.system(size: 16)).foregroundColor(.textPrimary)
-                        .onChange(of: searchVM.searchText) { searchVM.search($0) }
+                        .onChange(of: searchVM.searchText) { _, newValue in searchVM.search(newValue) }
                     if !searchVM.searchText.isEmpty {
                         Button(action: { searchVM.searchText = "" }) {
                             Image(systemName: "xmark.circle.fill").foregroundColor(.textTertiary)
@@ -1149,3 +1192,126 @@ struct InteractivePinMap: UIViewRepresentable {
     }
 }
 
+// MARK: - Quick Drop Templates
+
+/// One-Tap-Vorlagen für häufige Aktivitäten — füllen Name + Emoji direkt aus.
+/// Erspart Tippen für die Standard-Cases (Kaffee, Spaziergang, Sport).
+struct DropTemplate: Identifiable, Hashable {
+    let id = UUID()
+    let name: String
+    let emoji: String
+}
+
+extension DropTemplate {
+    /// Statische Default-Vorlagen falls weder Past-Drops noch Interests etwas
+    /// Brauchbares ergeben (Erst-User ohne Interests).
+    static let universalDefaults: [DropTemplate] = [
+        DropTemplate(name: "Kaffee", emoji: "☕️"),
+        DropTemplate(name: "Spaziergang", emoji: "🚶"),
+        DropTemplate(name: "Bier", emoji: "🍻"),
+    ]
+
+    /// Mapping von Onboarding-Interest-Keys auf Drop-Vorlagen.
+    static func fromInterest(_ key: String) -> DropTemplate? {
+        switch key {
+        case "interest.coffee":   return DropTemplate(name: "Kaffee", emoji: "☕️")
+        case "interest.food":     return DropTemplate(name: "Essen gehen", emoji: "🍽")
+        case "interest.sport":    return DropTemplate(name: "Sport", emoji: "🏃")
+        case "interest.music":    return DropTemplate(name: "Konzert", emoji: "🎵")
+        case "interest.cinema":   return DropTemplate(name: "Kino", emoji: "🎬")
+        case "interest.gaming":   return DropTemplate(name: "Gaming", emoji: "🎮")
+        case "interest.shopping": return DropTemplate(name: "Bummeln", emoji: "🛍")
+        case "interest.outdoor":  return DropTemplate(name: "Park-Hangout", emoji: "🌳")
+        case "interest.party":    return DropTemplate(name: "Bier", emoji: "🍻")
+        case "interest.photo":    return DropTemplate(name: "Foto-Walk", emoji: "📸")
+        case "interest.cooking":  return DropTemplate(name: "Brunch", emoji: "🥐")
+        case "interest.travel":   return nil   // Reise passt nicht als Spontan-Drop
+        default: return nil
+        }
+    }
+}
+
+struct DropQuickTemplatesBar: View {
+    @EnvironmentObject var store: AppStore
+    var onSelect: (DropTemplate) -> Void
+
+    /// Vorlagen-Pipeline:
+    /// 1. Letzte 4 unterschiedliche Aktivitäten aus pastDrops (frisch zuerst)
+    /// 2. Auffüllen mit Interest-Mappings (max. 8 gesamt)
+    /// 3. Universal-Defaults nur wenn Liste sonst leer
+    private var templates: [DropTemplate] {
+        var list: [DropTemplate] = []
+        var seen: Set<String> = []
+        let key = { (t: DropTemplate) in "\(t.emoji)|\(t.name.lowercased())" }
+
+        // 1. Past Drops (neueste zuerst, deduped)
+        for drop in store.pastDrops.reversed() {
+            let tpl = DropTemplate(name: drop.activityName, emoji: drop.activityEmoji)
+            let k = key(tpl)
+            if seen.contains(k) { continue }
+            seen.insert(k)
+            list.append(tpl)
+            if list.count >= 4 { break }
+        }
+
+        // 2. Interest-Mappings auffüllen
+        for interest in store.userInterests {
+            guard let tpl = DropTemplate.fromInterest(interest) else { continue }
+            let k = key(tpl)
+            if seen.contains(k) { continue }
+            seen.insert(k)
+            list.append(tpl)
+            if list.count >= 8 { break }
+        }
+
+        // 3. Fallback wenn weder Past-Drops noch Interests
+        if list.isEmpty { return DropTemplate.universalDefaults }
+        return list
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(store.pastDrops.isEmpty ? "Für dich" : "Vorlagen")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.textSecondary)
+                .padding(.horizontal, 20)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(templates) { tpl in
+                        Button { onSelect(tpl) } label: {
+                            HStack(spacing: 6) {
+                                Text(tpl.emoji).font(.system(size: 16))
+                                Text(tpl.name)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(.textPrimary)
+                            }
+                            .padding(.horizontal, 14).padding(.vertical, 10)
+                            // Brand-getöntes Glass — gleiche Optik wie die
+                            // Sektions-Container der CreateDropView, statt eines
+                            // grauen Material-Lookups.
+                            .background(
+                                ZStack {
+                                    Capsule().fill(.ultraThinMaterial)
+                                    Capsule().fill(Color.brand.opacity(0.10))
+                                }
+                            )
+                            .overlay(
+                                Capsule().stroke(
+                                    LinearGradient(
+                                        colors: [Color.brand.opacity(0.45), Color.brand.opacity(0.15)],
+                                        startPoint: .topLeading, endPoint: .bottomTrailing
+                                    ),
+                                    lineWidth: 1
+                                )
+                            )
+                            .shadow(color: Color.brand.opacity(0.18), radius: 6, y: 2)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)   // Damit der Glass-Shadow nicht abgeschnitten wird
+            }
+        }
+    }
+}

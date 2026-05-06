@@ -16,8 +16,25 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        // Cold-Start via Home-Screen Quick Action: shortcut steckt in launchOptions.
+        // routeQuickAction wartet intern bis Singleton + Scene ready ist.
+        print("🚦 [QA] didFinishLaunching — launchOptions keys: \(launchOptions?.keys.map(\.rawValue) ?? [])")
+        if let shortcut = launchOptions?[.shortcutItem] as? UIApplicationShortcutItem {
+            print("🚦 [QA] COLD-START shortcut: \(shortcut.type)")
+            AppDelegate.routeQuickAction(shortcut.type)
+        } else {
+            print("🚦 [QA] No shortcut in launchOptions (warm start or normal launch)")
+        }
+
         // Firebase so früh wie möglich konfigurieren – vor dem ersten SwiftUI-Frame.
         FirebaseApp.configure()
+
+        // Remote Feature Flags aus RTDB ziehen (z.B. cityRestrictionEnabled).
+        // Default-Werte in BetaConfig sind so gewählt, dass App-Store-Reviewer
+        // die App ohne Geo-Beschränkung testen können.
+        Task { @MainActor in
+            RealtimeDBManager.shared.bootstrapRemoteFlags()
+        }
 
         // Crashlytics aktivieren (wird automatisch durch FirebaseApp.configure() gestartet).
         // In Debug-Builds unterdrücken wir das Senden von Crashes an Firebase,
@@ -136,5 +153,94 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
             )
         }
         completionHandler()
+    }
+
+    // MARK: - Home Screen Quick Actions
+    // Tap auf eine Quick-Action (langer Druck auf App-Icon) → Notification posten,
+    // MainTabView reagiert und routet auf den entsprechenden Tab/Sheet.
+
+    func application(
+        _ application: UIApplication,
+        performActionFor shortcutItem: UIApplicationShortcutItem,
+        completionHandler: @escaping (Bool) -> Void
+    ) {
+        // App war im Hintergrund / inactive — direkt am Singleton-Store routen.
+        print("🚦 [QA] performActionFor: \(shortcutItem.type)")
+        AppDelegate.routeQuickAction(shortcutItem.type)
+        completionHandler(true)
+    }
+
+    // MARK: - Scene Configuration (für Quick Actions in iOS 13+)
+    // SwiftUI App-Lifecycle braucht eine SceneDelegate damit Quick Actions
+    // bei COLD-START ankommen (launchOptions ist sonst leer).
+
+    func application(
+        _ application: UIApplication,
+        configurationForConnecting connectingSceneSession: UISceneSession,
+        options: UIScene.ConnectionOptions
+    ) -> UISceneConfiguration {
+        let config = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
+        config.delegateClass = DropsSceneDelegate.self
+        return config
+    }
+
+    /// Routet eine Quick-Action direkt am AppStore-Singleton. Funktioniert sowohl
+    /// für Cold-Start (aus SceneDelegate.scene(willConnectTo:)) als auch für
+    /// Background→Foreground (aus SceneDelegate.windowScene(performActionFor:)).
+    static func routeQuickAction(_ type: String) {
+        print("🚦 [QA] routeQuickAction CALLED with: \(type), AppStore.shared = \(AppStore.shared == nil ? "NIL" : "OK")")
+        // Cold-Start: warte bis SwiftUI-Scene + Auth ready ist
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            print("🚦 [QA] +0.5s — AppStore.shared = \(AppStore.shared == nil ? "NIL" : "OK")")
+            guard AppStore.shared != nil else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    print("🚦 [QA] +1.5s retry — AppStore.shared = \(AppStore.shared == nil ? "NIL" : "OK")")
+                    apply(type)
+                }
+                return
+            }
+            apply(type)
+        }
+
+        @MainActor func apply(_ type: String) {
+            guard let store = AppStore.shared else {
+                print("🚦 [QA] apply() — STILL NIL, abort")
+                return
+            }
+            print("🚦 [QA] apply() — authenticated=\(store.isAuthenticated)")
+            // Wenn nicht authenticated: PARK das Pending-Shortcut am Store —
+            // MainTabView konsumiert es sobald sie erscheint (post-Auth).
+            // Wenn authenticated: direkt routen + zusätzlich parken (MainTabView
+            // re-applied on onAppear für Robustheit).
+            store.pendingQuickAction = type
+            print("🚦 [QA] → store.pendingQuickAction = \(type)")
+        }
+    }
+}
+
+// MARK: - SceneDelegate für Quick Actions
+
+/// Empfängt Home-Screen Quick Actions in iOS 13+.
+/// AppDelegate's `application(_:performActionFor:)` wird in Scene-basierten
+/// Apps nicht mehr aufgerufen — Apple routet zur SceneDelegate.
+class DropsSceneDelegate: NSObject, UIWindowSceneDelegate {
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession,
+               options connectionOptions: UIScene.ConnectionOptions) {
+        // Cold-Start: Quick Action steckt in den connectionOptions.
+        if let shortcut = connectionOptions.shortcutItem {
+            print("🚦 [QA] SceneDelegate willConnectTo with shortcut: \(shortcut.type)")
+            AppDelegate.routeQuickAction(shortcut.type)
+        } else {
+            print("🚦 [QA] SceneDelegate willConnectTo (no shortcut)")
+        }
+    }
+
+    func windowScene(_ windowScene: UIWindowScene,
+                     performActionFor shortcutItem: UIApplicationShortcutItem,
+                     completionHandler: @escaping (Bool) -> Void) {
+        // Warm-Start: Quick Action während App im Hintergrund.
+        print("🚦 [QA] SceneDelegate performActionFor: \(shortcutItem.type)")
+        AppDelegate.routeQuickAction(shortcutItem.type)
+        completionHandler(true)
     }
 }

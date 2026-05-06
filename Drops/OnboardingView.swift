@@ -801,7 +801,10 @@ struct OnboardingView: View {
             isLoginMode: $isLoginMode,
             onBetaLogin: nil
         )
-        .onAppear { isLoginMode = hasOnboarded }
+        // Default: immer Register-Modus (nicht hasOnboarded) — neue Marketing-
+        // Strategie. User der schon Konto hat, klickt einfach den „Schon
+        // registriert? Anmelden"-Toggle drunter.
+        .onAppear { isLoginMode = false }
     }
 
     @ViewBuilder private var profileStepView: some View {
@@ -1070,53 +1073,20 @@ struct OnboardingView: View {
     }
 }
 
-// MARK: - Drops Logo ("Dr[●]ps")
-// Statisches Logo — Brand-Gradient (grün → cyan) im Punkt + Inner-Glow.
-// Die "Drop-Pulse"-Animation läuft im Aurora-Hintergrund, nicht im Logo.
+// MARK: - Drops Logo (Cleane Wordmark — kein Mark)
+// Reduziert auf nur das Wort "Drops" in lighter Schrift, ohne den Pulse-Mark
+// daneben. Passt zur cleanen Website-Optik (Bricolage Grotesque 700 dort).
+// Auf iOS: SF Pro Bold (700) statt Black (900) — leichter, eleganter.
 
 struct DropsLogo: View {
     var fontSize: CGFloat = 52
     var textColor: Color = .white
 
     var body: some View {
-        HStack(alignment: .center, spacing: 1) {
-            Text("Dr")
-                .font(.system(size: fontSize, weight: .black, design: .rounded))
-                .foregroundColor(textColor)
-
-            // "o" als App-Icon-Punkt: Gradient-Kreis (grün → cyan) + weißer Kern
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.brand, Color(hex: "06B6D4")],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: fontSize * 0.38, height: fontSize * 0.38)
-                    .shadow(color: Color.brand.opacity(0.5), radius: 8)
-                    .shadow(color: Color(hex: "06B6D4").opacity(0.35), radius: 12)
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [Color.white.opacity(0.4), .clear],
-                            center: .topLeading,
-                            startRadius: 0,
-                            endRadius: fontSize * 0.22
-                        )
-                    )
-                    .frame(width: fontSize * 0.38, height: fontSize * 0.38)
-                Circle()
-                    .fill(Color.white)
-                    .frame(width: fontSize * 0.13, height: fontSize * 0.13)
-            }
-            .frame(width: fontSize * 0.62, height: fontSize)
-
-            Text("ps")
-                .font(.system(size: fontSize, weight: .black, design: .rounded))
-                .foregroundColor(textColor)
-        }
+        Text("Drops")
+            .font(.system(size: fontSize, weight: .bold, design: .default))
+            .tracking(-fontSize * 0.025)
+            .foregroundColor(textColor)
     }
 }
 
@@ -1210,7 +1180,7 @@ struct WelcomeStep: View {
         !lastLoginName.isEmpty
     }
 
-    private let fullSlogan = "Join real life."
+    private let fullSlogan = "Sei dabei wenn's passiert."
 
     /// System-Setting hat Vorrang; sonst entscheidet die Uhrzeit
     private var isLight: Bool {
@@ -1261,12 +1231,12 @@ struct WelcomeStep: View {
 
                         // Hauptbotschaft — groß, fett, zwei Zeilen
                         VStack(spacing: 6) {
-                            Text("Echte Treffen.")
-                                .font(.system(size: screenH < 700 ? 28 : 32, weight: .bold, design: .rounded))
+                            Text("Sei dabei,")
+                                .font(.system(size: screenH < 700 ? 28 : 32, weight: .bold, design: .default))
                                 .foregroundColor(textPrimary)
-                            Text("Spontan. In deiner Nähe.")
-                                .font(.system(size: screenH < 700 ? 17 : 19, weight: .medium, design: .rounded))
-                                .foregroundColor(textPrimary.opacity(isLight ? 0.55 : 0.55))
+                            Text("wenn's passiert.")
+                                .font(.system(size: screenH < 700 ? 28 : 32, weight: .bold, design: .default))
+                                .foregroundColor(textPrimary)
                         }
                         .multilineTextAlignment(.center)
                     }
@@ -1316,36 +1286,38 @@ struct WelcomeStep: View {
                         // — wenn Quick-Login verfügbar ist → nur wenn User "Anderes Konto" geklickt hat
                         if !hasQuickLogin || showAlternativeLogin {
                             // ── Standard Apple Sign In / Sign Up ──────
-                            // Zwei native Buttons (type ist nach init nicht änderbar),
-                            // immer nur einer sichtbar. Verhindert .id()-Reuse-Problem.
+                            // Conditional Rendering mit .id() — opacity-Lösung war
+                            // unzuverlässig (iOS recycled den native UIView).
                             ZStack {
-                                // Login-Button (.signIn → "Mit Apple ID anmelden")
-                                AppleSignInButtonView(
-                                    type: .signIn,
-                                    style: appleButtonStyle == .black ? .black : .white,
-                                    cornerRadius: screenH < 700 ? 22 : 25
-                                ) {
-                                    appleAuth.signIn { success, isNewUser in
-                                        if success { onApple(isNewUser, appleAuth.lastAppleEmail) }
+                                if isLoginMode {
+                                    // Login-Button (.signIn → "Mit Apple ID anmelden")
+                                    AppleSignInButtonView(
+                                        type: .signIn,
+                                        style: appleButtonStyle == .black ? .black : .white,
+                                        cornerRadius: screenH < 700 ? 22 : 25
+                                    ) {
+                                        appleAuth.signIn { success, isNewUser in
+                                            if success { onApple(isNewUser, appleAuth.lastAppleEmail) }
+                                        }
                                     }
-                                }
-                                .frame(maxWidth: .infinity, minHeight: screenH < 700 ? 44 : 50, maxHeight: screenH < 700 ? 44 : 50)
-                                .disabled(appleAuth.isLoading)
-                                .opacity(isLoginMode ? 1 : 0)
-
-                                // Registrieren-Button (.signUp → "Mit Apple ID registrieren")
-                                AppleSignInButtonView(
-                                    type: .signUp,
-                                    style: appleButtonStyle == .black ? .black : .white,
-                                    cornerRadius: screenH < 700 ? 22 : 25
-                                ) {
-                                    appleAuth.signIn { success, isNewUser in
-                                        if success { onApple(isNewUser, appleAuth.lastAppleEmail) }
+                                    .frame(maxWidth: .infinity, minHeight: screenH < 700 ? 44 : 50, maxHeight: screenH < 700 ? 44 : 50)
+                                    .disabled(appleAuth.isLoading)
+                                    .id("apple-signin")
+                                } else {
+                                    // Registrieren-Button (.signUp → "Mit Apple ID registrieren")
+                                    AppleSignInButtonView(
+                                        type: .signUp,
+                                        style: appleButtonStyle == .black ? .black : .white,
+                                        cornerRadius: screenH < 700 ? 22 : 25
+                                    ) {
+                                        appleAuth.signIn { success, isNewUser in
+                                            if success { onApple(isNewUser, appleAuth.lastAppleEmail) }
+                                        }
                                     }
+                                    .frame(maxWidth: .infinity, minHeight: screenH < 700 ? 44 : 50, maxHeight: screenH < 700 ? 44 : 50)
+                                    .disabled(appleAuth.isLoading)
+                                    .id("apple-signup")
                                 }
-                                .frame(maxWidth: .infinity, minHeight: screenH < 700 ? 44 : 50, maxHeight: screenH < 700 ? 44 : 50)
-                                .disabled(appleAuth.isLoading)
-                                .opacity(isLoginMode ? 0 : 1)
 
                                 if appleAuth.isLoading {
                                     Capsule().fill(.black.opacity(0.3))
@@ -1568,7 +1540,7 @@ struct SimpleNameStep: View {
                         .textContentType(.givenName)
                         .submitLabel(.done)
                         .onSubmit { if !name.trimmingCharacters(in: .whitespaces).isEmpty { onNext() } }
-                        .onChange(of: name) { newValue in
+                        .onChange(of: name) { _, newValue in
                             let filtered = newValue.filter { $0.isLetter }
                             if filtered != newValue { name = filtered }
                         }
@@ -1847,10 +1819,11 @@ struct ProfileSetupStep: View {
             && phoneIsValid
     }
 
-    /// Handynummer ist Pflicht — mindestens 6 Ziffern (Länder-Präfix optional).
-    /// Ohne Nummer finden dich deine Kontakte nicht, deshalb muss sie hinterlegt werden.
+    /// Handynummer ist optional. Wenn der User eine angibt, müssen es ≥ 6 Ziffern sein.
+    /// Ohne Nummer können Kontakte aus dem Adressbuch den User nicht finden.
     private var phoneIsValid: Bool {
-        phone.filter { $0.isNumber }.count >= 6
+        let digits = phone.filter { $0.isNumber }.count
+        return digits == 0 || digits >= 6
     }
 
     /// Formatiert Roheingabe zu "TT.MM.JJJJ"
@@ -1964,7 +1937,7 @@ struct ProfileSetupStep: View {
                                     .focused($nameFocused)
                                     .autocorrectionDisabled()
                                     .textContentType(.givenName)
-                                    .onChange(of: name) { v in
+                                    .onChange(of: name) { _, v in
                                         let f = v.filter { $0.isLetter }
                                         if f != v { name = f }
                                     }
@@ -1996,7 +1969,7 @@ struct ProfileSetupStep: View {
                                     .keyboardType(.numberPad)
                                     .padding(.horizontal, 16).padding(.vertical, 14)
                                     .focused($dateFocused)
-                                    .onChange(of: birthdateText) { raw in
+                                    .onChange(of: birthdateText) { _, raw in
                                         let formatted = formatBirthdateInput(raw)
                                         if formatted != birthdateText { birthdateText = formatted }
                                         parsedBirthdate = parseBirthdate(birthdateText)
@@ -2052,11 +2025,16 @@ struct ProfileSetupStep: View {
                             .foregroundColor(.textTertiary)
                         }
 
-                        // ── Telefonnummer (Pflicht) ──────────────────
+                        // ── Telefonnummer (optional) ─────────────────
                         VStack(alignment: .leading, spacing: 6) {
-                            Label("Handynummer", systemImage: "phone.fill")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.textSecondary)
+                            HStack(spacing: 6) {
+                                Label("Handynummer", systemImage: "phone.fill")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(.textSecondary)
+                                Text("(optional)")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.textTertiary)
+                            }
                             ZStack(alignment: .leading) {
                                 if phone.isEmpty {
                                     Text("+49 ...")
@@ -2072,9 +2050,20 @@ struct ProfileSetupStep: View {
                             }
                             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
                             .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.1), lineWidth: 1))
-                            Text("Wird nicht öffentlich angezeigt. Deine Kontakte können dich nur so finden.")
-                                .font(.system(size: 11)).foregroundColor(.textTertiary)
-                                .fixedSize(horizontal: false, vertical: true)
+                            if phone.filter({ $0.isNumber }).count == 0 {
+                                HStack(alignment: .top, spacing: 6) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.accentOrange)
+                                    Text("Ohne Nummer können dich Kontakte aus deinem Adressbuch nicht finden.")
+                                        .font(.system(size: 11)).foregroundColor(.accentOrange)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            } else {
+                                Text("Wird nicht öffentlich angezeigt. Nur damit Kontakte dich finden können.")
+                                    .font(.system(size: 11)).foregroundColor(.textTertiary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
                     .padding(.horizontal, 24)
@@ -2491,7 +2480,7 @@ struct LoginView: View {
                                 .keyboardType(.numberPad)
                                 .foregroundColor(textPrimaryColor)
                                 .focused($fieldFocused)
-                                .onChange(of: enteredCode) { v in
+                                .onChange(of: enteredCode) { _, v in
                                     if v.count > 6 { enteredCode = String(v.prefix(6)) }
                                 }
                                 .padding(.vertical, fieldPadV)

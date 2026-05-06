@@ -426,17 +426,20 @@ struct ReliabilityScore {
     var dropInvitesPoints: Int = 0       // +5 pro Einladung die gejoint ist (Drop-Einladung)
     var newcomerHostPoints: Int = 0      // +3 pro neuem User (Drop-Entdecker) bei deinem Drop
     var appInvitesPoints: Int = 0        // +10 pro Freund der Drops neu installiert & onboarded hat
+    var creationBonusPoints: Int = 0     // +5 für jeden erstellten Drop (Launch-Motivation)
+    var boostBonusPoints: Int = 0        // +5 wenn Drop erstellt/bestätigt während Boost-Phase
+                                          // (Umgebung leer: <5 Drops in der Nähe → extra Anreiz)
     /// Aktueller Show-Up-Streak (Anzahl Drops in Folge ohne No-Show).
     /// Jeder 5er-Block löst +20 Streak-Bonus aus; Counter läuft danach weiter (alle 5 erneut).
     var currentStreak: Int = 0
     var appLanguage: String = "de"
 
-    // MARK: - Punktesystem
-    // Start 100 · Joinen+vor Ort +15 · Hosten+klappt +8 · No-Show -25
-    // Boni: Streak +20, Erster +5, Drop-Einladung +5, Neuling-Host +3, App-Einladung +10
+    // MARK: - Punktesystem (1.0.2 — höhere Werte für Launch-Phase)
+    // Start 100 · Joinen+vor Ort +20 · Hosten+klappt +12 · No-Show -25
+    // Boni: Streak +30, Erster +10, Drop-Einladung +10, Neuling-Host +5, App-Einladung +25
     static let startingPoints       = 100
-    static let pointsPerShowUp      = 15
-    static let pointsPerHostSuccess = 8
+    static let pointsPerShowUp      = 20
+    static let pointsPerHostSuccess = 12
     static let pointsPerNoShow      = -25
 
     /// Gesamtpunktzahl — aus Ereignissen und Boni.
@@ -452,7 +455,7 @@ struct ReliabilityScore {
     }
 
     var bonusPoints: Int {
-        streakBonusPoints + firstArrivalPoints + dropInvitesPoints + newcomerHostPoints + appInvitesPoints
+        streakBonusPoints + firstArrivalPoints + dropInvitesPoints + newcomerHostPoints + appInvitesPoints + creationBonusPoints + boostBonusPoints
     }
 
     /// Deckungsgleich mit badge — damit überall die gleiche Stufe erscheint.
@@ -820,10 +823,10 @@ struct ReliabilityInfoSheet: View {
             sectionHeader("So sammelst du Punkte")
             VStack(spacing: 0) {
                 eventRow(icon: "figure.walk.circle.fill", color: .onlineGreen,
-                         title: "Drop beitreten + vor Ort", value: "+15")
+                         title: "Drop beitreten + vor Ort", value: "+20")
                 Divider().padding(.leading, 56)
                 eventRow(icon: "plus.circle.fill", color: Color(hex: "06b6d4"),
-                         title: "Drop hosten + kommt zustande", value: "+8")
+                         title: "Drop hosten + kommt zustande", value: "+12")
                 Divider().padding(.leading, 56)
                 eventRow(icon: "xmark.circle.fill", color: .accentRed,
                          title: "No-Show (nicht erschienen)", value: "-25",
@@ -841,19 +844,25 @@ struct ReliabilityInfoSheet: View {
             sectionHeader("Extras & Boni")
             VStack(spacing: 0) {
                 eventRow(icon: "flame.fill", color: .accentOrange,
-                         title: "5× in Folge ohne No-Show", value: "+20")
+                         title: "5× in Folge ohne No-Show", value: "+30")
                 Divider().padding(.leading, 56)
                 eventRow(icon: "bolt.fill", color: Color(hex: "f59e0b"),
-                         title: "Als Erster vor Ort", value: "+5")
+                         title: "Als Erster vor Ort", value: "+10")
                 Divider().padding(.leading, 56)
                 eventRow(icon: "paperplane.fill", color: .brand,
-                         title: "Eingeladener joint deinen Drop", value: "+5")
+                         title: "Eingeladener joint deinen Drop", value: "+10")
                 Divider().padding(.leading, 56)
                 eventRow(icon: "sparkles", color: Color(hex: "8b5cf6"),
-                         title: "Neuling bei deinem Drop", value: "+3")
+                         title: "Neuling bei deinem Drop", value: "+5")
                 Divider().padding(.leading, 56)
                 eventRow(icon: "person.badge.plus.fill", color: Color(hex: "ec4899"),
-                         title: "Freund installiert Drops neu", value: "+10")
+                         title: "Freund installiert Drops neu", value: "+25")
+                Divider().padding(.leading, 56)
+                eventRow(icon: "plus.app.fill", color: Color(hex: "10b981"),
+                         title: "Drop erstellen (egal ob's klappt)", value: "+10")
+                Divider().padding(.leading, 56)
+                eventRow(icon: "bolt.circle.fill", color: .accentOrange,
+                         title: "Aktion in Boost-Phase (Umgebung leer)", value: "+15")
             }
         }
         .background(Color(UIColor.secondarySystemGroupedBackground),

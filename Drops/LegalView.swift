@@ -116,7 +116,7 @@ private struct PrivacyContent: View {
                 text: """
 Verantwortlich für die Verarbeitung personenbezogener Daten im Sinne der DSGVO ist:
 
-Dennis Gundermann · Lechstr. 19, 80638 München · drops-app.de
+Dennis Gundermann · Lissi-Kaeser-Str. 7, 80797 München · drops-app.de
 
 Kontakt: contact@drops-app.de
 
@@ -392,7 +392,7 @@ private struct ImpressumContent: View {
 
             LegalSection(
                 title: "Anbieter",
-                text: "Dennis Gundermann\nLechstr. 19\n80638 München\n\nE-Mail: contact@drops-app.de\nWebsite: drops-app.de\n\nDiese App wird von einer Privatperson entwickelt und betrieben. Es besteht keine Pflicht zur Umsatzsteuer-Identifikationsnummer."
+                text: "Dennis Gundermann\nLissi-Kaeser-Str. 7\n80797 München\n\nE-Mail: contact@drops-app.de\nWebsite: drops-app.de\n\nDiese App wird von einer Privatperson entwickelt und betrieben. Es besteht keine Pflicht zur Umsatzsteuer-Identifikationsnummer."
             )
 
             LegalSection(

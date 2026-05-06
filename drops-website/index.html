@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Drops – Sei dabei, wenn's passiert</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700;800&family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
   <!-- Firebase (modular SDK – supports named databases) -->
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
@@ -77,18 +77,28 @@
 
     .nav-logo {
       display: flex; align-items: center; gap: 10px;
-      font-size: 20px; font-weight: 800; color: var(--text);
+      font-family: 'Bricolage Grotesque', 'Inter', sans-serif;
+      font-size: 22px; font-weight: 700; color: var(--text);
       text-decoration: none;
+      letter-spacing: -0.02em;
     }
-    .nav-logo .dot {
-      width: 10px; height: 10px; border-radius: 50%;
-      background: var(--brand);
-      box-shadow: 0 0 10px var(--brand-glow);
-      animation: pulse-dot 2s ease-in-out infinite;
+    /* Pulse-Mark — 3 konzentrische Ringe (Variante B) */
+    .nav-logo .mark {
+      position: relative;
+      width: 22px; height: 22px;
+      flex-shrink: 0;
     }
-    @keyframes pulse-dot {
-      0%,100% { transform: scale(1); opacity: 1; }
-      50% { transform: scale(1.4); opacity: 0.8; }
+    .nav-logo .mark .ring {
+      position: absolute; inset: 0;
+      border-radius: 50%;
+      border: 1.5px solid var(--brand);
+    }
+    .nav-logo .mark .ring.r1 { opacity: 0.30; animation: pulse-ring 2s ease-in-out infinite; }
+    .nav-logo .mark .ring.r2 { inset: 4px; opacity: 0.65; }
+    .nav-logo .mark .ring.r3 { inset: 8px; opacity: 1; border-width: 2px; }
+    @keyframes pulse-ring {
+      0%,100% { transform: scale(1);   opacity: 0.30; }
+      50%     { transform: scale(1.15); opacity: 0.10; }
     }
 
     .nav-links { display: flex; align-items: center; gap: 32px; }
@@ -1079,7 +1089,11 @@
 <!-- NAV -->
 <nav>
   <a class="nav-logo" href="#">
-    <span class="dot"></span>
+    <span class="mark">
+      <span class="ring r1"></span>
+      <span class="ring r2"></span>
+      <span class="ring r3"></span>
+    </span>
     Drops
   </a>
   <div class="nav-links">

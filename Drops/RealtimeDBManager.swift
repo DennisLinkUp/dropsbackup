@@ -64,6 +64,26 @@ class RealtimeDBManager: ObservableObject {
     static let shared = RealtimeDBManager()
     private let db = Database.database(url: "https://drops-858d1-default-rtdb.europe-west1.firebasedatabase.app").reference()
 
+    // MARK: - Remote Config (Feature Flags)
+
+    /// Hört auf Änderungen an `/config/cityRestrictionEnabled` in der RTDB
+    /// und spiegelt den Wert in `BetaConfig.cityRestrictionEnabled`. Damit
+    /// kann der Geo-Gate nach App-Store-Approval per Firebase Console
+    /// aktiviert werden, ohne neuen Build hochladen zu müssen.
+    ///
+    /// Wert in Firebase Console anlegen:
+    /// `/config/cityRestrictionEnabled` → Boolean → `true` (für Launch in DE)
+    /// oder `false` (App-Store-Review-Build).
+    func bootstrapRemoteFlags() {
+        db.child("config").child("cityRestrictionEnabled").observe(.value) { snap in
+            if let v = snap.value as? Bool {
+                BetaConfig.cityRestrictionEnabled = v
+            } else if let n = snap.value as? NSNumber {
+                BetaConfig.cityRestrictionEnabled = n.boolValue
+            }
+        }
+    }
+
     // MARK: - User Profile
 
     /// Legt ein Nutzerprofil an oder aktualisiert es.
@@ -309,8 +329,8 @@ class RealtimeDBManager: ObservableObject {
     /// Admin-Cleanup bzw. `cleanupOrphanedDrops` bereinigt.
     func deleteUserData(uid: String) async {
         // 1. RTDB: Profil, Freunde
-        try? await db.child("users").child(uid).removeValue()
-        try? await db.child("friends").child(uid).removeValue()
+        _ = try? await db.child("users").child(uid).removeValue()
+        _ = try? await db.child("friends").child(uid).removeValue()
 
         // 2. RTDB: eigenen Discovery-Index-Eintrag direkt entfernen (kein Scan nötig —
         //    wir kennen Telefon aus UserDefaults und E-Mail aus Auth)
@@ -318,35 +338,35 @@ class RealtimeDBManager: ObservableObject {
         if !savedPhone.isEmpty {
             let normPhone = Self.normalizePhone(savedPhone)
             if !normPhone.isEmpty {
-                try? await db.child("phoneIndex").child(normPhone).removeValue()
+                _ = try? await db.child("phoneIndex").child(normPhone).removeValue()
             }
         }
         let authPhone = Auth.auth().currentUser?.phoneNumber ?? ""
         if !authPhone.isEmpty {
             let normAuth = Self.normalizePhone(authPhone)
             if !normAuth.isEmpty && normAuth != Self.normalizePhone(savedPhone) {
-                try? await db.child("phoneIndex").child(normAuth).removeValue()
+                _ = try? await db.child("phoneIndex").child(normAuth).removeValue()
             }
         }
         if let email = Auth.auth().currentUser?.email, !email.isEmpty {
             let emailKey = email.lowercased()
                 .replacingOccurrences(of: ".", with: ",")
                 .replacingOccurrences(of: "@", with: "-at-")
-            try? await db.child("emailIndex").child(emailKey).removeValue()
+            _ = try? await db.child("emailIndex").child(emailKey).removeValue()
         }
 
         // 3. Firestore: Profilergänzung (Reliability-Score, profileImageURL)
-        try? await Firestore.firestore().collection("users").document(uid).delete()
+        _ = try? await Firestore.firestore().collection("users").document(uid).delete()
 
         // 4. Firebase Storage: Profilbild
-        try? await Storage.storage().reference().child("profileImages/\(uid).jpg").delete()
+        _ = try? await Storage.storage().reference().child("profileImages/\(uid).jpg").delete()
     }
 
     /// Setzt einen Tombstone-Marker nach Konto-Löschung. Wenn sich der User erneut
     /// mit derselben Apple-ID einloggt (gleiche uid), erkennt die App das anhand
     /// dieses Markers und behandelt den Login als Neuregistrierung.
     func markAccountDeleted(uid: String) async {
-        try? await db.child("deletedAccounts").child(uid).setValue([
+        _ = try? await db.child("deletedAccounts").child(uid).setValue([
             "deletedAt": ServerValue.timestamp()
         ])
     }
@@ -357,7 +377,7 @@ class RealtimeDBManager: ObservableObject {
     func consumeDeletionTombstone(uid: String) async -> Bool {
         let ref = db.child("deletedAccounts").child(uid)
         guard let snap = try? await ref.getData(), snap.exists() else { return false }
-        try? await ref.removeValue()
+        _ = try? await ref.removeValue()
         return true
     }
 
@@ -431,12 +451,50 @@ class RealtimeDBManager: ObservableObject {
 
     // MARK: - Aktive Drops (Fremde)
 
+    /// Parst den `scheduledTime`-String + createdAt zu einer absoluten Startzeit.
+    /// Wird beim Publish geschrieben, damit die Cloud-Function den 30-Min-Reminder
+    /// triggern kann ohne den String parsen zu müssen.
+    static func parseDropStartAt(scheduledTime: String, createdAt: Date) -> Date {
+        let s = scheduledTime.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let cal = Calendar.current
+        switch s {
+        case "", "jetzt":
+            return createdAt
+        case "in 30 min", "in 30min":
+            return createdAt.addingTimeInterval(30 * 60)
+        case "in 1 std", "in 1std", "in 1 stunde":
+            return createdAt.addingTimeInterval(60 * 60)
+        case "heute abend":
+            var c = cal.dateComponents([.year, .month, .day], from: createdAt)
+            c.hour = 19; c.minute = 0
+            return cal.date(from: c) ?? createdAt.addingTimeInterval(60 * 60)
+        default:
+            // Custom HH:mm — heute, sonst morgen
+            let f = DateFormatter()
+            f.dateFormat = "HH:mm"
+            f.locale = Locale(identifier: "de_DE")
+            if let t = f.date(from: scheduledTime) {
+                var c = cal.dateComponents([.year, .month, .day], from: createdAt)
+                let tc = cal.dateComponents([.hour, .minute], from: t)
+                c.hour = tc.hour; c.minute = tc.minute
+                if let date = cal.date(from: c) {
+                    return date < createdAt
+                        ? (cal.date(byAdding: .day, value: 1, to: date) ?? date)
+                        : date
+                }
+            }
+            return createdAt
+        }
+    }
+
     /// Schreibt den eigenen aktiven Drop in die DB, sichtbar für alle Nutzer
     func publishDrop(dropID: String, userID: String, displayName: String, emoji: String,
                      activityName: String, coordinate: CLLocationCoordinate2D, radius: Double,
                      expiresAt: Date, scheduledTime: String = "Jetzt", hostGender: String = "",
                      maxParticipants: Int = 10) {
         let dropRef = db.child("drops").child(dropID)
+        let createdAt = Date()
+        let startAt = Self.parseDropStartAt(scheduledTime: scheduledTime, createdAt: createdAt)
         var payload: [String: Any] = [
             "userID": userID,
             "displayName": displayName,
@@ -448,6 +506,8 @@ class RealtimeDBManager: ObservableObject {
             "timestamp": ServerValue.timestamp(),
             "expiresAt": expiresAt.timeIntervalSince1970,
             "scheduledTime": scheduledTime,
+            // Absolute Startzeit (epoch sec) — für Cloud-Function 30-Min-Reminder.
+            "startAt": startAt.timeIntervalSince1970,
             "maxParticipants": maxParticipants,
             "active": true
         ]
@@ -561,7 +621,9 @@ class RealtimeDBManager: ObservableObject {
         guard let snapshot = try? await db.child("drops").getData() else { return [] }
         let now = Date()
         var results: [MyActiveDropSnapshot] = []
-        for child in snapshot.children {
+        // `snapshot.children` ist ein NSEnumerator und in Swift 6 in async-Kontexten
+        // nicht direkt iterierbar — über `allObjects` umweg über ein Array.
+        for child in snapshot.children.allObjects {
             guard let snap = child as? DataSnapshot,
                   let dict = snap.value as? [String: Any],
                   (dict["userID"] as? String) == ownerUID,
@@ -647,9 +709,12 @@ class RealtimeDBManager: ObservableObject {
 
     // MARK: - DropIn (Beitreten)
 
-    /// Schreibt einen DropIn-Eintrag, damit der Drop-Ersteller benachrichtigt wird
+    /// Schreibt einen DropIn-Eintrag, damit der Drop-Ersteller benachrichtigt wird.
+    /// joinerLat/joinerLng: aktuelle GPS-Koordinaten des Joiners — sonst bekommt der
+    /// Host als Fallback den User-Default (München-Center) angezeigt.
     func joinDrop(dropID: String, joinerID: String, joinerName: String,
-                  joinerEmoji: String = "", joinerAge: Int? = nil) {
+                  joinerEmoji: String = "", joinerAge: Int? = nil,
+                  joinerLat: Double? = nil, joinerLng: Double? = nil) {
         let joinRef = db.child("dropins").child(dropID).child(joinerID)
         var payload: [String: Any] = [
             "name": joinerName,
@@ -657,6 +722,12 @@ class RealtimeDBManager: ObservableObject {
             "timestamp": ServerValue.timestamp()
         ]
         if let age = joinerAge { payload["age"] = age }
+        // Initiale Position direkt mitschreiben → Host hat sofort echten Standort.
+        if let lat = joinerLat { payload["lat"] = lat }
+        if let lng = joinerLng { payload["lng"] = lng }
+        if joinerLat != nil || joinerLng != nil {
+            payload["locTime"] = ServerValue.timestamp()
+        }
         joinRef.setValue(payload)
         // Auto-Cleanup bei App-Termination — sonst bleiben Geister-Joiner hängen
         joinRef.onDisconnectRemoveValue()
@@ -673,18 +744,39 @@ class RealtimeDBManager: ObservableObject {
         ])
     }
 
-    /// Host observiert Joiner-Positionen für seinen Drop — .childChanged + .childAdded.
+    /// Host observiert Joiner-Positionen für seinen Drop — .childAdded + .childChanged.
     /// Callback bekommt die aktuelle Joiner-UID + coordinate bei jedem Update.
+    /// .childAdded ist wichtig damit die initiale Position (von joinDrop) erfasst wird,
+    /// nicht erst beim ersten Move-Update — sonst zeigt der Host den User-Default
+    /// (München-Center) statt der echten Joiner-Position.
     @discardableResult
     func observeJoinerLocations(dropID: String,
                                 onUpdate: @escaping (_ joinerID: String, _ lat: Double, _ lng: Double) -> Void) -> DatabaseHandle {
         let ref = db.child("dropins").child(dropID)
-        return ref.observe(.childChanged) { snapshot in
+        // Initial-Snapshot holen für bereits existierende Einträge mit lat/lng
+        ref.observeSingleEvent(of: .value) { snap in
+            for case let child as DataSnapshot in snap.children {
+                if let dict = child.value as? [String: Any],
+                   let lat  = dict["lat"] as? Double,
+                   let lng  = dict["lng"] as? Double {
+                    DispatchQueue.main.async { onUpdate(child.key, lat, lng) }
+                }
+            }
+        }
+        // Live-Updates: childAdded für neue Joiner, childChanged für Bewegungen
+        let handle = ref.observe(.childChanged) { snapshot in
             guard let dict = snapshot.value as? [String: Any],
                   let lat  = dict["lat"] as? Double,
                   let lng  = dict["lng"] as? Double else { return }
             DispatchQueue.main.async { onUpdate(snapshot.key, lat, lng) }
         }
+        ref.observe(.childAdded) { snapshot in
+            guard let dict = snapshot.value as? [String: Any],
+                  let lat  = dict["lat"] as? Double,
+                  let lng  = dict["lng"] as? Double else { return }
+            DispatchQueue.main.async { onUpdate(snapshot.key, lat, lng) }
+        }
+        return handle
     }
 
     func removeJoinerLocationObserver(_ handle: DatabaseHandle, dropID: String) {
@@ -844,17 +936,32 @@ class RealtimeDBManager: ObservableObject {
             group.leave()
         }
 
-        // 2. Alle Drops laden und aktive herausfiltern
+        // 2. Alle Drops laden — aktive herausfiltern + ersten Drop je User für Stadt-Derivation
         group.enter()
         var activeDrops: [String: (label: String, dropKey: String)] = [:]
+        // Earliest drop's coord per userID — Basis für "Registrations-Stadt"
+        var earliestDropCoord: [String: (ts: Double, lat: Double, lng: Double)] = [:]
         db.child("drops").observeSingleEvent(of: .value) { snapshot in
             let now = Date()
             for child in snapshot.children {
                 guard let snap   = child as? DataSnapshot,
                       let dict   = snap.value as? [String: Any],
-                      let uid    = dict["userID"] as? String,
-                      let active = dict["active"] as? Bool, active
+                      let uid    = dict["userID"] as? String
                 else { continue }
+                // Earliest-drop tracking: läuft auf ALLE drops (auch inaktive/expired)
+                if let lat = dict["latitude"] as? Double,
+                   let lng = dict["longitude"] as? Double {
+                    let ts = (dict["createdAt"] as? Double) ?? Double.greatestFiniteMagnitude
+                    if let cur = earliestDropCoord[uid] {
+                        if ts < cur.ts {
+                            earliestDropCoord[uid] = (ts, lat, lng)
+                        }
+                    } else {
+                        earliestDropCoord[uid] = (ts, lat, lng)
+                    }
+                }
+                // Aktive Drops nur fürs Active-Filter
+                guard let active = dict["active"] as? Bool, active else { continue }
                 if let expiresTs = dict["expiresAt"] as? Double,
                    now > Date(timeIntervalSince1970: expiresTs) { continue }
                 let emoji    = dict["emoji"]        as? String ?? ""
@@ -868,10 +975,16 @@ class RealtimeDBManager: ObservableObject {
         // 3. Zusammenführen
         group.notify(queue: .main) {
             for i in entries.indices {
-                if let info = activeDrops[entries[i].id] {
+                let uid = entries[i].id
+                if let info = activeDrops[uid] {
                     entries[i].hasActiveDrop      = true
                     entries[i].activeDropActivity = info.label
                     entries[i].activeDropID       = info.dropKey
+                }
+                // Registrations-Stadt aus erstem Drop des Users
+                if let first = earliestDropCoord[uid] {
+                    let coord = CLLocationCoordinate2D(latitude: first.lat, longitude: first.lng)
+                    entries[i].cityName = ServiceCities.city(for: coord)?.name
                 }
             }
             entries.sort { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }
@@ -912,13 +1025,16 @@ class RealtimeDBManager: ObservableObject {
     /// User komplett aus DB löschen (Admin)
     func adminDeleteUser(uid: String, completion: (() -> Void)? = nil) {
         // Hard delete versuchen; schlägt fehl wenn Rules es verbieten → Soft-Delete als Fallback
-        db.child("users").child(uid).removeValue { error, _ in
+        let usersRef = db.child("users").child(uid)
+        usersRef.removeValue { error, _ in
             if error == nil {
                 // Hard delete erfolgreich
                 DispatchQueue.main.async { completion?() }
             } else {
-                // Fallback: Soft-Delete — wird im Fetch herausgefiltert
-                self.db.child("users").child(uid).updateChildValues([
+                // Fallback: Soft-Delete — wird im Fetch herausgefiltert.
+                // `usersRef` lokal gefangen, damit kein Zugriff auf den
+                // @MainActor-isolierten `self.db` aus dem Sendable-Closure.
+                usersRef.updateChildValues([
                     "isBanned":  true,
                     "isDeleted": true,
                     "name":      "[Gelöscht]",
@@ -1287,6 +1403,40 @@ class RealtimeDBManager: ObservableObject {
         }
     }
 
+    /// Throttled-Schreiber für die Last-Known-Location eines Users (für Drop-Nearby-Pushes).
+    /// - 1× pro 10 Min Throttle in UserDefaults
+    /// - Coords auf 3 Dezimalstellen gerundet (~110m Auflösung) für Privacy
+    /// - Pfad: users/{uid}/lastLat, lastLng, lastSeen (Server-Timestamp)
+    private static let lastLocWriteKey = "ud_lastKnownLocWrite"
+    func maybeUpdateLastKnownLocation(coord: CLLocationCoordinate2D) {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        let now = Date().timeIntervalSince1970
+        let last = UserDefaults.standard.double(forKey: Self.lastLocWriteKey)
+        guard now - last >= 600 else { return }   // 10 Min Throttle
+        UserDefaults.standard.set(now, forKey: Self.lastLocWriteKey)
+
+        // Coordinates auf 3 Nachkommastellen runden (~110m), spart Privacy-Sensibilität
+        let lat = (coord.latitude * 1000).rounded() / 1000
+        let lng = (coord.longitude * 1000).rounded() / 1000
+        db.child("users").child(uid).updateChildValues([
+            "lastLat":  lat,
+            "lastLng":  lng,
+            "lastSeen": ServerValue.timestamp()
+        ])
+    }
+
+    /// Lädt einmalig `createdAt` (Unix ms) und `birthdate` (Unix s) eines Users.
+    /// Wird im MiniProfileSheet genutzt um Beta-Badge & Alter anzuzeigen.
+    func fetchUserMeta(uid: String, completion: @escaping (_ createdAt: Date?, _ birthdate: Date?) -> Void) {
+        guard !uid.isEmpty else { completion(nil, nil); return }
+        db.child("users").child(uid).observeSingleEvent(of: .value) { snap in
+            let dict = snap.value as? [String: Any] ?? [:]
+            let createdAt: Date? = (dict["createdAt"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) }
+            let birthdate: Date? = (dict["birthdate"] as? Double).map { Date(timeIntervalSince1970: $0) }
+            DispatchQueue.main.async { completion(createdAt, birthdate) }
+        }
+    }
+
     /// Schreibt eine Nutzer-Meldung nach `reports/{autoID}`.
     /// Admin-Panel kann diese Liste auswerten (offene/bearbeitete Reports).
     func submitReport(reportedUID: String?, reportedName: String, reason: String, details: String) {
@@ -1309,7 +1459,7 @@ class RealtimeDBManager: ObservableObject {
         guard let friendsSnap = try? await db.child("friends").child(ownerUID).getData(),
               friendsSnap.exists() else { return [] }
         var uids: [String] = []
-        for child in friendsSnap.children {
+        for child in friendsSnap.children.allObjects {
             guard let c = child as? DataSnapshot else { continue }
             uids.append(c.key)
         }
@@ -1435,6 +1585,9 @@ struct AdminUserEntry: Identifiable {
     var isPlusUser:   Bool   = false
     var hasActiveDrop:      Bool    = false
     var activeDropActivity: String? = nil   // z.B. "☕️ Kaffee"
+    /// Stadt-Name aus erstem Drop des Users abgeleitet (München/Berlin/etc.).
+    /// nil = User hat noch keinen Drop erstellt → "—" in UI.
+    var cityName: String?    = nil
     var activeDropID:       String? = nil   // Firebase-Key des laufenden Drops
 }
 

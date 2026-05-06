@@ -49,7 +49,7 @@ struct DropsPlusView: View {
             }
             .padding(.top, 16).padding(.trailing, 20)
         }
-        .onChange(of: store.isPlusUser) { newValue in
+        .onChange(of: store.isPlusUser) { _, newValue in
             // Kauf erfolgreich → Paywall schließen, Global Success-Popup triggern
             if newValue && justActivated {
                 justActivated = false

@@ -44,7 +44,7 @@ class FirebaseAuthManager: ObservableObject {
             state = .success
             return true
         } catch {
-            state = .error("Beta-Login fehlgeschlagen: \(error.localizedDescription)")
+            state = .error("Login fehlgeschlagen: \(error.localizedDescription)")
             return false
         }
     }

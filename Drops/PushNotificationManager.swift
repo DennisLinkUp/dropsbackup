@@ -16,7 +16,6 @@ final class PushNotificationManager {
         static let nearbyDrops  = "drops_nearby"
         static let dropin       = "dropin"
         static let encounter    = "encounter"
-        static let friendDrop   = "friend_drop"
         static let homeZone     = "drops_homezone"
     }
 
@@ -79,18 +78,28 @@ final class PushNotificationManager {
         content.sound = .default
         content.userInfo = ["type": "reengagement"]
 
-        // Abwechslungsreiche Texte — kein falscher Hinweis auf Drops in der Nähe
+        // Marketing-Copy mit Curiosity, Pain-Points & FOMO. Bewusst kein
+        // Hinweis auf konkrete Drops in der Nähe (würde sonst falsche
+        // Erwartung wecken — das macht checkNearbyDrops separat).
         let messages: [(title: String, body: String)] = [
-            ("Drops wartet auf dich 👋",
-             "Du hast die App noch nicht genutzt — starte oder tritt einem Drop bei."),
-            ("Spontan ist das neue Geplant ⚡️",
-             "Einfach Drop erstellen und schauen wer kommt."),
-            ("Wann triffst du dich das nächste Mal? 🤔",
-             "Öffne Drops und starte etwas — spontan, ohne Planung."),
-            ("Nicht schüchtern sein 🙌",
-             "Erstelle einen Drop und lass andere zu dir kommen."),
-            ("Noch nichts gemacht heute? 😄",
-             "Öffne Drops und sieh was möglich ist."),
+            ("Während du scrollst… 📱",
+             "…läuft 200m weg jemand mit Kaffee an dir vorbei. Drop reicht."),
+            ("Schon wieder \"lass mal\"? 🙄",
+             "Hier antwortet keiner mit \"bald\". Drop's, wer Bock hat kommt."),
+            ("Geht in 60 Sekunden raus 🚪",
+             "Aktivität droppen, jemand kommt, fertig. Echt so einfach."),
+            ("Deine Stadt schläft nicht 🌃",
+             "Bier, Park, Spaziergang. Drop, und es ist sofort sichtbar."),
+            ("Spontan oder nie ⚡️",
+             "Heute Abend? In 10 Min kannst du draußen sein. Probier's."),
+            ("Chat oder Treffen? 💬 → 🤝",
+             "Drops überspringt den Chat. Drop, hin, fertig."),
+            ("Jeder hier hat grad Bock 👀",
+             "Ein Tap und du siehst wer in deiner Stadt jetzt was startet."),
+            ("Spontan ist das neue Geplant 🎯",
+             "Während andere planen, droppst du. Karte auf, hingehen, fertig."),
+            ("Spontan ist das neue Geplant ✨",
+             "Wer wartet bis Donnerstag, verpasst Sonntag. Drop's einfach."),
         ]
         let pick = messages[Int.random(in: 0 ..< messages.count)]
         content.title = pick.title
@@ -251,15 +260,18 @@ final class PushNotificationManager {
         schedule(content, id: "\(ID.encounter)_\(Date().timeIntervalSince1970)")
     }
 
-    // MARK: - Freund in der Nähe
+    // MARK: - Reliability-Punkte erhalten
 
-    func notifyFriendNearby(friendName: String, emoji: String, activityName: String) {
+    /// Wird bei jedem Punktgewinn gefeuert (Show-Up, Drop-Beitritt etc.).
+    /// reason: kurzer Kontext-Text (z.B. "Dein Drop wurde besucht").
+    func notifyPointsEarned(delta: Int, totalPoints: Int, reason: String) {
+        guard delta > 0 else { return }
         let content = UNMutableNotificationContent()
-        content.title = "\(emoji) \(friendName) ist aktiv!"
-        content.body  = "\(friendName) hat einen Drop gestartet: \(activityName)"
+        content.title = "✨ +\(delta) Punkte"
+        content.body  = "\(reason) · jetzt \(totalPoints) Punkte gesamt"
         content.sound = .default
-        content.userInfo = ["type": "friend_drop"]
-        schedule(content, id: "\(ID.friendDrop)_\(Date().timeIntervalSince1970)")
+        content.userInfo = ["type": "points_earned", "delta": delta, "total": totalPoints]
+        schedule(content, id: "points_\(Date().timeIntervalSince1970)")
     }
 
     // MARK: - Ablauf-Erinnerungen (bestehende Logik, jetzt hier zentralisiert)

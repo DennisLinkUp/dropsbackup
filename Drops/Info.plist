@@ -71,5 +71,48 @@
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.dennis.drops.shortcut.create</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Drop starten</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>Spontan was loslegen</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeAdd</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.dennis.drops.shortcut.map</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Karte öffnen</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>Drops in deiner Nähe</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeLocation</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.dennis.drops.shortcut.feed</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Umgebung</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>Was gerade läuft</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeBookmark</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.dennis.drops.shortcut.profile</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Mein Profil</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>Score &amp; Freunde</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeContact</string>
+		</dict>
+	</array>
 </dict>
 </plist>

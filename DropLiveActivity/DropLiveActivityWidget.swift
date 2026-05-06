@@ -99,7 +99,9 @@ private struct ExpandedLeading: View {
                     Text(context.state.locationTitle)
                         .font(.system(size: 11))
                         .foregroundStyle(.white.opacity(0.55))
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -287,17 +289,20 @@ private struct DropBannerView: View {
                     Text(context.attributes.activityName)
                         .font(.system(size: 16, weight: .bold))
                         .foregroundStyle(.white)
-                    // Adresse — immer anzeigen wenn vorhanden
-                    HStack(spacing: 4) {
+                    // Adresse — komplett anzeigen, mehrzeilig wenn nötig
+                    HStack(alignment: .top, spacing: 4) {
                         Image(systemName: "mappin")
                             .font(.system(size: 10))
                             .foregroundStyle(.white.opacity(0.45))
+                            .padding(.top, 2)
                         Text(context.state.locationTitle.isEmpty
                              ? "Standort wird geladen …"
                              : context.state.locationTitle)
                             .font(.system(size: 12))
                             .foregroundStyle(.white.opacity(0.6))
-                            .lineLimit(1)
+                            .lineLimit(3)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
 

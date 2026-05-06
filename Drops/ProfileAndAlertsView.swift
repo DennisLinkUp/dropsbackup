@@ -22,15 +22,38 @@ struct FreundeView: View {
     @State private var showImageSourceSheet = false
     @State private var showEmojiPicker = false
     @State private var showScoreInfo = false
+    @State private var showHeroPicker = false
+    /// Persistierter Profil-Hero-Hintergrund. Default: aurora.
+    @AppStorage("ud_profileHeroTemplate") private var profileHeroTemplateRaw = ProfileHeroTemplate.aurora.rawValue
+    /// Eigene createdAt aus Firebase nachgezogen für Beta-Badge-Cutoff.
+    @State private var ownCreatedAt: Date? = nil
+
+    /// Beta-Badge-Cutoff: Nutzer ab 04.05.2026 (Europe/Berlin) bekommen kein Badge.
+    private var qualifiesForBetaBadge: Bool {
+        guard let created = ownCreatedAt else { return false }
+        var c = DateComponents()
+        c.year = 2026; c.month = 5; c.day = 4
+        c.hour = 0; c.minute = 0; c.second = 0
+        c.timeZone = TimeZone(identifier: "Europe/Berlin")
+        let cutoff = Calendar(identifier: .gregorian).date(from: c) ?? Date()
+        return created < cutoff
+    }
+
+    private var profileHeroTemplate: ProfileHeroTemplate {
+        ProfileHeroTemplate(rawValue: profileHeroTemplateRaw) ?? .aurora
+    }
 
     private var onlineFriends: [User]  { store.friends.filter { $0.isAvailable } }
     private var offlineFriends: [User] { store.friends.filter { !$0.isAvailable } }
 
     /// Kontaktvorschläge: nur Leute die noch keine Freunde sind.
     /// Vergleich über `firebaseUID` (nicht `id.uuidString` — das ist nur die lokale UUID).
+    /// Sortierung A→Z nach Name (case-insensitive, locale-aware).
     private var contactSuggestions: [RealtimeDBManager.ContactMatchResult] {
         let friendUIDs = Set(store.friends.compactMap { $0.firebaseUID })
-        return contactsVM.matches.filter { !friendUIDs.contains($0.uid) && !addedContactUIDs.contains($0.uid) }
+        return contactsVM.matches
+            .filter { !friendUIDs.contains($0.uid) && !addedContactUIDs.contains($0.uid) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     var body: some View {
@@ -71,14 +94,15 @@ struct FreundeView: View {
                         // Eigener Status
                         myStatusCard
 
-                        // ── Eingehende Freundschaftsanfragen (ganz oben wenn vorhanden)
+                        // Drop-Statistiken
+                        dropStatsSection
+
+                        // Letzte Begegnungen (direkt unter Statistiken)
+                        encountersSection
+
+                        // ── Eingehende Freundschaftsanfragen
                         if !store.incomingFriendRequests.isEmpty {
                             friendRequestsSection
-                        }
-
-                        // ── Zu bestätigende Begegnungen ganz oben wenn ausstehend ──
-                        if !store.pendingEncounters.isEmpty {
-                            encountersSection
                         }
 
                         // Online-Freunde
@@ -101,23 +125,15 @@ struct FreundeView: View {
                             )
                         }
 
-                        // Kontakt-Vorschläge: Leute aus Adressbuch die auf Drops sind
-                        if !contactSuggestions.isEmpty {
-                            contactSuggestionsSection
-                        }
-
                         // Freundesvorschläge (nach bestätigten Begegnungen)
                         if !store.friendSuggestions.isEmpty {
                             friendSuggestionsSection
                         }
 
-                        // Alle Begegnungen (auch bestätigte) — nur wenn keine ausstehenden oben
-                        if store.pendingEncounters.isEmpty {
-                            encountersSection
+                        // Kontakt-Vorschläge: Leute aus Adressbuch die auf Drops sind
+                        if !contactSuggestions.isEmpty {
+                            contactSuggestionsSection
                         }
-
-                        // Drop-Statistiken
-                        dropStatsSection
 
                         // Drop-Verlauf
                         pastDropsSection
@@ -169,10 +185,18 @@ struct FreundeView: View {
                 .presentationDragIndicator(.hidden)
                 .sheetBackground()
             }
-            .onChange(of: store.selfieImage) { img in
+            .onChange(of: store.selfieImage) { _, img in
                 guard img != nil else { return }
                 store.saveAll()
                 store.saveSelfie()   // Upload zu Firebase Storage → für andere Nutzer sichtbar
+            }
+            .task {
+                // Eigene createdAt für Beta-Badge-Cutoff laden
+                guard ownCreatedAt == nil,
+                      let uid = FirebaseAuth.Auth.auth().currentUser?.uid else { return }
+                RealtimeDBManager.shared.fetchUserMeta(uid: uid) { created, _ in
+                    ownCreatedAt = created
+                }
             }
             .sheet(isPresented: $showScoreInfo) {
                 ReliabilityInfoSheet(score: store.reliabilityScore)
@@ -260,6 +284,47 @@ struct FreundeView: View {
     // MARK: Eigener Status (Profil-Karte)
 
     private var myStatusCard: some View {
+        ZStack(alignment: .topTrailing) {
+            // Hero-Background — Gradient nach gewähltem Template
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(profileHeroTemplate.gradient)
+                .opacity(0.35)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(.ultraThinMaterial)
+
+            // Hintergrund-Wechsel-Button (Pinsel-Icon, oben rechts)
+            Button { showHeroPicker = true } label: {
+                Image(systemName: "paintbrush.pointed.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(7)
+                    .background(Circle().fill(.ultraThinMaterial))
+                    .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 0.8))
+            }
+            .buttonStyle(.plain)
+            .padding(10)
+
+            myStatusCardContent
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+        )
+        .shadow(color: profileHeroTemplate.colors.first?.opacity(0.18) ?? .clear, radius: 12, y: 4)
+        .padding(.horizontal, 16)
+        .animation(.spring(), value: store.currentUser.isAvailable)
+        .sheet(isPresented: $showHeroPicker) {
+            ProfileHeroPickerSheet(selection: Binding(
+                get: { profileHeroTemplate },
+                set: { profileHeroTemplateRaw = $0.rawValue }
+            ))
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    /// Innere Avatar+Name+Score-Karte (vorher der ganze myStatusCard).
+    private var myStatusCardContent: some View {
         VStack(spacing: 0) {
             // ── Avatar + Name + Score ────────────────────────────────────
             HStack(spacing: 16) {
@@ -355,6 +420,10 @@ struct FreundeView: View {
                             )
                             .shadow(color: Color(hex: "f59e0b").opacity(0.35), radius: 4, y: 1)
                         }
+                        // Beta-Badge nur für Early-Adopter (registriert vor 04.05.2026).
+                        if qualifiesForBetaBadge {
+                            BetaBadge()
+                        }
                     }
                     // Score-Pill — tappbar für Erklärung
                     Button(action: { showScoreInfo = true }) {
@@ -387,11 +456,7 @@ struct FreundeView: View {
                 Spacer()
             }
             .padding(.horizontal, 16).padding(.vertical, 14)
-
         }
-        .liquidGlass(cornerRadius: 18)
-        .padding(.horizontal, 16)
-        .animation(.spring(), value: store.currentUser.isAvailable)
     }
 
     // MARK: Freundesvorschläge
@@ -742,75 +807,114 @@ struct FreundeView: View {
 
     // MARK: Drop-Statistiken
 
+    /// Anzahl aufeinanderfolgender ISO-Wochen mit mindestens einem Drop,
+    /// rückwärts gerechnet ab aktueller (oder letzter) Woche.
+    private var weeklyStreak: Int {
+        let cal = Calendar(identifier: .iso8601)
+        let today = cal.startOfDay(for: Date())
+        guard let currentWeekStart = cal.date(
+            from: cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: today)
+        ) else { return 0 }
+        let dropWeeks = Set(store.pastDrops.compactMap { drop -> Date? in
+            cal.date(from: cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: drop.date))
+        })
+        var probe = currentWeekStart
+        if !dropWeeks.contains(probe) {
+            guard let prev = cal.date(byAdding: .weekOfYear, value: -1, to: probe),
+                  dropWeeks.contains(prev) else { return 0 }
+            probe = prev
+        }
+        var streak = 0
+        while dropWeeks.contains(probe) {
+            streak += 1
+            guard let prev = cal.date(byAdding: .weekOfYear, value: -1, to: probe) else { break }
+            probe = prev
+        }
+        return streak
+    }
+
     @ViewBuilder private var dropStatsSection: some View {
         let total   = store.pastDrops.count
         let hosted  = store.pastDrops.filter { $0.wasHost }.count
         let joined  = total - hosted
         let rs      = store.reliabilityScore
+        let streak  = weeklyStreak
         let favEmoji = store.pastDrops
             .map { $0.activityEmoji }
             .reduce(into: [:]) { $0[$1, default: 0] += 1 }
             .max(by: { $0.value < $1.value })?.key ?? "✨"
 
-        if total > 0 || rs.totalCommits > 0 {
-            VStack(alignment: .leading, spacing: 12) {
+        // Stats werden IMMER gezeigt — auch bei 0 Drops/Commits, damit der
+        // User sieht was er sammeln kann (Demo-Look auch beim Erst-Onboarding).
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
                 Text("Statistiken")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.textSecondary)
                     .textCase(.uppercase)
                     .tracking(0.5)
-                    .padding(.horizontal, 4)
-
-                // ── Kacheln (2×2) ───────────────────────────────────
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                    StatTile(value: "\(total)",
-                             label: "Drops gesamt",
-                             icon: "bolt.fill",
-                             color: Color.brand)
-                    StatTile(value: "\(joined)",
-                             label: "Beigetreten",
-                             icon: "person.fill.badge.plus",
-                             color: Color(UIColor.systemIndigo))
-                    StatTile(value: "\(hosted)",
-                             label: "Erstellt",
-                             icon: "star.fill",
-                             color: Color.accentOrange)
-                    StatTile(value: rs.displayText,
-                             label: "Zuverlässigkeit",
-                             icon: "checkmark.seal.fill",
-                             color: rs.totalCommits == 0 ? .textSecondary : rs.color)
-                }
-
-                // ── Lieblings-Aktivität ──────────────────────────────
-                if total > 0 {
-                    HStack(spacing: 12) {
-                        Text(favEmoji).font(.system(size: 24))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Lieblings-Aktivität")
-                                .font(.system(size: 11))
-                                .foregroundColor(.textSecondary)
-                            Text(store.pastDrops
-                                .filter { $0.activityEmoji == favEmoji }
-                                .first?.activityName ?? "")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(.textPrimary)
-                        }
-                        Spacer()
-                        Text("\(store.pastDrops.filter { $0.activityEmoji == favEmoji }.count)×")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(.textSecondary)
+                if streak > 0 {
+                    HStack(spacing: 4) {
+                        Text("🔥").font(.system(size: 11))
+                        Text("\(streak) Woche\(streak == 1 ? "" : "n") aktiv")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.accentOrange)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Color.accentOrange.opacity(0.12), in: Capsule())
                 }
-
-                // ── Aktivitäts-Heatmap ───────────────────────────────
-                ActivityHeatmap(drops: store.pastDrops)
+                Spacer()
             }
             .padding(.horizontal, 4)
-            .padding(.bottom, 8)
+
+            // ── Kacheln (2×2) ───────────────────────────────────
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                StatTile(value: "\(total)",
+                         label: "Drops gesamt",
+                         icon: "bolt.fill",
+                         color: Color.brand)
+                StatTile(value: "\(joined)",
+                         label: "Beigetreten",
+                         icon: "person.fill.badge.plus",
+                         color: Color(UIColor.systemIndigo))
+                StatTile(value: "\(hosted)",
+                         label: "Erstellt",
+                         icon: "star.fill",
+                         color: Color.accentOrange)
+                StatTile(value: rs.displayText,
+                         label: "Zuverlässigkeit",
+                         icon: "checkmark.seal.fill",
+                         color: rs.totalCommits == 0 ? .textSecondary : rs.color)
+            }
+            .padding(12)
+            .liquidGlass(cornerRadius: 18)
+
+            // ── Lieblings-Aktivität (nur wenn schon Drops da) ─────
+            if total > 0 {
+                HStack(spacing: 12) {
+                    Text(favEmoji).font(.system(size: 24))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Lieblings-Aktivität")
+                            .font(.system(size: 11))
+                            .foregroundColor(.textSecondary)
+                        Text(store.pastDrops
+                            .filter { $0.activityEmoji == favEmoji }
+                            .first?.activityName ?? "")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.textPrimary)
+                    }
+                    Spacer()
+                    Text("\(store.pastDrops.filter { $0.activityEmoji == favEmoji }.count)×")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.textSecondary)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+            }
         }
+        .padding(.horizontal, 4)
+        .padding(.bottom, 8)
     }
 
     // MARK: Drop-Verlauf
@@ -1474,10 +1578,13 @@ final class ContactsViewModel: ObservableObject {
                     emails.append(em.value as String)
                 }
             }
-            RealtimeDBManager.shared.lookupContactsOnDrops(phones: phones, emails: emails) { [weak self] results in
-                DispatchQueue.main.async {
-                    self?.isLoading = false
-                    self?.matches = results
+            // RealtimeDBManager ist @MainActor — Aufruf zurück auf den Main-Thread.
+            DispatchQueue.main.async {
+                RealtimeDBManager.shared.lookupContactsOnDrops(phones: phones, emails: emails) { [weak self] results in
+                    DispatchQueue.main.async {
+                        self?.isLoading = false
+                        self?.matches = results
+                    }
                 }
             }
         }
@@ -1611,7 +1718,7 @@ struct AddFromContactsSheet: View {
                 // Kleiner Delay damit die Sheet-Animation fertig ist bevor der System-Dialog erscheint
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { vm.load() }
             }
-            .onChange(of: scenePhase) { phase in
+            .onChange(of: scenePhase) { _, phase in
                 // Wenn User aus iOS-Einstellungen zurückkommt → Zugriff erneut prüfen
                 if phase == .active && vm.permissionDenied {
                     vm.retry()
@@ -1717,7 +1824,8 @@ struct FreundRow: View {
                     Text(friend.statusMessage)
                         .font(.system(size: 13)).foregroundColor(.textSecondary).lineLimit(1)
                     if isOnline {
-                        Text(store.etaString(to: friend.coordinate) + " entfernt")
+                        // Zeit-ETA + km-Entfernung kombiniert
+                        Text("\(store.etaString(to: friend.coordinate)) · \(store.distanceString(to: friend.coordinate))")
                             .font(.system(size: 11, weight: .medium)).foregroundColor(.brand)
                     }
                 }
@@ -1949,14 +2057,45 @@ struct ProfileView: View {
                         settingsSection(icon: "circle.lefthalf.filled", color: Color(UIColor.systemIndigo), title: tr("settings.appearance")) {
                             appearanceSection
                         }
-                        // Support & Feedback
-                        settingsSection(icon: "envelope.fill", color: Color(UIColor.systemTeal), title: "Support & Feedback") {
-                            feedbackSection
+
+                        // Sicherheit — Blockierte Nutzer (Untermenü)
+                        settingsSection(icon: "nosign", color: .red, title: "Sicherheit") {
+                            Button(action: { showBlockedList = true }) {
+                                HStack(spacing: 14) {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 9)
+                                            .fill(Color.red.opacity(0.12))
+                                            .frame(width: 36, height: 36)
+                                        Image(systemName: "nosign")
+                                            .font(.system(size: 16, weight: .semibold))
+                                            .foregroundColor(.red)
+                                    }
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Blockierte Nutzer")
+                                            .font(.system(size: 15, weight: .semibold))
+                                            .foregroundColor(.textPrimary)
+                                        Text(store.blockedUserNames.isEmpty
+                                             ? "Keine blockierten Nutzer"
+                                             : "\(store.blockedUserNames.count) blockiert")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.textSecondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundColor(.textTertiary)
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 13)
+                            }
+                            .buttonStyle(.plain)
                         }
 
-                        // Sicherheit — Blockierte Nutzer
-                        settingsSection(icon: "nosign", color: .red, title: "Blockierte Nutzer") {
-                            blockedUsersSection
+                        // Hilfe & Feedback
+                        settingsSection(icon: "questionmark.circle.fill", color: Color(UIColor.systemBlue), title: "Hilfe & Feedback") {
+                            faqLinkRow
+                            Divider().padding(.leading, 60)
+                            feedbackRow
                         }
 
                         // Datenschutz + Konto
@@ -1999,19 +2138,12 @@ struct ProfileView: View {
                             }
                         }
 
-                        // Version + Build am Ende — hilfreich für Support
+                        // Version am Ende — hilfreich für Support
                         VStack(spacing: 4) {
-                            HStack(spacing: 6) {
-                                Text("Drops")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundColor(.textSecondary)
-                                Text("Beta")
-                                    .font(.system(size: 10, weight: .heavy))
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, 6).padding(.vertical, 2)
-                                    .background(Color.accentOrange, in: Capsule())
-                            }
-                            Text("Version \(appBundleVersion) · Build \(appBundleBuild)")
+                            Text("Drops")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.textSecondary)
+                            Text("Version \(appBundleVersion)")
                                 .font(.system(size: 11))
                                 .foregroundColor(.textTertiary)
                         }
@@ -2030,6 +2162,9 @@ struct ProfileView: View {
             }
             .sheet(isPresented: $showAdminPanel) {
                 AdminPanelView().environmentObject(store)
+            }
+            .sheet(isPresented: $showBlockedList) {
+                BlockedUsersSheet().environmentObject(store)
             }
             .sheet(isPresented: $showPrivacy) {
                 LegalView(type: .privacy)
@@ -2266,7 +2401,8 @@ struct ProfileView: View {
                               ? Color.accentOrange.opacity(0.15)
                               : Color.white.opacity(0.06))
                         .frame(width: 36, height: 36)
-                    Image(systemName: store.homeZoneCoordinate != nil ? "house.fill" : "house")
+                    // Gleiches Icon (house.fill) — nur Farbe unterscheidet aktiv/inaktiv
+                    Image(systemName: "house.fill")
                         .font(.system(size: 16))
                         .foregroundColor(store.homeZoneCoordinate != nil ? Color.accentOrange : .textTertiary)
                 }
@@ -2294,8 +2430,8 @@ struct ProfileView: View {
                     latitudinalMeters: liveRadius * 4,
                     longitudinalMeters: liveRadius * 4
                 )
-                Map(coordinateRegion: .constant(region), annotationItems: [HomePin(coordinate: homeCoord)]) { pin in
-                    MapAnnotation(coordinate: pin.coordinate) {
+                Map(initialPosition: .region(region)) {
+                    Annotation("", coordinate: homeCoord) {
                         ZStack {
                             Circle()
                                 .fill(Color.accentOrange.opacity(0.9))
@@ -2306,15 +2442,16 @@ struct ProfileView: View {
                         }
                         .shadow(color: Color.accentOrange.opacity(0.5), radius: 4)
                     }
+                    // MapCircle skaliert mit dem Zoom → echter Radius wird sichtbar
+                    MapCircle(center: homeCoord, radius: liveRadius)
+                        .foregroundStyle(Color.accentOrange.opacity(0.12))
+                        .stroke(Color.accentOrange.opacity(0.6), lineWidth: 1.5)
                 }
+                // Force-Refresh wenn sich der Slider-Radius ändert (initialPosition wird
+                // sonst nur einmal ausgewertet → Map blieb statisch).
+                .id(liveRadius)
                 .frame(height: 120)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay(
-                    // Radius-Ring
-                    Circle()
-                        .stroke(Color.accentOrange.opacity(0.5), lineWidth: 1.5)
-                        .padding(8)
-                )
                 .padding(.horizontal, 16)
                 .padding(.bottom, 10)
                 .disabled(true)
@@ -2351,7 +2488,7 @@ struct ProfileView: View {
                     .tint(Color.accentOrange)
                     .padding(.horizontal, 16)
                     .onAppear { localHomeZoneIndex = homeZoneIndex }
-                    .onChange(of: localHomeZoneIndex) { _ in
+                    .onChange(of: localHomeZoneIndex) { _, _ in
                         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                     }
 
@@ -2704,7 +2841,7 @@ struct ProfileView: View {
                      icon: "bell.fill",
                      color: Color(UIColor.systemOrange),
                      isOn: $notificationsOn)
-        .onChange(of: notificationsOn) { newValue in
+        .onChange(of: notificationsOn) { _, newValue in
             if newValue { PushNotificationManager.shared.requestPermission() }
         }
     }
@@ -2762,7 +2899,7 @@ struct ProfileView: View {
     }
     /// Kompakte Variante für Feedback-Mail etc.
     private var appVersionString: String {
-        "Drops v\(appBundleVersion) (\(appBundleBuild)) · Beta"
+        "Drops v\(appBundleVersion) (\(appBundleBuild))"
     }
 
     @ViewBuilder private var feedbackSection: some View {
@@ -2879,6 +3016,90 @@ struct ProfileView: View {
         }
     }
 
+    @ViewBuilder private var faqLinkRow: some View {
+        Button {
+            if let url = URL(string: "https://drops-app.de/#faq") {
+                UIApplication.shared.open(url)
+            }
+        } label: {
+            HStack(spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(Color(UIColor.systemBlue).opacity(0.15))
+                        .frame(width: 36, height: 36)
+                    Image(systemName: "questionmark.circle.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color(UIColor.systemBlue))
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("FAQ")
+                        .font(.system(size: 15))
+                        .foregroundColor(.textPrimary)
+                    Text("Häufige Fragen auf drops-app.de")
+                        .font(.system(size: 12))
+                        .foregroundColor(.textSecondary)
+                }
+                Spacer()
+                Image(systemName: "arrow.up.right.square")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.textTertiary)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 13)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder private var feedbackRow: some View {
+        Button {
+            // Mailto-Link mit vorausgefülltem Betreff/Body — User kann direkt
+            // in seiner Mail-App mit Kontext (App-Version + Build) tippen.
+            let subject = "Drops Feedback / Bug-Report"
+            let body = """
+
+
+            ---
+            App-Version: \(appBundleVersion) (Build \(appBundleBuild))
+            iOS: \(UIDevice.current.systemVersion)
+            Gerät: \(UIDevice.current.model)
+            """
+            var components = URLComponents()
+            components.scheme = "mailto"
+            components.path = "contact@drops-app.de"
+            components.queryItems = [
+                URLQueryItem(name: "subject", value: subject),
+                URLQueryItem(name: "body", value: body),
+            ]
+            if let url = components.url {
+                UIApplication.shared.open(url)
+            }
+        } label: {
+            HStack(spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(Color(UIColor.systemTeal).opacity(0.15))
+                        .frame(width: 36, height: 36)
+                    Image(systemName: "ladybug.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color(UIColor.systemTeal))
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Feedback / Bug melden")
+                        .font(.system(size: 15))
+                        .foregroundColor(.textPrimary)
+                    Text("E-Mail an contact@drops-app.de")
+                        .font(.system(size: 12))
+                        .foregroundColor(.textSecondary)
+                }
+                Spacer()
+                Image(systemName: "envelope.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.textTertiary)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 13)
+        }
+        .buttonStyle(.plain)
+    }
+
     @ViewBuilder private var privacySection: some View {
         Button { showPrivacy = true } label: {
             HStack(spacing: 14) {
@@ -2988,142 +3209,6 @@ private struct StatTile: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
-    }
-}
-
-// MARK: - Activity Heatmap (GitHub-Style, letzte 16 Wochen)
-
-private struct ActivityHeatmap: View {
-    let drops: [PastDrop]
-
-    private let weeks    = 16
-    private let cellSize: CGFloat = 11
-    private let gap:      CGFloat = 3
-
-    /// Anzahl Drops pro Kalendertag (normiert auf Beginn des Tages)
-    private var countsByDay: [Date: Int] {
-        let cal = Calendar.current
-        return drops.reduce(into: [:]) { dict, drop in
-            let day = cal.startOfDay(for: drop.date)
-            dict[day, default: 0] += 1
-        }
-    }
-
-    /// Alle Tage der letzten `weeks` Wochen, aufgeteilt in Spalten (Wochen)
-    private var grid: [[Date]] {
-        let cal   = Calendar.current
-        let today = cal.startOfDay(for: Date())
-        // Anfang: Montag der ältesten Woche
-        let weekday = cal.component(.weekday, from: today)  // 1=Sun…7=Sat
-        let daysSinceMonday = (weekday + 5) % 7             // 0=Mon…6=Sun
-        guard let gridStart = cal.date(byAdding: .day,
-                                        value: -(daysSinceMonday + (weeks - 1) * 7),
-                                        to: today) else { return [] }
-        var columns: [[Date]] = []
-        for w in 0..<weeks {
-            var col: [Date] = []
-            for d in 0..<7 {
-                if let day = cal.date(byAdding: .day, value: w * 7 + d, to: gridStart) {
-                    col.append(day)
-                }
-            }
-            columns.append(col)
-        }
-        return columns
-    }
-
-    private func color(for date: Date) -> Color {
-        let cal   = Calendar.current
-        let today = cal.startOfDay(for: Date())
-        guard date <= today else { return Color.white.opacity(0.04) }
-        let count = countsByDay[date] ?? 0
-        switch count {
-        case 0:       return Color.white.opacity(0.07)
-        case 1:       return Color.brand.opacity(0.35)
-        case 2:       return Color.brand.opacity(0.6)
-        default:      return Color.brand
-        }
-    }
-
-    /// Monatslabels über dem Grid
-    private var monthLabels: [(col: Int, text: String)] {
-        let cal = Calendar.current
-        var labels: [(Int, String)] = []
-        let df = DateFormatter(); df.locale = Locale(identifier: "de_DE"); df.dateFormat = "MMM"
-        var lastMonth = -1
-        for (w, col) in grid.enumerated() {
-            if let first = col.first {
-                let m = cal.component(.month, from: first)
-                if m != lastMonth { labels.append((w, df.string(from: first))); lastMonth = m }
-            }
-        }
-        return labels
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Aktivität")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.textSecondary)
-                    .textCase(.uppercase)
-                    .tracking(0.5)
-                Spacer()
-                HStack(spacing: 3) {
-                    Text("Weniger")
-                        .font(.system(size: 9))
-                        .foregroundColor(.textTertiary)
-                    ForEach([0, 1, 2, 3], id: \.self) { lvl in
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(lvl == 0
-                                  ? Color.white.opacity(0.07)
-                                  : Color.brand.opacity(0.2 + 0.27 * Double(lvl)))
-                            .frame(width: cellSize, height: cellSize)
-                    }
-                    Text("Mehr")
-                        .font(.system(size: 9))
-                        .foregroundColor(.textTertiary)
-                }
-            }
-
-            // Monatslabels
-            GeometryReader { geo in
-                let colWidth = cellSize + gap
-                ZStack(alignment: .topLeading) {
-                    ForEach(monthLabels, id: \.col) { item in
-                        Text(item.text)
-                            .font(.system(size: 8))
-                            .foregroundColor(.textTertiary)
-                            .offset(x: CGFloat(item.col) * colWidth)
-                    }
-                }
-            }
-            .frame(height: 10)
-
-            // Grid
-            HStack(alignment: .top, spacing: gap) {
-                ForEach(Array(grid.enumerated()), id: \.offset) { _, week in
-                    VStack(spacing: gap) {
-                        ForEach(week, id: \.self) { day in
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(color(for: day))
-                                .frame(width: cellSize, height: cellSize)
-                        }
-                    }
-                }
-            }
-
-            // Legende Wochentage links — nur Mo / Mi / Fr
-            HStack(spacing: gap) {
-                ForEach(Array(grid.enumerated()), id: \.offset) { idx, _ in
-                    Text(idx == 0 ? "" : "")
-                        .frame(width: cellSize)
-                }
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
     }
 }
@@ -3249,6 +3334,101 @@ private struct StatBox: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(locked ? Color.textTertiary.opacity(0.15) : Color(hex: "f59e0b").opacity(0.15), lineWidth: 1)
         )
+    }
+}
+
+// MARK: - Blockierte Nutzer Sheet (Untermenü)
+
+struct BlockedUsersSheet: View {
+    @EnvironmentObject var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 12) {
+                    // Header-Erklärung
+                    HStack(spacing: 12) {
+                        Image(systemName: "info.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundColor(.brand)
+                        Text("Blockierte Nutzer siehst und triffst du nicht mehr. Sie können dich auch nicht zu ihren Drops einladen.")
+                            .font(.system(size: 13))
+                            .foregroundColor(.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(14)
+                    .background(Color.brand.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+
+                    // Liste oder Empty-State
+                    if store.blockedUserNames.isEmpty {
+                        VStack(spacing: 14) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.green.opacity(0.10))
+                                    .frame(width: 72, height: 72)
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 32, weight: .semibold))
+                                    .foregroundColor(.green)
+                            }
+                            Text("Niemand blockiert")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundColor(.textPrimary)
+                            Text("Du kannst andere Nutzer aus deren Profil heraus blockieren.")
+                                .font(.system(size: 13))
+                                .foregroundColor(.textSecondary)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 32)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 60)
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(Array(store.blockedUserNames).sorted(), id: \.self) { name in
+                                HStack(spacing: 14) {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 9)
+                                            .fill(Color.red.opacity(0.12))
+                                            .frame(width: 36, height: 36)
+                                        Image(systemName: "nosign")
+                                            .font(.system(size: 16, weight: .semibold))
+                                            .foregroundColor(.red)
+                                    }
+                                    Text(name)
+                                        .font(.system(size: 15))
+                                        .foregroundColor(.textPrimary)
+                                    Spacer()
+                                    Button("Entsperren") {
+                                        store.blockedUserNames.remove(name)
+                                        store.saveAll()
+                                    }
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(.brand)
+                                }
+                                .padding(.horizontal, 16).padding(.vertical, 12)
+                                if name != Array(store.blockedUserNames).sorted().last {
+                                    Divider().padding(.leading, 60)
+                                }
+                            }
+                        }
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                        .padding(.horizontal, 16)
+                    }
+
+                    Spacer(minLength: 40)
+                }
+            }
+            .navigationTitle("Blockierte Nutzer")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Fertig") { dismiss() }
+                        .font(.system(size: 15, weight: .semibold))
+                }
+            }
+        }
     }
 }
 

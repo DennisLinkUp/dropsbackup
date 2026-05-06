@@ -110,6 +110,12 @@ struct LiveMapView: View {
     @State private var joinedIDs: Set<UUID> = []
     @State private var showSafety = false
     @State private var mapId = UUID()
+    /// Boost-Phase Banner auf der Karte: zugeklappt → kleine Pille links neben Recenter-Button.
+    @State private var boostCollapsed = false
+    /// Live-Drag-Offset während der User die Karte runterzieht.
+    @State private var boostDragOffset: CGFloat = 0
+    /// Namespace für matchedGeometryEffect (smoother Morph zwischen Karte und Pille).
+    @Namespace private var boostNS
     let activities = ["Alle", "☕️ Kaffee", "🍺 Drink", "🏃 Sport", "🍕 Essen", "🎮 Zocken"]
 
     /// Eigener 8-Char BLE-Token — wird explizit an DropMapPin übergeben (nicht per @EnvironmentObject,
@@ -144,11 +150,17 @@ struct LiveMapView: View {
         ZStack {
             MapReader { proxy in
                 Map(position: $mapPosition) {
-                    // Eigener Standort
-                    UserAnnotation()
+                    // Eigener Standort — bei schlechtem GPS-Empfang ausblenden,
+                    // damit kein irreführender exakter Punkt suggeriert wird.
+                    // Nur den Accuracy-Ring zeigen → User sieht ungefähren Bereich.
+                    if locationManager.horizontalAccuracy > 0,
+                       locationManager.horizontalAccuracy <= 100 {
+                        UserAnnotation()
+                    }
 
-                    // GPS-Accuracy-Ring um den User (nur wenn Accuracy > 20m sichtbar)
-                    // Zeigt dem User visuell die Ungenauigkeit wie in Apple Maps.
+                    // GPS-Accuracy-Ring um den User.
+                    // Bei gutem Empfang erst ab 20m sichtbar, bei schlechtem (>100m)
+                    // immer — als einziger Standort-Hinweis statt des Punkts.
                     if let loc = locationManager.userLocation,
                        locationManager.horizontalAccuracy > 20 {
                         MapCircle(center: loc, radius: locationManager.horizontalAccuracy)
@@ -200,7 +212,7 @@ struct LiveMapView: View {
                     store.updateUserLocation(loc)
                 }
             }
-            .onChange(of: locationManager.userLocation) { loc in
+            .onChange(of: locationManager.userLocation) { _, loc in
                 guard let loc = loc else { return }
                 if !hasInitiallyZoomed {
                     withAnimation {
@@ -213,7 +225,7 @@ struct LiveMapView: View {
                 }
                 store.updateUserLocation(loc)
             }
-            .onChange(of: store.pendingDropID) { dropID in
+            .onChange(of: store.pendingDropID) { _, dropID in
                 guard let dropID = dropID else { return }
                 store.pendingDropID = nil
                 // Drop auf der Karte finden und Sheet öffnen
@@ -229,7 +241,7 @@ struct LiveMapView: View {
                     }
                 }
             }
-            .onChange(of: store.focusedDropCoordinate) { coord in
+            .onChange(of: store.focusedDropCoordinate) { _, coord in
                 guard let coord = coord else { return }
                 withAnimation(.easeInOut(duration: 0.6)) {
                     mapPosition = .region(MKCoordinateRegion(
@@ -246,8 +258,101 @@ struct LiveMapView: View {
             VStack {
                 Spacer()
 
-                // Recenter-Button
+                // ── Boost-Phase Banner auf der Map ──────────────────────
+                // Zeigt sich wenn weniger als 5 Drops in Reichweite sind. User
+                // kann nach unten ziehen → tropft in Liquid-Glass-Manier zur
+                // kleinen Bolt-Pille links neben dem Recenter-Button. Tap auf
+                // Pille → springt wieder hoch.
+                //
+                // Der matchedGeometryEffect zwischen Karte und Pille sorgt für
+                // den durchgängigen Morph; rubber-band-Drag mit interactiveSpring
+                // gibt das „Apple-liquid-glass-Tab-Bar-Pull"-Feeling.
+                let boostShowsBanner = store.isBoostPhaseActive && !boostCollapsed
+                if boostShowsBanner {
+                    MapBoostCard(
+                        onCollapse: {
+                            withAnimation(.interpolatingSpring(stiffness: 200, damping: 18)) {
+                                boostCollapsed = true
+                                boostDragOffset = 0
+                            }
+                        }
+                    )
+                    .matchedGeometryEffect(id: "boostPill", in: boostNS, properties: .position, anchor: .bottomLeading, isSource: false)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+                    .offset(y: max(-12, dampedDragOffset(boostDragOffset)))
+                    .scaleEffect(
+                        1.0 - min(0.05, max(0, boostDragOffset) / 1500),
+                        anchor: .bottom
+                    )
+                    .gesture(
+                        DragGesture()
+                            .onChanged { value in
+                                withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.85)) {
+                                    boostDragOffset = value.translation.height
+                                }
+                            }
+                            .onEnded { value in
+                                if value.translation.height > 60 {
+                                    // Tropfen → Pille
+                                    withAnimation(.interpolatingSpring(stiffness: 180, damping: 20)) {
+                                        boostCollapsed = true
+                                        boostDragOffset = 0
+                                    }
+                                } else {
+                                    // Zurück snappen
+                                    withAnimation(.interpolatingSpring(stiffness: 240, damping: 16)) {
+                                        boostDragOffset = 0
+                                    }
+                                }
+                            }
+                    )
+                    .transition(
+                        .asymmetric(
+                            insertion: .move(edge: .bottom).combined(with: .opacity),
+                            removal: .scale(scale: 0.2, anchor: .bottomLeading)
+                                .combined(with: .opacity)
+                        )
+                    )
+                }
+
+                // Bottom-Row: collapsed Boost-Pille (links) + Recenter-Button (rechts)
                 HStack(alignment: .bottom) {
+                    // Collapsed-Pille — nur sichtbar wenn Boost aktiv UND zugeklappt.
+                    if store.isBoostPhaseActive && boostCollapsed {
+                        Button {
+                            withAnimation(.interpolatingSpring(stiffness: 220, damping: 16)) {
+                                boostCollapsed = false
+                            }
+                        } label: {
+                            ZStack {
+                                Circle()
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [Color.accentOrange, Color.brand],
+                                            startPoint: .topLeading, endPoint: .bottomTrailing
+                                        )
+                                    )
+                                    .frame(width: 44, height: 44)
+                                    .shadow(color: Color.accentOrange.opacity(0.35), radius: 10, y: 3)
+                                Image(systemName: "bolt.fill")
+                                    .font(.system(size: 18, weight: .bold))
+                                    .foregroundColor(.white)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Boost-Phase ausklappen")
+                        .matchedGeometryEffect(id: "boostPill", in: boostNS, properties: .position, anchor: .bottomLeading, isSource: true)
+                        .padding(.leading, 16)
+                        .transition(
+                            .asymmetric(
+                                insertion: .scale(scale: 0.4, anchor: .top)
+                                    .combined(with: .opacity),
+                                removal: .opacity
+                            )
+                        )
+                    }
+
                     Spacer()
 
                     Button(action: {
@@ -693,13 +798,15 @@ struct DropJoinSheet: View {
             }
             .padding(.top, 10).padding(.bottom, 16)
 
-            // Header: Emoji + Info
+            // Header: Aktivitäts-Emoji + Info (Profilbild beim Teilnehmer-Row)
             HStack(spacing: 14) {
                 ZStack {
                     Circle()
                         .fill(accentColor.opacity(0.12))
                         .frame(width: 56, height: 56)
-                    Text(item.emoji).font(.system(size: 28))
+                    // Fallback ✨ wenn beim Drop-Erstellen kein Emoji gewählt
+                    Text(item.emoji.isEmpty ? "✨" : item.emoji)
+                        .font(.system(size: 28))
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -717,11 +824,12 @@ struct DropJoinSheet: View {
                                 .cornerRadius(6)
                         }
                     }
-                    // Nutzername — erscheint nur wenn man den Drop antippt
-                    if item.isStranger {
+                    // Host-Name + Avatar — tappbar bei allen fremden Drops
+                    // (Stranger oder Friend), öffnet das Mini-Profil.
+                    if item.type != .myDrop {
                         Button { showCreatorProfile = true } label: {
                             HStack(spacing: 5) {
-                                // Creator-Avatar (erstes Teilnehmer-Selfie oder Emoji-Kreis)
+                                // Host-Avatar — Profilbild mit Fallback
                                 if let creator = item.participants.first {
                                     ZStack {
                                         if let img = creator.selfie {
@@ -729,6 +837,13 @@ struct DropJoinSheet: View {
                                                 .resizable().scaledToFill()
                                                 .frame(width: 18, height: 18)
                                                 .clipShape(Circle())
+                                        } else if creator.profileImageURL != nil {
+                                            RemoteProfileImage(
+                                                url: creator.profileImageURL,
+                                                fallbackEmoji: creator.emoji,
+                                                size: 18,
+                                                strokeColor: .clear
+                                            )
                                         } else {
                                             Circle()
                                                 .fill(accentColor.opacity(0.18))
@@ -746,7 +861,7 @@ struct DropJoinSheet: View {
                             }
                         }
                         .buttonStyle(.plain)
-                    } else if item.type == .myDrop {
+                    } else {
                         Label(tr("drop.my_drop"), systemImage: "star.fill")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(.accentOrange)
@@ -1539,7 +1654,7 @@ struct ActiveDropTabView: View {
             if isArrived { arrivedAnimated = true }
         }
         .onReceive(timer) { _ in now = Date() }
-        .onChange(of: isArrived) { arrived in
+        .onChange(of: isArrived) { _, arrived in
             if arrived { withAnimation(.spring(response: 0.5)) { arrivedAnimated = true } }
         }
         .alert(tr("drop.confirm_end_title"), isPresented: $showCancelAlert) {
@@ -2095,7 +2210,8 @@ struct ActiveDropTabView: View {
         }
         .sheet(isPresented: $showShareSheet) {
             let dropLink = URL(string: "https://drops-app.de/drop/\(item.id.uuidString)")!
-            let text = "\(item.emoji) \(item.activity) – komm vorbei! 📍"
+            let location = item.locationTitle.isEmpty ? "" : " · \(item.locationTitle)"
+            let text = "\(item.emoji) \(item.activity)\(location) — komm vorbei. 📍"
             ShareSheet(items: [text, dropLink])
         }
     }
@@ -2378,14 +2494,16 @@ struct ParticipantDetailRow: View {
                         Group {
                             if let img = participant.selfie {
                                 Image(uiImage: img).resizable().scaledToFill()
+                                    .frame(width: 50, height: 50).clipShape(Circle())
                             } else {
-                                ZStack {
-                                    Circle().fill(Color.onlineGreen.opacity(0.14))
-                                    Text(participant.emoji).font(.system(size: 22))
-                                }
+                                RemoteProfileImage(
+                                    url: participant.profileImageURL,
+                                    fallbackEmoji: participant.emoji,
+                                    size: 50,
+                                    strokeColor: Color.onlineGreen.opacity(0.55)
+                                )
                             }
                         }
-                        .frame(width: 50, height: 50).clipShape(Circle())
                         .overlay(Circle().stroke(Color.onlineGreen.opacity(0.55), lineWidth: 2))
 
                         Circle().fill(Color.onlineGreen).frame(width: 17, height: 17)
@@ -2438,6 +2556,14 @@ struct ParticipantDetailRow: View {
                     Group {
                         if let img = participant.selfie {
                             Image(uiImage: img).resizable().scaledToFill()
+                                .frame(width: 36, height: 36).clipShape(Circle())
+                        } else if participant.profileImageURL != nil {
+                            RemoteProfileImage(
+                                url: participant.profileImageURL,
+                                fallbackEmoji: participant.emoji,
+                                size: 36,
+                                strokeColor: Color.clear
+                            )
                         } else {
                             ZStack {
                                 Circle().fill(avatarBg)
@@ -2597,35 +2723,35 @@ struct ParticipantLiveLocationSheet: View {
 
             // ── Karte ─────────────────────────────────────────────────
             ZStack(alignment: .bottom) {
-                Map(coordinateRegion: .constant(fitRegion(from: liveCoord, to: dropCoordinate)),
-                    showsUserLocation: false,
-                    annotationItems: mapAnnotations) { ann in
-                    MapAnnotation(coordinate: ann.coordinate) {
-                        if ann.isPersonPin {
-                            // Joiner-Pin
-                            ZStack {
-                                Circle()
-                                    .fill(Color.brand.opacity(0.18))
-                                    .frame(width: 44, height: 44)
-                                Circle()
-                                    .stroke(Color.brand.opacity(0.6), lineWidth: 2)
-                                    .frame(width: 44, height: 44)
-                                Text(participant.emoji)
-                                    .font(.system(size: 20))
-                            }
-                            .shadow(color: Color.brand.opacity(0.4), radius: 8)
-                        } else {
-                            // Drop-Pin
-                            ZStack {
-                                Circle()
-                                    .fill(Color.accentOrange.opacity(0.18))
-                                    .frame(width: 34, height: 34)
-                                Circle()
-                                    .stroke(Color.accentOrange.opacity(0.6), lineWidth: 2)
-                                    .frame(width: 34, height: 34)
-                                Image(systemName: "mappin.circle.fill")
-                                    .font(.system(size: 16))
-                                    .foregroundColor(.accentOrange)
+                Map(initialPosition: .region(fitRegion(from: liveCoord, to: dropCoordinate))) {
+                    ForEach(mapAnnotations) { ann in
+                        Annotation("", coordinate: ann.coordinate) {
+                            if ann.isPersonPin {
+                                // Joiner-Pin
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.brand.opacity(0.18))
+                                        .frame(width: 44, height: 44)
+                                    Circle()
+                                        .stroke(Color.brand.opacity(0.6), lineWidth: 2)
+                                        .frame(width: 44, height: 44)
+                                    Text(participant.emoji)
+                                        .font(.system(size: 20))
+                                }
+                                .shadow(color: Color.brand.opacity(0.4), radius: 8)
+                            } else {
+                                // Drop-Pin
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.accentOrange.opacity(0.18))
+                                        .frame(width: 34, height: 34)
+                                    Circle()
+                                        .stroke(Color.accentOrange.opacity(0.6), lineWidth: 2)
+                                        .frame(width: 34, height: 34)
+                                    Image(systemName: "mappin.circle.fill")
+                                        .font(.system(size: 16))
+                                        .foregroundColor(.accentOrange)
+                                }
                             }
                         }
                     }
@@ -2811,6 +2937,14 @@ struct ParticipantAvatars: View {
                     .scaledToFill()
                     .frame(width: size, height: size)
                     .clipShape(Circle())
+            } else if participant.profileImageURL != nil {
+                // Remote-Profilbild über RemoteProfileImage (mit Cache)
+                RemoteProfileImage(
+                    url: participant.profileImageURL,
+                    fallbackEmoji: participant.emoji,
+                    size: size,
+                    strokeColor: Color.clear
+                )
             } else {
                 // Emoji-Fallback
                 Circle()
@@ -2845,6 +2979,9 @@ struct MiniProfileSheet: View {
     /// Wenn gesetzt, wird der Drops+ Status live aus Firebase nachgezogen — dadurch
     /// zeigt das Sheet auch bei Freunden / Teilnehmern korrekt das Plus-Badge.
     var userUID: String? = nil
+    /// Optionales Alter — wird im Subtitle angezeigt. Wenn nil, wird's via userUID aus
+    /// `users/{uid}/birthdate` nachgezogen.
+    var userAge: Int? = nil
     var canBlock: Bool = true
     /// True wenn dieser User in deiner Freundesliste ist → zeigt
     /// "Freund entfernen"-Button statt Block/Melden.
@@ -2855,6 +2992,25 @@ struct MiniProfileSheet: View {
     @State private var showReportSheet = false
     @State private var showRemoveFriendAlert = false
     @State private var fetchedPlus: Bool = false
+    /// Aus Firebase nachgezogen — für Beta-Badge-Cutoff und Alter im Subtitle.
+    @State private var fetchedCreatedAt: Date? = nil
+    @State private var fetchedAge: Int? = nil
+
+    /// Beta-Badge-Cutoff: Nutzer ab 04.05.2026 (Europe/Berlin) bekommen kein Badge mehr.
+    /// Frühere Nutzer (Early Adopter) behalten den Badge dauerhaft. Wenn createdAt
+    /// nicht ermittelbar ist, wird der Badge zur Sicherheit NICHT gezeigt.
+    private var qualifiesForBetaBadge: Bool {
+        guard let created = fetchedCreatedAt else { return false }
+        var c = DateComponents()
+        c.year = 2026; c.month = 5; c.day = 4
+        c.hour = 0; c.minute = 0; c.second = 0
+        c.timeZone = TimeZone(identifier: "Europe/Berlin")
+        let cutoff = Calendar(identifier: .gregorian).date(from: c) ?? Date()
+        return created < cutoff
+    }
+
+    /// Effektives Alter — übergeben oder aus Firebase nachgezogen.
+    private var displayAge: Int? { userAge ?? fetchedAge }
 
     // Tier aus Punktzahl direkt — unabhängig von Event-Historie.
     private var tierLabel: String { ReliabilityScore.badge(forPoints: reliabilityScore) }
@@ -2903,6 +3059,10 @@ struct MiniProfileSheet: View {
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color.brand)
                 }
+                // Beta-Badge nur für Early-Adopter (registriert vor 04.05.2026)
+                if qualifiesForBetaBadge {
+                    BetaBadge()
+                }
                 if isPlus || fetchedPlus {
                     HStack(spacing: 3) {
                         Image(systemName: "bolt.fill").font(.system(size: 9, weight: .bold))
@@ -2918,10 +3078,20 @@ struct MiniProfileSheet: View {
                     .overlay(Capsule().stroke(Color.white.opacity(0.35), lineWidth: 0.5))
                 }
             }
-            Text(subtitle)
-                .font(.system(size: 13))
-                .foregroundColor(.textSecondary)
-                .padding(.bottom, 20)
+            HStack(spacing: 6) {
+                Text(subtitle)
+                    .font(.system(size: 13))
+                    .foregroundColor(.textSecondary)
+                if let age = displayAge {
+                    Text("·")
+                        .font(.system(size: 13))
+                        .foregroundColor(.textTertiary)
+                    Text("\(age)")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.textSecondary)
+                }
+            }
+            .padding(.bottom, 20)
 
             // Zuverlässigkeits-Ring mit Tier-Icon + Badge-Name
             HStack(spacing: 14) {
@@ -3061,6 +3231,18 @@ struct MiniProfileSheet: View {
             if !isPlus, let uid = userUID, !uid.isEmpty {
                 RealtimeDBManager.shared.fetchPlusStatus(uid: uid) { plus in
                     fetchedPlus = plus
+                }
+            }
+            // createdAt + birthdate für Beta-Badge & Alter laden
+            if let uid = userUID, !uid.isEmpty {
+                RealtimeDBManager.shared.fetchUserMeta(uid: uid) { created, birthdate in
+                    fetchedCreatedAt = created
+                    if let bd = birthdate, userAge == nil {
+                        let comps = Calendar.current.dateComponents([.year], from: bd, to: Date())
+                        if let years = comps.year, years > 0, years < 120 {
+                            fetchedAge = years
+                        }
+                    }
                 }
             }
         }
@@ -3293,6 +3475,106 @@ struct ShareSheet: UIViewControllerRepresentable {
         UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
     func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - Drag-Damping Helper
+
+/// Liquid-Glass-Style Drag-Damping: Drag nach unten passiert weich,
+/// nach Schwellwert wird's elastisch gebremst (rubber-band). Drag nach oben
+/// (negativer Wert) wird stark gedämpft → fühlt sich „klebrig" an wie bei
+/// Apple's Tab-Bar-Pull.
+fileprivate func dampedDragOffset(_ raw: CGFloat) -> CGFloat {
+    if raw <= 0 {
+        // Drag nach oben → starke Resistance
+        return raw * 0.25
+    }
+    let threshold: CGFloat = 80
+    if raw <= threshold { return raw }
+    // Über Schwellwert: zunehmender Widerstand (rubber-band)
+    let extra = raw - threshold
+    return threshold + extra * (1 / (1 + extra / 220))
+}
+
+// MARK: - Map Boost Card
+//
+// Schwebt überm Recenter-Button wenn Boost-Phase aktiv ist (<5 Drops in
+// Reichweite). Drag-Handle oben, Bolt-Icon mit Gradient links, Text rechts.
+// Bei Drag → folgt rubber-band-mäßig dem Finger; bei Loslassen >60pt tropft
+// die Karte zur kleinen Pille links neben dem Recenter-Button (matchedGeometryEffect).
+struct MapBoostCard: View {
+    var onCollapse: (() -> Void)? = nil
+
+    @State private var pulse = false
+
+    var body: some View {
+        VStack(spacing: 8) {
+            // Drag-Handle + Collapse-Chevron
+            HStack {
+                Spacer()
+                Capsule()
+                    .fill(Color.textPrimary.opacity(0.20))
+                    .frame(width: 36, height: 4)
+                Spacer()
+            }
+            .overlay(alignment: .trailing) {
+                if onCollapse != nil {
+                    Button {
+                        onCollapse?()
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(.textPrimary.opacity(0.45))
+                            .padding(6)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Einklappen")
+                }
+            }
+            .padding(.top, -2)
+
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.accentOrange, Color.brand],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 38, height: 38)
+                        .shadow(
+                            color: Color.accentOrange.opacity(pulse ? 0.55 : 0.25),
+                            radius: pulse ? 14 : 6
+                        )
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(.white)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Boost-Phase aktiv")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.textPrimary)
+                    Text("+15 Punkte für jeden Drop, den du jetzt erstellst oder triffst.")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(.textPrimary.opacity(0.72))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 4)
+            }
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
+        .liquidGlass(cornerRadius: 20)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
+    }
 }
 
 // MARK: - Extend Drop Sheet
