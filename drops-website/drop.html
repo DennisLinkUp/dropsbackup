@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="theme-color" content="#FF6B35">
+  <title>Drops öffnen</title>
+
+  <!-- Smart App Banner: zeigt iOS-User automatisch einen "OPEN/INSTALL"-Button für die Drops-App -->
+  <meta name="apple-itunes-app" content="app-id=6762097493">
+
+  <link rel="apple-touch-icon" href="/app-icon.png">
+  <link rel="icon" href="/app-icon.png">
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+      background: linear-gradient(180deg, #FFF7F0 0%, #FFE8DC 50%, #F0E8FF 100%);
+      color: #1a1a1a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      min-height: 100vh;
+    }
+    .card {
+      max-width: 420px;
+      width: 100%;
+      text-align: center;
+    }
+    .icon {
+      width: 128px;
+      height: 128px;
+      border-radius: 28px;
+      box-shadow: 0 20px 60px rgba(255, 107, 53, 0.25), 0 8px 24px rgba(0, 0, 0, 0.08);
+      margin: 0 auto 28px;
+      display: block;
+    }
+    h1 {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.4px;
+      margin-bottom: 12px;
+    }
+    p {
+      font-size: 15px;
+      color: #555;
+      line-height: 1.5;
+      margin-bottom: 28px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      max-width: 320px;
+      padding: 16px 22px;
+      border-radius: 999px;
+      font-size: 16px;
+      font-weight: 700;
+      text-decoration: none;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      margin-bottom: 12px;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn-primary {
+      background: linear-gradient(135deg, #FF6B35 0%, #E84D7C 100%);
+      color: #fff;
+      box-shadow: 0 10px 30px rgba(255, 107, 53, 0.35);
+    }
+    .btn-secondary {
+      background: rgba(0, 0, 0, 0.06);
+      color: #1a1a1a;
+    }
+    .footer {
+      margin-top: 32px;
+      font-size: 12px;
+      color: #888;
+    }
+    .footer a {
+      color: #888;
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <img src="/app-icon.png" alt="Drops" class="icon">
+    <h1>Drops öffnen</h1>
+    <p id="subtitle">
+      Tippe auf den Button — wenn du Drops installiert hast, öffnet sich die App direkt.
+      Sonst lädst du sie kostenlos im App Store.
+    </p>
+
+    <!-- Primary: Versuche App per Universal Link zu öffnen -->
+    <a id="openApp" class="btn btn-primary" href="#">
+      📲 In Drops öffnen
+    </a>
+
+    <!-- Fallback: App Store -->
+    <a class="btn btn-secondary" href="https://apps.apple.com/de/app/drops-triff-leute/id6762097493">
+      Im App Store laden
+    </a>
+
+    <div class="footer">
+      <a href="/">drops-app.de</a>
+    </div>
+  </div>
+
+  <script>
+    // Re-konstruiere den Original-Universal-Link aus dem aktuellen Pfad
+    // (z.B. /drop/<UUID> oder /invite/<UID>) und triggere ihn beim Klick.
+    (function () {
+      const path = window.location.pathname;
+      const target = "https://www.drops-app.de" + path;
+      const openBtn = document.getElementById("openApp");
+      openBtn.href = target;
+
+      // Auf iOS / Safari: nach 1.5s Fallback auf App Store wenn die App
+      // den Universal Link nicht abfängt (= App nicht installiert).
+      openBtn.addEventListener("click", function (e) {
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        if (!isIOS) return;  // Auf Desktop: einfach Universal Link folgen lassen
+
+        // Auf iOS: nach 1.5s prüfen ob wir noch auf der Page sind → dann App Store
+        const fallbackTimer = setTimeout(function () {
+          window.location.href = "https://apps.apple.com/de/app/drops-triff-leute/id6762097493";
+        }, 1500);
+
+        // Wenn die Page in den Hintergrund geht (App hat geöffnet) → Timer canceln
+        document.addEventListener("visibilitychange", function () {
+          if (document.hidden) clearTimeout(fallbackTimer);
+        });
+      });
+
+      // Subtitle anpassen je nach URL-Typ
+      const subtitle = document.getElementById("subtitle");
+      if (path.startsWith("/drop/")) {
+        subtitle.textContent = "Jemand hat dir einen Drop geschickt. Tippe um ihn in der App zu öffnen.";
+      } else if (path.startsWith("/invite/")) {
+        subtitle.textContent = "Du wurdest zu Drops eingeladen — tippe um die App zu öffnen oder lade sie kostenlos im App Store.";
+      }
+    })();
+  </script>
+</body>
+</html>

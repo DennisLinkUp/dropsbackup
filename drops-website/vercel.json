@@ -11,5 +11,15 @@
         }
       ]
     }
+  ],
+  "rewrites": [
+    {
+      "source": "/drop/:uuid",
+      "destination": "/drop.html"
+    },
+    {
+      "source": "/invite/:uid",
+      "destination": "/drop.html"
+    }
   ]
 }
