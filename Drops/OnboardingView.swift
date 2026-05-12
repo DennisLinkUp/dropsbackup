@@ -818,6 +818,16 @@ struct OnboardingView: View {
                     withAnimation(.spring(response: 0.4)) { step = .underage }
                     return
                 }
+                // Content-Filter auf den Profilnamen — keine Slurs,
+                // Beleidigungen oder Sexual-Solicitation als Anzeigename.
+                if let match = ContentFilter.firstMatch(profileName: name) {
+                    store.showInfoToast(
+                        "Dieser Name enthält ein blockiertes Wort (\"\(match.word)\"). Bitte einen anderen wählen.",
+                        icon: "exclamationmark.shield.fill"
+                    )
+                    UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                    return
+                }
                 store.currentUser.name = name.isEmpty ? "Du" : name
                 store.userBirthdate    = birthdate
                 store.userGender       = gender.lowercased()   // immer lowercase speichern
