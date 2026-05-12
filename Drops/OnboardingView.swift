@@ -906,6 +906,7 @@ struct OnboardingView: View {
             // Freundes-Observer starten (noch keine Freunde, aber für zukünftige Adds)
             if let uid = Auth.auth().currentUser?.uid {
                 store.startObservingFriends(ownerUID: uid)
+                store.startObservingAdminNotices()
             }
             // Online-Heartbeat — sonst sieht einen Freunde nicht als "online" bis
             // zur ersten Background-Return.
@@ -919,8 +920,14 @@ struct OnboardingView: View {
     }
 
 
-    /// Fragt Benachrichtigungs- und Standort-Berechtigung am Ende des Onboardings an.
-    /// Wird beim Erscheinen des Intro-Steps aufgerufen, damit der User bereits Kontext hat.
+    /// Fragt Push, Standort UND Bluetooth-Berechtigung am Ende des Onboardings
+    /// an. Reihenfolge bewusst gewählt:
+    ///   1. Push (am wenigsten kritisch, Default-Allow bei vielen Usern)
+    ///   2. Standort (Drop-Suche kernfunktion, hohe Akzeptanz erwartet)
+    ///   3. Bluetooth (Anwesenheits-Bestätigung — Drops-USP, vorher
+    ///      vergessen → User wurde erst im Map-View beim ersten Join
+    ///      gefragt, ohne Kontext)
+    /// Alle 3 mit kurzem Stagger damit iOS die Sheets nicht aufeinanderstapelt.
     private func requestOnboardingPermissions() {
         // 1. Push Notifications
         UNUserNotificationCenter.current().getNotificationSettings { settings in
@@ -935,12 +942,25 @@ struct OnboardingView: View {
                 }
             }
         }
-        // 2. Standort (falls noch nicht bestimmt)
-        // Property halten damit ARC den Manager nicht sofort freigibt
-        let locManager = CLLocationManager()
-        onboardingLocManager = locManager
-        if locManager.authorizationStatus == .notDetermined {
-            locManager.requestWhenInUseAuthorization()
+        // 2. Standort (falls noch nicht bestimmt) — kurzer Versatz damit
+        // das iOS-Sheet nicht das Push-Sheet überlappt.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            // Property halten damit ARC den Manager nicht sofort freigibt
+            let locManager = CLLocationManager()
+            self.onboardingLocManager = locManager
+            if locManager.authorizationStatus == .notDetermined {
+                locManager.requestWhenInUseAuthorization()
+            }
+        }
+        // 3. Bluetooth — Trigger durch *Touch* an den BluetoothMeetupManager,
+        // der den CBCentralManager initialisiert. iOS zeigt dann automatisch
+        // den Bluetooth-Permission-Prompt (NSBluetoothAlwaysUsageDescription
+        // aus Info.plist). Wichtig: das passiert erst beim ersten Manager-
+        // Zugriff — wir touchen den hier proaktiv, damit der User die
+        // Berechtigung direkt im Onboarding-Flow setzt statt erst beim
+        // ersten Drop-Join in der Map.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
+            self.store.bluetoothMeetup.warmUpForPermissionPrompt()
         }
     }
 
@@ -981,6 +1001,7 @@ struct OnboardingView: View {
                 // liste bei Re-Login ohne App-Neustart leer.
                 if let uid = Auth.auth().currentUser?.uid {
                     store.startObservingFriends(ownerUID: uid)
+                store.startObservingAdminNotices()
                 }
                 // Profilbild-Re-Retrigger falls die erste Runde kein URL hatte
                 // (z.B. Token-Race) — jetzt sollte Auth komplett durchgerouted sein.
@@ -1081,12 +1102,306 @@ struct OnboardingView: View {
 struct DropsLogo: View {
     var fontSize: CGFloat = 52
     var textColor: Color = .white
+    /// Wenn true → die Wordmark sitzt in einer Liquid-Glass-Capsule mit
+    /// dezenter Text-Gradient. Default false damit Bestandsstellen
+    /// (z.B. WelcomeSheet im Header) ihren cleaneren Look behalten.
+    var glassy: Bool = false
+
+    /// Schrift: `.rounded` + `.heavy` — chunkige, runde Buchstaben passen
+    /// zum App-Icon-„D" (kompakter Halbkreis mit fetten Strichen).
+    /// `.default` mit `.bold` war schlanker und passte nicht zur Icon-DNA.
+    private var dropsFont: Font {
+        .system(size: fontSize, weight: .heavy, design: .rounded)
+    }
 
     var body: some View {
+        if glassy {
+            glassWordmark
+        } else {
+            plainText
+        }
+    }
+
+    private var plainText: some View {
         Text("Drops")
-            .font(.system(size: fontSize, weight: .bold, design: .default))
-            .tracking(-fontSize * 0.025)
+            .font(dropsFont)
+            .tracking(-fontSize * 0.015)
             .foregroundColor(textColor)
+    }
+
+    /// „Drops" mit Custom-D in Icon-Proportionen + „rops" als SF-Text.
+    /// Das D ist ein Path-Render basierend auf dem App-Icon-LetterD-D.svg
+    /// (chunky-runde Form, etwas breiter als ein normales SF-Heavy-D).
+    /// Das gibt dem Wordmark sofort die Icon-Identity zurück.
+    private var glassWordmark: some View {
+        // D-Höhe sollte zur Cap-Height von "rops" passen (~70% fontSize bei
+        // SF .heavy .rounded). Wir machen's leicht größer als cap-height
+        // damit das D als Akzent etwas hervorsteht — wie im Logo.
+        let dHeight = fontSize * 0.92
+        // Aspect-Ratio des Icon-D-Pfads: Outer-Bounding x:264-792, y:232-792
+        // → 528/560 ≈ 0.94 — ist also fast quadratisch, etwas breiter als
+        // ein typisches SF-Heavy-D (das eher 0.72 wide ist).
+        let dWidth = dHeight * 0.94
+
+        return HStack(alignment: .firstTextBaseline, spacing: -fontSize * 0.04) {
+            // Custom-D — solider Fill (LetterDShape hat Outer + Inner Path,
+            // beide mit normaler .fill rendern den Outer-Pfad solide,
+            // Inner liegt darin und wird überzeichnet). Vorher war hier
+            // hartkodiert .white — das lässt die Wordmark im Light-Mode
+            // verschwinden. Jetzt nutzt es `textColor` wie der plainText-
+            // Pfad, damit die glassy-Variante auf dem LoginScreen im
+            // Light-Mode mit dunklem Text und im Dark-Mode mit weiß
+            // sauber rendert.
+            LetterDShape()
+                .fill(textColor)
+                .frame(width: dWidth, height: dHeight)
+                // Vertikales Alignment: D-Path-Top sitzt höher als die
+                // Cap-Height vom Text, leichter Y-Offset zentriert ihn
+                // visuell auf die Buchstabenlinie der "rops".
+                .alignmentGuide(.firstTextBaseline) { d in d.height * 0.86 }
+
+            Text("rops")
+                .font(dropsFont)
+                .tracking(-fontSize * 0.015)
+                .foregroundColor(textColor)
+        }
+        // Orange-Glow oben-links — wie der Icon-Top
+        .shadow(color: Color(hex: "E48C3A").opacity(0.65), radius: 24, x: -2, y: -3)
+        // Grün-Glow unten-rechts — wie der Icon-Bottom
+        .shadow(color: Color(hex: "5FA937").opacity(0.55), radius: 22, x: 3, y: 4)
+        // Subtle dunkler Drop-Shadow für Boden-Definition
+        .shadow(color: Color.black.opacity(0.22), radius: 10, y: 7)
+    }
+}
+
+// MARK: - Drops Icon Hero
+//
+// SwiftUI-Replik des App-Icons als Login/Welcome-Hero. Spiegelt die
+// Komposition aus icon.json wider:
+//   - Orange→Grün Gradient (vertikal) als Hintergrund
+//   - Hohler "D"-Buchstabe weiß zentriert
+//   - Radar-Punkt + zwei pulsierende Wellen oben-rechts vom D
+//
+// Die Wellen pulsieren in 1.8s-Loops mit 0.6s Stagger — wirkt wie ein
+// aktives "Sender"-Signal, passt zur Drops-Identity ("Spontan treffen").
+// MARK: - Radar Pulse Divider
+//
+// Kleiner animierter Radar-Trenner für den Login: drei weiße Halbkreis-
+// Wellen die direkt unterhalb der "Drops"-Wordmark entspringen und nach
+// unten expandieren und faden — wie das Radar aus dem App-Icon, aber als
+// horizontales Spacer-Element. Kein Sender-Dot, weil der Anker visuell
+// die Wordmark selbst ist (Wellen "strömen" aus dem Text).
+//
+// Die Wellen sind staggered (0s/0.6s/1.2s Delay), jede einzelne Welle
+// expandiert in 1.8s von 0.4× auf 1.0× Scale und fadet 80% → 0% Opacity.
+// Repeat-forever erzeugt einen kontinuierlichen "Sendet"-Vibe.
+struct RadarPulseDivider: View {
+    var width: CGFloat = 140
+    var color: Color = .white
+
+    @State private var w0 = false
+    @State private var w1 = false
+    @State private var w2 = false
+
+    /// Animation-Timing — zentral hier, damit Stagger und Loop synchron
+    /// bleiben wenn man den Look anpasst. Werte gewählt für „natürliches"
+    /// Radar/Wassertropfen-Feeling: lange Easing-Out-Kurve, viel Atemraum
+    /// zwischen den Wellen. Cycle-Total = duration → wenn duration ein
+    /// Vielfaches von stagger × 3 ist, läuft der Loop nahtlos.
+    private static let waveDuration: Double = 4.5   // entspannter, natürlich
+    private static let waveStagger: Double = 1.5    // 1.5s zwischen Wellen
+    private static let waveBaseScale: CGFloat = 0.3
+    private static let waveMaxScale: CGFloat = 1.7   // weit nach unten
+    private static let waveLineWidth: CGFloat = 4.5  // dicker
+
+    /// Halbkreis-Wave: ein 180°-Bogen am oberen Rand des Frames, mit
+    /// Stroke-Round-Caps. Wird per `.scaleEffect(_:anchor: .top)`
+    /// vom Top-Center aus expandiert (= Anker direkt am Wordmark-Bottom).
+    @ViewBuilder
+    private func wave(active: Bool, opacity: Double) -> some View {
+        SemiCircleShape()
+            .stroke(color, style: StrokeStyle(lineWidth: Self.waveLineWidth, lineCap: .round))
+            .frame(width: width, height: width / 2)
+            .scaleEffect(active ? Self.waveMaxScale : Self.waveBaseScale, anchor: .top)
+            .opacity(active ? 0.0 : opacity)
+    }
+
+    var body: some View {
+        // Frame bleibt schmal — Welle scaled über `waveMaxScale > 1`
+        // visuell über das Frame raus, ohne das umgebende Layout
+        // (Slogan, Buttons) nach unten zu verschieben.
+        ZStack(alignment: .top) {
+            wave(active: w2, opacity: 0.45)
+            wave(active: w1, opacity: 0.65)
+            wave(active: w0, opacity: 0.85)
+        }
+        .frame(width: width, height: width / 2)
+        .onAppear {
+            // Drei Wellen zeitversetzt anstoßen — Stagger 1s ergibt einen
+            // ruhigen, kontinuierlichen Sweep statt hektischem Flackern.
+            withAnimation(.easeOut(duration: Self.waveDuration).repeatForever(autoreverses: false)) {
+                w0 = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.waveStagger) {
+                withAnimation(.easeOut(duration: Self.waveDuration).repeatForever(autoreverses: false)) {
+                    w1 = true
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.waveStagger * 2) {
+                withAnimation(.easeOut(duration: Self.waveDuration).repeatForever(autoreverses: false)) {
+                    w2 = true
+                }
+            }
+        }
+    }
+}
+
+/// Halbkreis-Bogen am oberen Rand — Mittelpunkt zentral oben, Bogen
+/// öffnet nach unten (180° Sweep von 0° → 180°).
+private struct SemiCircleShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.addArc(
+            center: CGPoint(x: rect.midX, y: 0),
+            radius: rect.width / 2,
+            startAngle: .degrees(0),
+            endAngle: .degrees(180),
+            clockwise: false
+        )
+        return path
+    }
+}
+
+struct DropsIconHero: View {
+    var size: CGFloat = 120
+
+    @State private var wave1Animate = false
+    @State private var wave2Animate = false
+
+    /// iOS-App-Icon-Ratio (~22.5% des kleineren Achsmaßes).
+    private var cornerRadius: CGFloat { size * 0.225 }
+
+    var body: some View {
+        ZStack {
+            // Gradient-Background (orange oben → grün unten, wie icon.json)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                )
+                .shadow(color: Color(hex: "E48C3A").opacity(0.35), radius: 30, y: 12)
+
+            // Innerer Glanz-Stroke für Liquid-Glass-Feel
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .stroke(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.4), Color.white.opacity(0.05)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1.5
+                )
+
+            // Letter-D — hohler Buchstabe, eo-Fill schneidet das Innere weg.
+            // Subtle white shadow gibt einen kleinen Liquid-Glass-Glow.
+            LetterDShape()
+                .fill(Color.white, style: FillStyle(eoFill: true))
+                .frame(width: size * 0.62, height: size * 0.62)
+                .offset(x: -size * 0.04, y: 0)
+                .shadow(color: .white.opacity(0.35), radius: size * 0.04)
+
+            // Radar-Wellen + Punkt oben-rechts vom D, gestaffelt animiert.
+            ZStack {
+                // Wave 2 (außen) — größer, dezenter
+                Circle()
+                    .trim(from: 0.0, to: 0.18)
+                    .stroke(Color.white, style: StrokeStyle(lineWidth: size * 0.035, lineCap: .round))
+                    .rotationEffect(.degrees(-25))
+                    .frame(width: size * 0.36, height: size * 0.36)
+                    .opacity(wave2Animate ? 0.0 : 0.65)
+                    .scaleEffect(wave2Animate ? 1.3 : 0.85)
+
+                // Wave 1 (innen) — kleiner, kräftiger
+                Circle()
+                    .trim(from: 0.0, to: 0.18)
+                    .stroke(Color.white, style: StrokeStyle(lineWidth: size * 0.035, lineCap: .round))
+                    .rotationEffect(.degrees(-25))
+                    .frame(width: size * 0.22, height: size * 0.22)
+                    .opacity(wave1Animate ? 0.0 : 0.85)
+                    .scaleEffect(wave1Animate ? 1.4 : 0.9)
+
+                // Radar-Dot (Sender, statisch)
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: size * 0.07, height: size * 0.07)
+            }
+            .offset(x: size * 0.22, y: -size * 0.02)
+        }
+        .frame(width: size, height: size)
+        .onAppear {
+            withAnimation(.easeOut(duration: 1.8).repeatForever(autoreverses: false)) {
+                wave1Animate = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                withAnimation(.easeOut(duration: 1.8).repeatForever(autoreverses: false)) {
+                    wave2Animate = true
+                }
+            }
+        }
+    }
+}
+
+/// Hohler D-Buchstabe als SwiftUI-Path — 1:1 Replik des LetterD-D.svg.
+/// Outer-Path + Inner-Path, beide CW gezeichnet → mit `FillStyle(eoFill: true)`
+/// bekommt der innere Pfad einen Cutout-Effekt (klassischer "donut hole").
+private struct LetterDShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let s = min(rect.width, rect.height) / 1024.0
+        var path = Path()
+
+        // ── Outer D ────────────────────────────────────────────
+        path.move(to: CGPoint(x: 314 * s, y: 232 * s))
+        path.addLine(to: CGPoint(x: 512 * s, y: 232 * s))
+        // Großer Halbkreis nach rechts (bulge)
+        path.addArc(center: CGPoint(x: 512 * s, y: 512 * s),
+                    radius: 280 * s,
+                    startAngle: .degrees(-90), endAngle: .degrees(90),
+                    clockwise: false)
+        path.addLine(to: CGPoint(x: 314 * s, y: 792 * s))
+        // Bottom-left rounded corner
+        path.addArc(center: CGPoint(x: 314 * s, y: 742 * s),
+                    radius: 50 * s,
+                    startAngle: .degrees(90), endAngle: .degrees(180),
+                    clockwise: false)
+        path.addLine(to: CGPoint(x: 264 * s, y: 282 * s))
+        // Top-left rounded corner
+        path.addArc(center: CGPoint(x: 314 * s, y: 282 * s),
+                    radius: 50 * s,
+                    startAngle: .degrees(180), endAngle: .degrees(270),
+                    clockwise: false)
+        path.closeSubpath()
+
+        // ── Inner Cutout ───────────────────────────────────────
+        path.move(to: CGPoint(x: 414 * s, y: 342 * s))
+        path.addLine(to: CGPoint(x: 512 * s, y: 342 * s))
+        path.addArc(center: CGPoint(x: 512 * s, y: 512 * s),
+                    radius: 170 * s,
+                    startAngle: .degrees(-90), endAngle: .degrees(90),
+                    clockwise: false)
+        path.addLine(to: CGPoint(x: 414 * s, y: 682 * s))
+        path.addArc(center: CGPoint(x: 414 * s, y: 642 * s),
+                    radius: 40 * s,
+                    startAngle: .degrees(90), endAngle: .degrees(180),
+                    clockwise: false)
+        path.addLine(to: CGPoint(x: 374 * s, y: 382 * s))
+        path.addArc(center: CGPoint(x: 414 * s, y: 382 * s),
+                    radius: 40 * s,
+                    startAngle: .degrees(180), endAngle: .degrees(270),
+                    clockwise: false)
+        path.closeSubpath()
+
+        return path
     }
 }
 
@@ -1180,7 +1495,10 @@ struct WelcomeStep: View {
         !lastLoginName.isEmpty
     }
 
-    private let fullSlogan = "Sei dabei wenn's passiert."
+    /// Slogan-Konstante — synchron zum Login-Block-Slogan und der App-
+    /// Store-Subtitle „Drops — Triff Leute". Wird vom Typewriter konsumiert
+    /// falls aktiviert. Vorher: "Sei dabei wenn's passiert." (out of sync).
+    private let fullSlogan = "Triff Leute. Spontan."
 
     /// System-Setting hat Vorrang; sonst entscheidet die Uhrzeit
     private var isLight: Bool {
@@ -1199,7 +1517,10 @@ struct WelcomeStep: View {
     private var mapBlur: CGFloat     { isLight ? 9 : 16 }
     private var appleButtonStyle: ASAuthorizationAppleIDButton.Style { isLight ? .black : .white }
     private var screenH: CGFloat  { UIScreen.main.bounds.height }
-    private var logoSize: CGFloat { screenH < 700 ? 52 : 68 }
+    // Wordmark deutlich größer als vorher (52/68 → 64/82) — gibt dem
+    // "Drops"-Hero mehr Präsenz auf dem Aurora, passt zur reduzierten
+    // Layout-Hierarchie (kein Icon mehr drüber).
+    private var logoSize: CGFloat { screenH < 700 ? 64 : 82 }
     private var buttonPadV: CGFloat { screenH < 700 ? 12 : screenH < 850 ? 14 : 16 }
 
     var body: some View {
@@ -1213,28 +1534,43 @@ struct WelcomeStep: View {
 
                     // ── Logo + Hero ────────────────────────────────────
                     VStack(spacing: screenH < 700 ? 18 : 26) {
-                        // Logo mit großzügigem Glow
-                        ZStack {
-                            // Doppelter Glow — grüner Brand-Halo + cyan Akzent
-                            Circle()
-                                .fill(Color.brand.opacity(isLight ? 0.10 : 0.16))
-                                .frame(width: 240, height: 240)
-                                .blur(radius: 48)
-                            Circle()
-                                .fill(Color(hex: "06B6D4").opacity(isLight ? 0.06 : 0.10))
-                                .frame(width: 180, height: 180)
-                                .blur(radius: 38)
-                                .offset(x: 30, y: 20)
+                        // Wordmark mit Aurora-Glow als Background — die
+                        // Glow-Circles sind rein dekorativ und expandieren
+                        // das Layout NICHT (sonst würde der Slogan zu weit
+                        // unten sitzen). Bewusst KEIN Radar-Pulse mehr —
+                        // der globale `AppAuroraBackground` liefert schon
+                        // ambient Bewegung, doppelte Animation hier wäre
+                        // visuelle Überladung auf einem Welcome-Screen.
+                        // Normale SF-Rounded-Heavy-Wordmark — der Custom-D
+                        // (LetterDShape) wirkte mit dem Aurora-Glow drum
+                        // herum zu busy. Auf User-Wunsch ein einheitlicher
+                        // Look mit dem Login-Screen.
+                        DropsLogo(fontSize: logoSize, textColor: textPrimary)
+                            .background {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color(hex: "E48C3A").opacity(isLight ? 0.14 : 0.20))
+                                        .frame(width: 240, height: 240)
+                                        .blur(radius: 48)
+                                        .offset(x: -20, y: -30)
+                                    Circle()
+                                        .fill(Color(hex: "5FA937").opacity(isLight ? 0.10 : 0.14))
+                                        .frame(width: 180, height: 180)
+                                        .blur(radius: 38)
+                                        .offset(x: 30, y: 30)
+                                }
+                                .allowsHitTesting(false)
+                            }
 
-                            DropsLogo(fontSize: logoSize, textColor: textPrimary)
-                        }
-
-                        // Hauptbotschaft — groß, fett, zwei Zeilen
+                        // Hauptbotschaft — knüpft an den App-Store-Untertitel
+                        // ("Drops — Triff Leute") an. Erste Zeile = Brand-Anker
+                        // identisch zum Store, zweite Zeile pointiert den
+                        // Spontan-Charakter der App.
                         VStack(spacing: 6) {
-                            Text("Sei dabei,")
+                            Text("Triff Leute.")
                                 .font(.system(size: screenH < 700 ? 28 : 32, weight: .bold, design: .default))
                                 .foregroundColor(textPrimary)
-                            Text("wenn's passiert.")
+                            Text("Spontan.")
                                 .font(.system(size: screenH < 700 ? 28 : 32, weight: .bold, design: .default))
                                 .foregroundColor(textPrimary)
                         }
@@ -2384,13 +2720,26 @@ struct LoginView: View {
                     Spacer()
 
                     // ── Logo-Block ────────────────────────────────────────
+                    // Aurora-Glow im Stil des App-Icons: Orange + Grün
+                    // statt einfarbig brand-grün — ergibt warme Sunset-
+                    // Begrüßung passend zum Icon.
                     VStack(spacing: 0) {
                         ZStack {
                             Circle()
-                                .fill(Color.brand.opacity(isLight ? 0.08 : 0.12))
+                                .fill(Color(hex: "E48C3A").opacity(isLight ? 0.10 : 0.14))
                                 .frame(width: 200, height: 200)
                                 .blur(radius: 40)
+                                .offset(x: -15, y: -20)
+                            Circle()
+                                .fill(Color(hex: "5FA937").opacity(isLight ? 0.08 : 0.10))
+                                .frame(width: 160, height: 160)
+                                .blur(radius: 36)
+                                .offset(x: 25, y: 25)
 
+                            // Normale SF-Rounded-Heavy-Wordmark (kein Custom-D
+                            // mit LetterDShape). Auf User-Wunsch — die Icon-D-
+                            // Variante wirkte auf dem Login-Screen too busy
+                            // neben dem Aurora-Glow.
                             DropsLogo(fontSize: logoSize, textColor: textPrimaryColor)
                         }
                         .padding(.bottom, 18)
@@ -2600,43 +2949,78 @@ struct AppIntroStep: View {
     @AppStorage("appLanguage") private var appLanguage = "de"
     @State private var appeared = false
 
-    private let accentColor = Color(hex: "22c55e")
+    /// Sunset-Palette aus dem App-Branding (matched zu Logo, Buttons, Aurora-BG).
+    private let orange = Color(hex: "E48C3A")
+    private let green  = Color(hex: "5FA937")
+    private var brandGradient: LinearGradient {
+        LinearGradient(colors: [orange, green],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
 
     private struct Feature {
         let icon: String
-        let color: Color
+        let tint: Color
         let title: String
         let subtitle: String
     }
 
+    /// Konkretere Features mit Brand-konformer Palette (Sunset-Orange-Akzente,
+    /// kein Cyan/Purple mehr — passt nicht zu Drops). Subtitles sind präziser:
+    /// statt „Privatsphäre inklusive" jetzt klar „BLE-Bestätigung" — der USP.
     private let features: [Feature] = [
-        Feature(icon: "plus.circle.fill",      color: Color(hex: "22c55e"),
-                title: "Drop erstellen",
-                subtitle: "Wähle eine Aktivität, tippe auf ＋ — dein Drop erscheint sofort auf der Karte."),
-        Feature(icon: "map.fill",              color: Color(hex: "06b6d4"),
-                title: "In Echtzeit entdecken",
-                subtitle: "Sieh welche Drops gerade aktiv sind und spring spontan rein."),
-        Feature(icon: "lock.shield.fill",      color: Color(hex: "8b5cf6"),
-                title: "Privatsphäre inklusive",
-                subtitle: "Kein dauerhaftes Speichern. Drops laufen automatisch ab."),
+        Feature(icon: "plus.circle.fill",
+                tint: Color(hex: "E48C3A"),
+                title: "Drop in 2 Tipps",
+                subtitle: "Aktivität wählen, Standort bestätigen — dein Drop erscheint sofort live auf der Karte."),
+        Feature(icon: "dot.radiowaves.left.and.right",
+                tint: Color(hex: "5FA937"),
+                title: "Bluetooth-Bestätigung",
+                subtitle: "Ankunft wird automatisch bestätigt — kein Check-In, keine GPS-Fakes."),
+        Feature(icon: "lock.shield.fill",
+                tint: Color(hex: "B49BE0"),
+                title: "Privacy by default",
+                subtitle: "Keine Profile, keine Bilderdatenbank. Drops laufen ab — du bist nicht dauer-trackbar."),
     ]
 
     var body: some View {
         ZStack {
-            OnboardingStepBackground(color: accentColor)
+            // Aurora-Background statt OnboardingStepBackground — matched zum
+            // Welcome-Step und der gesamten App. Sieht hochwertiger aus als
+            // ein statischer RadialGradient.
+            AppAuroraBackground()
+                .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
 
-                // ── App-Icon + Titel ──────────────────────────────────────
+                // ── App-Icon-Replik + Titel ───────────────────────────────
                 VStack(spacing: 16) {
+                    // Stylisierte App-Icon-Tile mit Sunset-Gradient + Custom-D
+                    // (LetterDShape) — visuell deckungsgleich zum echten
+                    // App-Icon ohne Asset-Referenz. Plus Sunset-Glow.
                     ZStack {
                         Circle()
-                            .fill(accentColor.opacity(0.15))
+                            .fill(orange.opacity(0.18))
+                            .frame(width: 130, height: 130)
+                            .blur(radius: 14)
+                        Circle()
+                            .fill(green.opacity(0.14))
+                            .frame(width: 110, height: 110)
+                            .blur(radius: 18)
+                            .offset(x: 8, y: 8)
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .fill(brandGradient)
                             .frame(width: 88, height: 88)
-                        Image(systemName: "dot.radiowaves.left.and.right")
-                            .font(.system(size: 38, weight: .semibold))
-                            .foregroundStyle(accentColor)
+                            .shadow(color: orange.opacity(0.35), radius: 14, y: 6)
+                            .overlay(
+                                LetterDShape()
+                                    .fill(Color.white)
+                                    .frame(width: 48, height: 48)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                    .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                            )
                     }
                     .scaleEffect(appeared ? 1 : 0.7)
                     .opacity(appeared ? 1 : 0)
@@ -2647,7 +3031,7 @@ struct AppIntroStep: View {
                             .font(.system(size: 28, weight: .bold, design: .rounded))
                             .foregroundColor(.textPrimary)
                             .multilineTextAlignment(.center)
-                        Text("Spontan treffen. Ohne Planung.")
+                        Text("Triff Leute. Spontan.")
                             .font(.system(size: 16))
                             .foregroundColor(.textSecondary)
                             .multilineTextAlignment(.center)
@@ -2667,11 +3051,11 @@ struct AppIntroStep: View {
                         HStack(alignment: .top, spacing: 16) {
                             ZStack {
                                 RoundedRectangle(cornerRadius: 12)
-                                    .fill(f.color.opacity(0.14))
+                                    .fill(f.tint.opacity(0.14))
                                     .frame(width: 48, height: 48)
                                 Image(systemName: f.icon)
                                     .font(.system(size: 22, weight: .semibold))
-                                    .foregroundStyle(f.color)
+                                    .foregroundStyle(f.tint)
                             }
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(f.title)
@@ -2707,17 +3091,22 @@ struct AppIntroStep: View {
 
                 Spacer(minLength: 32)
 
-                // ── Los geht's Button ─────────────────────────────────────
+                // ── „Los geht's"-Button mit Sunset-Gradient ───────────────
                 Button {
                     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     onFinish()
                 } label: {
-                    Text(tr("onboard.lets_go"))
-                        .font(.system(size: 17, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 17)
-                        .background(accentColor, in: RoundedRectangle(cornerRadius: 16))
+                    HStack(spacing: 8) {
+                        Text(tr("onboard.lets_go"))
+                            .font(.system(size: 17, weight: .bold, design: .rounded))
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 14, weight: .bold))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 17)
+                    .background(brandGradient, in: RoundedRectangle(cornerRadius: 16))
+                    .shadow(color: orange.opacity(0.35), radius: 14, y: 5)
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 24)

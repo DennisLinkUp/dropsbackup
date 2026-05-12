@@ -119,6 +119,19 @@ final class BluetoothMeetupManager: NSObject, ObservableObject {
 
     // MARK: - Public API
 
+    /// Trigger für den iOS-Bluetooth-Permission-Prompt im Onboarding.
+    /// Macht nichts außer den Manager initialisieren (passiert im `init`
+    /// implizit beim ersten Touch der lazy `store.bluetoothMeetup`-
+    /// Property). iOS zeigt dann automatisch den BLE-Permission-Dialog
+    /// mit dem `NSBluetoothAlwaysUsageDescription`-Text aus Info.plist.
+    /// Idempotent — kann mehrfach aufgerufen werden ohne Side-Effects.
+    func warmUpForPermissionPrompt() {
+        // Touching `central.state` reicht iOS-intern aus, um den
+        // Permission-Check zu triggern, wenn noch nicht entschieden.
+        _ = central.state
+        _ = peripheral.state
+    }
+
     /// Startet BLE-Session für einen Drop.
     /// - Parameters:
     ///   - userToken: Kurzer Identifier des eigenen Nutzers (8 Zeichen)
