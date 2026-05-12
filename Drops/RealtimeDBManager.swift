@@ -1259,12 +1259,20 @@ class RealtimeDBManager: ObservableObject {
                 // Eigene Drops sind „eigene Stadt" (User hostet wo er wohnt),
                 // Joiner-Coord ist „Stadt wo der User aktiv ist" — beides
                 // dieselbe Info aus Service-Cities-Sicht.
+                //
+                // Wir nutzen `cityNear()` (großzügig) statt `city()` (strikt
+                // polygon-contained), damit Vororte (Karlsfeld, Dachau,
+                // Unterschleißheim etc.) der nächstgelegenen Großstadt
+                // zugeordnet werden. Sonst landeten User die ihren ersten
+                // Drop knapp außerhalb der Stadt-Polygone gemacht haben in
+                // „Ohne Stadt", obwohl sie eindeutig zum Speckgürtel
+                // gehören.
                 if let first = earliestDropCoord[uid] {
                     let coord = CLLocationCoordinate2D(latitude: first.lat, longitude: first.lng)
-                    entries[i].cityName = ServiceCities.city(for: coord)?.name
+                    entries[i].cityName = ServiceCities.cityNear(coord)?.name
                 } else if let joinCoord = joinerCoord[uid] {
                     let coord = CLLocationCoordinate2D(latitude: joinCoord.lat, longitude: joinCoord.lng)
-                    entries[i].cityName = ServiceCities.city(for: coord)?.name
+                    entries[i].cityName = ServiceCities.cityNear(coord)?.name
                 }
             }
             entries.sort { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }
