@@ -3,7 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Support – Drops</title>
+  <title>Impressum – Drops</title>
+  <meta name="description" content="Impressum gemäß § 5 TMG für Drops – Triff Leute.">
+  <meta name="robots" content="index, follow">
+  <link rel="icon" href="/app-icon.png">
+  <link rel="apple-touch-icon" href="/app-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
   <style>
@@ -37,7 +41,6 @@
     }
 
     html { scroll-behavior: smooth; }
-
     body {
       font-family: 'Inter', -apple-system, sans-serif;
       background: var(--bg);
@@ -47,8 +50,6 @@
       position: relative;
       overflow-x: hidden;
     }
-
-    /* Aurora-Background (matches index.html) */
     body::before, body::after {
       content: ""; position: fixed; z-index: -1;
       border-radius: 50%; filter: blur(80px);
@@ -78,7 +79,6 @@
       -webkit-backdrop-filter: blur(20px) saturate(150%);
       border-bottom: 1px solid var(--glass-border);
     }
-
     .nav-logo {
       display: flex; align-items: center; gap: 10px;
       font-size: 20px; font-weight: 900; color: var(--text);
@@ -110,53 +110,20 @@
       text-align: center;
       padding: 48px 0 56px;
     }
-
     .page-icon {
       width: 72px; height: 72px; border-radius: 20px;
       background: linear-gradient(135deg, rgba(228,140,58,0.14), rgba(95,169,55,0.14));
       border: 1px solid rgba(228,140,58,0.25);
       display: flex; align-items: center; justify-content: center;
-      font-size: 32px;
       margin: 0 auto 24px;
+      color: var(--orange);
     }
-
     .page-title {
       font-size: 40px; font-weight: 900; letter-spacing: -0.035em;
       margin-bottom: 12px;
     }
-
     .page-subtitle {
       font-size: 15px; color: var(--text2);
-    }
-
-    .contact-card {
-      background: var(--glass);
-      border: 1px solid var(--glass-border);
-      border-radius: 20px;
-      padding: 32px;
-      margin-bottom: 32px;
-      text-align: center;
-      backdrop-filter: blur(16px) saturate(140%);
-      -webkit-backdrop-filter: blur(16px) saturate(140%);
-    }
-
-    .contact-email {
-      font-size: 22px; font-weight: 800;
-      background: var(--gradient);
-      -webkit-background-clip: text;
-      background-clip: text;
-      -webkit-text-fill-color: transparent;
-      color: transparent;
-      text-decoration: none;
-      display: inline-block;
-      margin: 16px 0 12px;
-    }
-
-    .contact-email:hover { text-decoration: underline; }
-
-    .contact-note {
-      font-size: 13px; color: var(--text2);
-      margin-top: 8px;
     }
 
     .section-block {
@@ -172,11 +139,10 @@
     .section-title {
       font-size: 16px; font-weight: 800;
       color: var(--orange);
-      margin-bottom: 12px;
+      margin-bottom: 16px;
       display: flex; align-items: center; gap: 8px;
       letter-spacing: -0.015em;
     }
-
     .section-title::before {
       content: "";
       width: 3px; height: 16px;
@@ -190,10 +156,25 @@
       font-size: 14px; line-height: 1.75;
       color: var(--text2);
     }
-
     .section-text strong { color: var(--text); font-weight: 700; }
     .section-text a { color: var(--orange); text-decoration: none; font-weight: 600; }
     .section-text a:hover { text-decoration: underline; }
+
+    .info-row {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 16px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--glass-border);
+      font-size: 14px;
+    }
+    .info-row:last-child { border-bottom: none; }
+    .info-row .label { color: var(--text3); font-weight: 500; }
+    .info-row .value { color: var(--text); font-weight: 500; }
+    @media (max-width: 520px) {
+      .info-row { grid-template-columns: 1fr; gap: 2px; padding: 8px 0; }
+      .info-row .label { font-size: 12px; }
+    }
 
     footer {
       text-align: center;
@@ -208,8 +189,7 @@
     @media (max-width: 600px) {
       nav { padding: 16px 20px; }
       .page-title { font-size: 28px; }
-      .section-block, .contact-card { padding: 20px; }
-      .contact-email { font-size: 18px; }
+      .section-block { padding: 20px; }
     }
   </style>
 </head>
@@ -220,84 +200,92 @@
     <img class="dot" src="/app-icon.png" alt="">
     Drops
   </a>
-  <a class="nav-back" href="index.html">Zurück</a>
+  <a class="nav-back" href="/">Zurück</a>
 </nav>
 
 <main>
 
   <div class="page-header">
-    <div class="page-icon"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--orange)"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
-    <h1 class="page-title">Support</h1>
-    <p class="page-subtitle">Hilfe, Fragen und Feedback zu Drops</p>
-  </div>
-
-  <div class="contact-card">
-    <div style="font-size:14px; color:var(--text2); margin-bottom:6px;">Schreib uns eine Nachricht</div>
-    <a class="contact-email" href="mailto:contact@drops-app.de">contact@drops-app.de</a>
-    <div class="contact-note">Wir antworten in der Regel innerhalb von 24 Stunden.</div>
+    <div class="page-icon">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="9" y1="13" x2="15" y2="13"/>
+        <line x1="9" y1="17" x2="15" y2="17"/>
+      </svg>
+    </div>
+    <h1 class="page-title">Impressum</h1>
+    <p class="page-subtitle">Angaben gemäß § 5 TMG</p>
   </div>
 
   <div class="section-block">
-    <div class="section-title">Was ist Drops?</div>
+    <div class="section-title">Anbieter</div>
     <div class="section-text">
-      Drops ist eine App für spontane Treffen vor Ort. Du droppst eine Aktivität — Kaffee, Sport, Spaziergang, was auch immer — und wer in deiner Nähe Lust hat, kommt vorbei. Ohne endlose Chats, ohne Planning. Aktuell verfügbar in <strong>Berlin, Hamburg, München, Köln und Frankfurt</strong>.
+      <div class="info-row">
+        <div class="label">Name</div>
+        <div class="value">Dennis Gundermann</div>
+      </div>
+      <div class="info-row">
+        <div class="label">Anschrift</div>
+        <div class="value">[Straße, Hausnummer]<br>[PLZ, Ort]<br>Deutschland</div>
+      </div>
+      <div class="info-row">
+        <div class="label">E-Mail</div>
+        <div class="value"><a href="mailto:contact@drops-app.de">contact@drops-app.de</a></div>
+      </div>
+      <div class="info-row">
+        <div class="label">Website</div>
+        <div class="value"><a href="https://drops-app.de/">https://drops-app.de</a></div>
+      </div>
     </div>
   </div>
 
   <div class="section-block">
-    <div class="section-title">Wie melde ich mich an?</div>
+    <div class="section-title">Verantwortlich für den Inhalt nach § 18 Abs. 2 MStV</div>
     <div class="section-text">
-      Drops nutzt <strong>Sign in with Apple</strong>. Beim ersten Öffnen tippst du einmal auf den Apple-Button — kein Passwort, keine E-Mail-Bestätigung nötig. Du kannst über Apple's "E-Mail verbergen"-Funktion deine echte Adresse vor uns versteckt halten.
+      Dennis Gundermann<br>
+      [Straße, Hausnummer]<br>
+      [PLZ, Ort]
     </div>
   </div>
 
   <div class="section-block">
-    <div class="section-title">Wie funktioniert die Anwesenheits-Bestätigung?</div>
+    <div class="section-title">Streitschlichtung</div>
     <div class="section-text">
-      Wenn du einem Drop beitrittst und dort ankommst, bestätigt Bluetooth automatisch deine Anwesenheit (im Umkreis von ca. 20 Metern). Erst dann werden Detailinformationen wie der genaue Ort und andere Teilnehmer für dich freigeschaltet — und du bekommst Punkte für deinen Zuverlässigkeits-Score.
+      Die Europäische Kommission stellt eine Plattform zur Online-Streitbeilegung (OS) bereit:
+      <a href="https://ec.europa.eu/consumers/odr" target="_blank" rel="noopener">https://ec.europa.eu/consumers/odr</a>.<br><br>
+      Unsere E-Mail-Adresse findest du oben im Impressum. Wir sind <strong>nicht bereit oder verpflichtet</strong>, an Streitbeilegungsverfahren vor einer Verbraucherschlichtungsstelle teilzunehmen.
     </div>
   </div>
 
   <div class="section-block">
-    <div class="section-title">Wie kann ich mein Konto löschen?</div>
+    <div class="section-title">Haftung für Inhalte</div>
     <div class="section-text">
-      In der App: <strong>Einstellungen → Konto löschen</strong>. Alle deine Daten werden innerhalb von 30 Tagen vollständig entfernt — Profil, Drops, Verlauf, Freundschaften und Score. Nach der Löschung kannst du dich mit der gleichen Apple ID nicht sofort wieder registrieren (Cooldown).
+      Als Diensteanbieter sind wir gemäß § 7 Abs. 1 TMG für eigene Inhalte auf diesen Seiten nach den allgemeinen Gesetzen verantwortlich. Nach §§ 8 bis 10 TMG sind wir als Diensteanbieter jedoch nicht verpflichtet, übermittelte oder gespeicherte fremde Informationen zu überwachen oder nach Umständen zu forschen, die auf eine rechtswidrige Tätigkeit hinweisen.<br><br>
+      Verpflichtungen zur Entfernung oder Sperrung der Nutzung von Informationen nach den allgemeinen Gesetzen bleiben hiervon unberührt. Eine diesbezügliche Haftung ist jedoch erst ab dem Zeitpunkt der Kenntnis einer konkreten Rechtsverletzung möglich. Bei Bekanntwerden von entsprechenden Rechtsverletzungen werden wir diese Inhalte umgehend entfernen.
     </div>
   </div>
 
   <div class="section-block">
-    <div class="section-title">Standort, Bluetooth, Push — kann ich das deaktivieren?</div>
+    <div class="section-title">Haftung für Links</div>
     <div class="section-text">
-      Alle Berechtigungen kannst du jederzeit in den iOS-Einstellungen widerrufen (<strong>Einstellungen → Drops → Standort / Bluetooth / Mitteilungen</strong>). Beachte: ohne Standort und Bluetooth funktioniert die Kernfunktion (Drops in der Nähe + Anwesenheits-Bestätigung) nicht.
+      Unser Angebot enthält Links zu externen Webseiten Dritter, auf deren Inhalte wir keinen Einfluss haben. Deshalb können wir für diese fremden Inhalte auch keine Gewähr übernehmen. Für die Inhalte der verlinkten Seiten ist stets der jeweilige Anbieter oder Betreiber der Seiten verantwortlich.<br><br>
+      Die verlinkten Seiten wurden zum Zeitpunkt der Verlinkung auf mögliche Rechtsverstöße überprüft. Rechtswidrige Inhalte waren zum Zeitpunkt der Verlinkung nicht erkennbar. Eine permanente inhaltliche Kontrolle der verlinkten Seiten ist jedoch ohne konkrete Anhaltspunkte einer Rechtsverletzung nicht zumutbar. Bei Bekanntwerden von Rechtsverletzungen werden wir derartige Links umgehend entfernen.
     </div>
   </div>
 
   <div class="section-block">
-    <div class="section-title">Mein Drop wird mir nicht angezeigt</div>
+    <div class="section-title">Urheberrecht</div>
     <div class="section-text">
-      Häufige Ursachen:
-      <br>• <strong>GPS noch nicht ready:</strong> Beim ersten Öffnen kann der Standort 10–30 Sekunden brauchen. App kurz schließen und neu öffnen hilft.
-      <br>• <strong>Ausserhalb der Service-Region:</strong> Drops läuft aktuell nur in 5 Städten. Wenn du z.B. in Stuttgart bist, kommen keine Drops.
-      <br>• <strong>Filter aktiv:</strong> Im Tab "Umgebung" prüfen ob Geschlechts- oder Alterfilter aktiviert sind, die alles wegfiltern.
+      Die durch die Seitenbetreiber erstellten Inhalte und Werke auf diesen Seiten unterliegen dem deutschen Urheberrecht. Die Vervielfältigung, Bearbeitung, Verbreitung und jede Art der Verwertung außerhalb der Grenzen des Urheberrechtes bedürfen der schriftlichen Zustimmung des jeweiligen Autors bzw. Erstellers.<br><br>
+      Downloads und Kopien dieser Seite sind nur für den privaten, nicht kommerziellen Gebrauch gestattet. Soweit die Inhalte auf dieser Seite nicht vom Betreiber erstellt wurden, werden die Urheberrechte Dritter beachtet. Insbesondere werden Inhalte Dritter als solche gekennzeichnet. Sollte dir trotzdem eine Urheberrechtsverletzung auffallen, bitten wir um einen entsprechenden Hinweis. Bei Bekanntwerden von Rechtsverletzungen werden wir derartige Inhalte umgehend entfernen.
     </div>
   </div>
 
   <div class="section-block">
-    <div class="section-title">Bug melden / Feature vorschlagen</div>
+    <div class="section-title">Apple und App Store</div>
     <div class="section-text">
-      Schreib uns einfach eine Mail an <a href="mailto:contact@drops-app.de">contact@drops-app.de</a> mit:
-      <br>• Was ist passiert / Was möchtest du?
-      <br>• iPhone-Modell + iOS-Version (Settings → Allgemein → Info)
-      <br>• App-Version (in Drops: Einstellungen ganz unten)
-      <br>• Optional: Screenshot
-      <br><br>Wir lesen jede Mail.
-    </div>
-  </div>
-
-  <div class="section-block">
-    <div class="section-title">Datenschutz und Rechtliches</div>
-    <div class="section-text">
-      Unsere vollständige Datenschutzerklärung und das Impressum findest du auf <a href="datenschutz">drops-app.de/datenschutz</a>.
+      Apple, das Apple-Logo, iPhone und iOS sind Marken der Apple Inc., eingetragen in den USA und weiteren Ländern. App Store ist eine Dienstleistungsmarke der Apple Inc.
     </div>
   </div>
 
@@ -306,7 +294,7 @@
 <footer>
   <div>Drops · contact@drops-app.de</div>
   <div style="margin-top:8px;">
-    <a href="/">Startseite</a> · <a href="/datenschutz">Datenschutz</a> · <a href="/impressum">Impressum</a>
+    <a href="/">Startseite</a> · <a href="/datenschutz">Datenschutz</a> · <a href="/support">Support</a>
   </div>
 </footer>
 

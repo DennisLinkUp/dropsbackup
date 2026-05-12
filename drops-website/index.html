@@ -31,6 +31,33 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 
+  <!-- JSON-LD Structured Data — sorgt für Rich-Snippets bei Google
+       (App-Card mit Store-Link, Preis, Plattform sichtbar in der SERP). -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "MobileApplication",
+    "name": "Drops — Triff Leute",
+    "operatingSystem": "iOS",
+    "applicationCategory": "SocialNetworkingApplication",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "EUR"
+    },
+    "description": "Drops zeigt dir in Echtzeit, wer in deiner Nähe gerade spontan loszieht — Kaffee, Laufen, Feierabendbier. Kein Swipen, kein Gruppenchat. Live in München, Berlin, Hamburg, Köln, Frankfurt.",
+    "url": "https://drops-app.de/",
+    "image": "https://drops-app.de/app-icon.png",
+    "downloadUrl": "https://apps.apple.com/de/app/drops-triff-leute/id6762097493",
+    "publisher": {
+      "@type": "Organization",
+      "name": "Drops",
+      "url": "https://drops-app.de/"
+    },
+    "inLanguage": "de-DE"
+  }
+  </script>
+
   <!-- SVG-Icon-Sprite (Lucide-Stil) -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
@@ -355,6 +382,19 @@
     }
     .btn-ghost:hover { border-color: var(--border-strong); transform: translateY(-1px); }
 
+    /* Offizielles Apple-App-Store-Badge (SVG-Inline, Apple-konforme Brand-Guidelines) */
+    .appstore-badge {
+      display: inline-block;
+      width: 180px; height: 60px;
+      transition: transform 220ms var(--ease-spring), box-shadow 220ms;
+      border-radius: 10px;
+    }
+    .appstore-badge:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 28px rgba(0,0,0,0.18);
+    }
+    .appstore-badge svg { width: 100%; height: 100%; display: block; }
+
     .hero-meta {
       margin-top: 32px;
       display: flex; flex-wrap: wrap; gap: 24px;
@@ -380,6 +420,70 @@
       margin: 0 auto 60px;
       text-align: center;
       line-height: 1.55;
+    }
+
+    /* ── Screenshot-Gallery ──────────────────────────────────── */
+    .gallery {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 32px;
+      max-width: 980px;
+      margin: 0 auto;
+      align-items: end;
+    }
+    @media (max-width: 800px) {
+      .gallery {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+      }
+    }
+    @media (max-width: 520px) {
+      .gallery { gap: 10px; }
+    }
+    .shot {
+      position: relative;
+      aspect-ratio: 9 / 19.5;
+      border-radius: 32px;
+      overflow: hidden;
+      padding: 8px;
+      background: linear-gradient(160deg, #1a1d24 0%, #2a2e38 100%);
+      box-shadow:
+        0 24px 60px rgba(228,140,58,0.18),
+        0 40px 90px rgba(95,169,55,0.14),
+        0 0 0 1.5px rgba(255,255,255,0.10) inset;
+      transition: transform 360ms var(--ease-spring), box-shadow 360ms;
+    }
+    .shot:hover {
+      transform: translateY(-6px);
+      box-shadow:
+        0 32px 80px rgba(228,140,58,0.26),
+        0 48px 110px rgba(95,169,55,0.20),
+        0 0 0 1.5px rgba(255,255,255,0.12) inset;
+    }
+    .shot img {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      border-radius: 24px;
+      display: block;
+    }
+    /* Mittlerer Shot etwas größer für den klassischen "Hero-Phone"-Look */
+    .shot.center { transform: translateY(-20px) scale(1.08); z-index: 2; }
+    .shot.center:hover { transform: translateY(-26px) scale(1.10); }
+    @media (max-width: 800px) {
+      .shot.center { transform: scale(1.05); }
+      .shot.center:hover { transform: translateY(-4px) scale(1.05); }
+    }
+    .shot-caption {
+      position: absolute;
+      bottom: -32px; left: 0; right: 0;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-3);
+      letter-spacing: 0.02em;
+    }
+    @media (max-width: 520px) {
+      .shot-caption { display: none; }
     }
 
     /* ── Reveal-On-Scroll ────────────────────────────────────── */
@@ -715,9 +819,16 @@
         Drops zeigt dir in Echtzeit, wer in deiner Nähe gerade spontan loszieht — Kaffee, Laufen, Feierabendbier. Kein Swipen, kein Gruppenchat. Einfach hingehen.
       </p>
       <div class="hero-cta">
-        <a class="btn btn-primary" href="https://apps.apple.com/de/app/drops-triff-leute/id6762097493">
-          <svg class="icon-16" style="width:16px;height:16px"><use href="#i-download"/></svg>
-          Im App Store laden
+        <a class="appstore-badge" href="https://apps.apple.com/de/app/drops-triff-leute/id6762097493" aria-label="Im App Store laden">
+          <svg viewBox="0 0 180 60" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <rect width="180" height="60" rx="10" fill="#000"/>
+            <!-- Apple Logo -->
+            <path fill="#fff" d="M27.6 30.4c0-2.5 1.4-4.3 2.7-5.4-1-1.5-2.6-2.6-4.7-2.6-2 0-3.7 1.2-4.6 1.2-1 0-2.5-1.1-4.2-1.1-2.2 0-4.2 1.3-5.3 3.3-2.3 4-0.6 9.9 1.6 13.1 1.1 1.6 2.3 3.4 4 3.3 1.6-0.1 2.2-1.1 4.1-1.1 1.9 0 2.5 1.1 4.2 1 1.7 0 2.8-1.6 3.9-3.2 1.3-1.8 1.8-3.6 1.8-3.7-0-0-3.5-1.4-3.5-5.4M24.4 19.5c0.9-1.1 1.5-2.6 1.3-4.1-1.3 0.1-2.8 0.9-3.7 1.9-0.8 0.9-1.5 2.4-1.3 3.9 1.4 0.1 2.8-0.7 3.7-1.7"/>
+            <!-- Download on the -->
+            <text x="46" y="24" font-family="-apple-system, Helvetica Neue, Helvetica, sans-serif" font-size="9" fill="#fff">Lade im</text>
+            <!-- App Store -->
+            <text x="46" y="44" font-family="-apple-system, Helvetica Neue, Helvetica, sans-serif" font-size="20" font-weight="600" fill="#fff">App Store</text>
+          </svg>
         </a>
         <a class="btn btn-ghost" href="#how">
           Wie's funktioniert
@@ -751,6 +862,30 @@
         <div class="step">
           <h3>Treffen, weiterziehen</h3>
           <p>Wer da war, sieht den Drop in den vergangenen Begegnungen. Punkte für Zuverlässigkeit, Streak für Konstanz. Beim nächsten Mal wieder.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── App-Screenshots ──────────────────────────────────── -->
+  <section id="screens">
+    <div class="container">
+      <h2 class="section-title reveal">So sieht's aus</h2>
+      <p class="section-sub reveal">
+        Karte mit Live-Pins, Freundes-Übersicht, ein Profil ohne Bilderdatenbank. Drei Tabs, kein Algorithmen-Labyrinth.
+      </p>
+      <div class="gallery reveal">
+        <div class="shot">
+          <img src="/freunde.jpg" alt="Freunde-Tab in der Drops-App: Liste von Freunden in der Umgebung" loading="lazy">
+          <div class="shot-caption">Umgebung</div>
+        </div>
+        <div class="shot center">
+          <img src="/karte.jpg" alt="Karten-Tab in der Drops-App: Live-Karte mit aktiven Drops" loading="lazy">
+          <div class="shot-caption">Karte</div>
+        </div>
+        <div class="shot">
+          <img src="/profil.jpg" alt="Profil-Tab in der Drops-App: persönlicher Score und Verlauf" loading="lazy">
+          <div class="shot-caption">Profil</div>
         </div>
       </div>
     </div>
@@ -841,7 +976,7 @@
         </details>
         <details class="faq-item">
           <summary>Was kostet Drops?</summary>
-          <p>Die App ist kostenlos. Optional gibt's Drops+ mit Boost (eigener Drop wird priorisiert in der Karte), erweitertem Radius und „Wer hat geschaut" — alles freiwillig, kein Pay-to-Win bei den Kernfunktionen.</p>
+          <p>Die App ist komplett kostenlos. Keine Werbung, keine Tracker, keine Premium-Locks bei den Kernfunktionen. Du brauchst nur einen iPhone und Sign-in-with-Apple — fertig.</p>
         </details>
         <details class="faq-item">
           <summary>Wie kann ich mein Konto löschen?</summary>
@@ -857,9 +992,13 @@
       <div class="cta-block reveal">
         <h2>Bereit für den nächsten Drop?</h2>
         <p>Lade Drops und sei live dabei wenn der nächste in deiner Nähe passiert.</p>
-        <a class="btn btn-primary" href="https://apps.apple.com/de/app/drops-triff-leute/id6762097493">
-          <svg style="width:16px;height:16px"><use href="#i-download"/></svg>
-          Im App Store laden
+        <a class="appstore-badge" href="https://apps.apple.com/de/app/drops-triff-leute/id6762097493" aria-label="Im App Store laden">
+          <svg viewBox="0 0 180 60" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <rect width="180" height="60" rx="10" fill="#000"/>
+            <path fill="#fff" d="M27.6 30.4c0-2.5 1.4-4.3 2.7-5.4-1-1.5-2.6-2.6-4.7-2.6-2 0-3.7 1.2-4.6 1.2-1 0-2.5-1.1-4.2-1.1-2.2 0-4.2 1.3-5.3 3.3-2.3 4-0.6 9.9 1.6 13.1 1.1 1.6 2.3 3.4 4 3.3 1.6-0.1 2.2-1.1 4.1-1.1 1.9 0 2.5 1.1 4.2 1 1.7 0 2.8-1.6 3.9-3.2 1.3-1.8 1.8-3.6 1.8-3.7-0-0-3.5-1.4-3.5-5.4M24.4 19.5c0.9-1.1 1.5-2.6 1.3-4.1-1.3 0.1-2.8 0.9-3.7 1.9-0.8 0.9-1.5 2.4-1.3 3.9 1.4 0.1 2.8-0.7 3.7-1.7"/>
+            <text x="46" y="24" font-family="-apple-system, Helvetica Neue, Helvetica, sans-serif" font-size="9" fill="#fff">Lade im</text>
+            <text x="46" y="44" font-family="-apple-system, Helvetica Neue, Helvetica, sans-serif" font-size="20" font-weight="600" fill="#fff">App Store</text>
+          </svg>
         </a>
       </div>
     </div>
@@ -873,6 +1012,7 @@
     <div class="footer-links">
       <a href="/support">Support</a>
       <a href="/datenschutz">Datenschutz</a>
+      <a href="/impressum">Impressum</a>
       <a href="mailto:contact@drops-app.de">contact@drops-app.de</a>
     </div>
     <div class="copyright">
