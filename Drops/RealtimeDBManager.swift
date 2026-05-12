@@ -1089,10 +1089,39 @@ class RealtimeDBManager: ObservableObject {
         db.child("dropins").child(dropID).child(joinerID).removeValue()
     }
 
-    // MARK: - Drop canceln
-
+    // MARK: - Drop canceln (Soft-Delete)
+    //
+    // Vorher: `removeValue()` löschte den Drop komplett aus Firebase →
+    // keine History, der Admin sah „beendete" Drops nirgendwo mehr.
+    //
+    // Jetzt: Soft-Delete — `active: false` plus `endedAt`-Timestamp. Der
+    // Drop bleibt in `drops/` und ist im Admin-Panel mit Status „Beendet"
+    // sichtbar. Andere Clients (observeNearbyDrops) filtern eh schon auf
+    // `active: true`, also keine Map-Side-Effects.
+    //
+    // Joiner-seitige Auto-Leave funktioniert weiter, weil `dropExists`
+    // false zurückgibt sobald `active: false` ist — der Joiner-Auto-Leave
+    // räumt seinen eigenen `dropins/{id}/{joinerUID}`-Eintrag dann selbst
+    // auf (siehe Models.observeJoinedDropForCancellation). Wir clearen
+    // zusätzlich `joinRequests/{id}` proaktiv damit pending-Anfragen
+    // nicht ewig in der Inbox hängen bleiben.
+    //
+    // Späterer Cleanup: Cloud Function kann `drops/` periodisch auf
+    // `active: false && endedAt < now - 30d` filtern und löschen, um
+    // Storage-Wachstum zu begrenzen.
     func cancelDrop(dropID: String) {
-        db.child("drops").child(dropID).removeValue()
+        db.child("drops").child(dropID).updateChildValues([
+            "active":  false,
+            "endedAt": ServerValue.timestamp()
+        ])
+        // Pending Join-Requests dieses Drops aufräumen — sonst sehen
+        // Joiner ihre Anfrage „pending" obwohl der Drop weg ist.
+        db.child("joinRequests").child(dropID).removeValue()
+        // `dropins/{dropID}` lassen wir stehen — die Joiner räumen ihre
+        // Einträge via leaveActiveJoin selbst auf, sobald dropExists
+        // false zurückgibt. Wenn wir hier wegnehmen, würde die Auto-
+        // Leave-Logik der noch-anwesenden Joiner ihren GPS-Stream
+        // verlieren bevor sie informiert sind.
     }
 
     /// Aktualisiert die aktuelle Teilnehmerzahl (Host + Joiner) auf
