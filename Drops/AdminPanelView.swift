@@ -100,6 +100,40 @@ struct AdminPanelView: View {
         return base
     }
 
+    /// Nach Stadt gruppierte Nutzer für den Sort-Modus `.city`. Reihenfolge:
+    /// Städte alphabetisch (A→Z), Section „Ohne Stadt" (key == nil) immer
+    /// ans Ende. Innerhalb einer Stadt sind die User nach Name sortiert.
+    /// Verwendet `filteredUsers` als Quelle, damit Such-/Filter-Chips
+    /// auch innerhalb der Gruppen wirken.
+    private struct CityGroup {
+        let key: String?
+        let users: [AdminUserEntry]
+    }
+    private var groupedByCity: [CityGroup] {
+        var buckets: [String?: [AdminUserEntry]] = [:]
+        for u in filteredUsers {
+            buckets[u.cityName, default: []].append(u)
+        }
+        let withCity = buckets
+            .compactMap { (key, users) -> CityGroup? in
+                guard let k = key else { return nil }
+                let sorted = users.sorted {
+                    $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                }
+                return CityGroup(key: k, users: sorted)
+            }
+            .sorted { ($0.key ?? "") .localizedCaseInsensitiveCompare($1.key ?? "") == .orderedAscending }
+
+        var result = withCity
+        if let noCity = buckets[nil], !noCity.isEmpty {
+            let sorted = noCity.sorted {
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+            result.append(CityGroup(key: nil, users: sorted))
+        }
+        return result
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView(showsIndicators: false) {
@@ -348,6 +382,43 @@ struct AdminPanelView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.top, 40)
+                    } else if sortMode == .city {
+                        // Stadt-Modus: nach Stadt gruppieren, jede Gruppe
+                        // mit eigener Header-Zeile (Stadtname + Anzahl).
+                        // Innerhalb einer Gruppe nach Name sortiert. Nutzer
+                        // ohne Stadt landen in der Section „Ohne Stadt"
+                        // ganz am Ende.
+                        LazyVStack(spacing: 18) {
+                            ForEach(groupedByCity, id: \.key) { group in
+                                VStack(spacing: 10) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "mappin.circle.fill")
+                                            .font(.system(size: 14, weight: .semibold))
+                                            .foregroundColor(group.key == nil ? .textTertiary : .blue)
+                                        Text(group.key ?? "Ohne Stadt")
+                                            .font(.system(size: 15, weight: .bold))
+                                            .foregroundColor(.textPrimary)
+                                        Text("\(group.users.count)")
+                                            .font(.system(size: 11, weight: .bold))
+                                            .foregroundColor(.textSecondary)
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 2)
+                                            .background(Color.primary.opacity(0.08), in: Capsule())
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal, 4)
+
+                                    LazyVStack(spacing: 10) {
+                                        ForEach(group.users) { user in
+                                            AdminUserCard(user: user) {
+                                                selectedUser = user
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 20)
                     } else {
                         LazyVStack(spacing: 10) {
                             ForEach(filteredUsers) { user in
@@ -550,6 +621,12 @@ private struct AdminUserDetailSheet: View {
 
     @Environment(\.dismiss) private var dismiss
 
+    /// Drops dieses Users in Firebase. Wird beim Sheet-Open einmalig
+    /// geladen. Enthält nur Drops die noch in `drops/` liegen — vom
+    /// Host gecancelte Drops sind weg (cancelDrop ruft removeValue).
+    @State private var userDrops: [AdminUserDropEntry] = []
+    @State private var loadingDrops = true
+
     private var initials: String { String(user.name.prefix(1)).uppercased() }
     private var avatarColor: Color {
         user.isBanned ? .red : user.isAdmin ? .orange : .blue
@@ -620,6 +697,9 @@ private struct AdminUserDetailSheet: View {
                     .liquidGlass(cornerRadius: 18)
                     .padding(.horizontal, 20)
 
+                    // Drops dieses Users (aktiv + in DB verbliebene)
+                    userDropsSection
+
                     // Aktionen
                     VStack(spacing: 10) {
                         if let endDrop = onEndDrop {
@@ -671,7 +751,144 @@ private struct AdminUserDetailSheet: View {
                     }
                 }
             }
+            .onAppear { loadUserDrops() }
         }
+    }
+
+    private func loadUserDrops() {
+        loadingDrops = true
+        RealtimeDBManager.shared.adminFetchUserDrops(uid: user.id) { drops in
+            userDrops = drops
+            loadingDrops = false
+        }
+    }
+
+    /// Section „Erstellte Drops" — listet alle Drops die noch in `drops/`
+    /// liegen (live, abgelaufen, vom Admin beendet). Cancelled Drops
+    /// (Host hat „Drop beenden" gedrückt) sind via removeValue gelöscht
+    /// und tauchen hier NICHT auf — Hinweis-Footer macht das klar.
+    @ViewBuilder
+    private var userDropsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "list.bullet.rectangle.portrait")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.accentOrange)
+                    .frame(width: 18)
+                Text("Erstellte Drops")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.textTertiary)
+                    .kerning(0.4)
+                    .textCase(.uppercase)
+                Spacer()
+                if !loadingDrops {
+                    Text("\(userDrops.count)")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.textSecondary)
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(Color.primary.opacity(0.08), in: Capsule())
+                }
+            }
+            .padding(.horizontal, 20).padding(.bottom, 4)
+
+            VStack(spacing: 0) {
+                if loadingDrops {
+                    HStack {
+                        ProgressView().tint(.brand)
+                        Text("Lade Drops…")
+                            .font(.system(size: 13))
+                            .foregroundColor(.textSecondary)
+                    }
+                    .padding(.vertical, 16)
+                    .frame(maxWidth: .infinity)
+                } else if userDrops.isEmpty {
+                    HStack(spacing: 10) {
+                        Image(systemName: "tray")
+                            .font(.system(size: 16))
+                            .foregroundColor(.textTertiary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Keine Drops in Firebase")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.textPrimary)
+                            Text("User hat entweder keinen erstellt oder alle wurden via Cancel gelöscht.")
+                                .font(.system(size: 11))
+                                .foregroundColor(.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 14)
+                } else {
+                    ForEach(Array(userDrops.enumerated()), id: \.element.id) { idx, drop in
+                        userDropRow(drop)
+                        if idx < userDrops.count - 1 {
+                            Divider().padding(.leading, 52)
+                        }
+                    }
+                }
+            }
+            .liquidGlass(cornerRadius: 18)
+            .padding(.horizontal, 20)
+
+            // Footnote — Cancel-Drops sind weg, das soll klar sein.
+            Text("Hinweis: vom Host beendete Drops werden aus der DB gelöscht und erscheinen hier nicht.")
+                .font(.system(size: 11))
+                .foregroundColor(.textTertiary)
+                .padding(.horizontal, 24).padding(.top, 4)
+        }
+    }
+
+    @ViewBuilder
+    private func userDropRow(_ drop: AdminUserDropEntry) -> some View {
+        HStack(spacing: 12) {
+            Text(drop.emoji.isEmpty ? "📍" : drop.emoji)
+                .font(.system(size: 22))
+                .frame(width: 40, height: 40)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(drop.activityName)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.textPrimary)
+                        .lineLimit(1)
+                    statusBadge(for: drop.status)
+                }
+                HStack(spacing: 6) {
+                    if let created = drop.createdAt {
+                        Text(created.formatted(.dateTime.day().month().year().hour().minute()))
+                    } else {
+                        Text("—")
+                    }
+                    if let city = drop.cityName {
+                        Text("·"); Text(city)
+                    }
+                    Text("·")
+                    Text("\(drop.currentParticipants) " + (drop.currentParticipants == 1 ? "Teiln." : "Teiln."))
+                }
+                .font(.system(size: 11))
+                .foregroundColor(.textTertiary)
+                .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+    }
+
+    @ViewBuilder
+    private func statusBadge(for status: AdminUserDropEntry.Status) -> some View {
+        let (label, color, icon): (String, Color, String) = {
+            switch status {
+            case .live:    return ("Live",      .onlineGreen,  "dot.radiowaves.left.and.right")
+            case .expired: return ("Abgelaufen", .textTertiary, "clock.badge.xmark")
+            case .ended:   return ("Beendet",   .accentOrange, "xmark.circle.fill")
+            }
+        }()
+        HStack(spacing: 3) {
+            Image(systemName: icon).font(.system(size: 8, weight: .semibold))
+            Text(label).font(.system(size: 10, weight: .bold))
+        }
+        .foregroundColor(color)
+        .padding(.horizontal, 6).padding(.vertical, 2)
+        .background(color.opacity(0.12), in: Capsule())
     }
 
     @ViewBuilder
@@ -801,6 +1018,19 @@ private struct AdminUserCard: View {
                         Text(user.email)
                             .font(.system(size: 12))
                             .foregroundColor(.textSecondary)
+                    }
+                    // Stadt direkt sichtbar in der Listen-Zeile (vorher nur
+                    // im Detail-Sheet) — ein Pin-Icon + Stadtname als
+                    // Sub-Caption. Wenn keine Stadt gesetzt ist, "—" als
+                    // Hinweis statt komplett verstecken, damit der Admin
+                    // sieht "fehlt" statt "wo ist das Feld?".
+                    HStack(spacing: 4) {
+                        Image(systemName: "mappin.circle.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(user.cityName == nil ? .textTertiary : .blue)
+                        Text(user.cityName ?? "Ohne Stadt")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(user.cityName == nil ? .textTertiary : .textSecondary)
                     }
                 }
 
@@ -1101,7 +1331,6 @@ struct AdminDropsMonitorSheet: View {
     @State private var isLoading = true
     @State private var cityFilter: String = "Alle"
     @State private var pendingDelete: AdminDropEntry? = nil
-    @State private var deleteReason: String = ""
 
     private var cities: [String] {
         ["Alle"] + ServiceCities.all.map { $0.name } + ["—"]
@@ -1156,7 +1385,6 @@ struct AdminDropsMonitorSheet: View {
                             ForEach(filtered) { drop in
                                 AdminDropCard(drop: drop) {
                                     pendingDelete = drop
-                                    deleteReason = ""
                                 }
                             }
                         }
@@ -1179,28 +1407,22 @@ struct AdminDropsMonitorSheet: View {
                     }
                 }
             }
-            // Delete-Confirm Alert mit Grund
-            .alert("Drop entfernen?", isPresented: Binding(
-                get: { pendingDelete != nil },
-                set: { if !$0 { pendingDelete = nil } }
-            )) {
-                TextField("Grund (optional)", text: $deleteReason)
-                Button("Abbrechen", role: .cancel) { pendingDelete = nil }
-                Button("Löschen", role: .destructive) {
-                    if let drop = pendingDelete {
-                        RealtimeDBManager.shared.adminDeleteDrop(
-                            dropID: drop.id,
-                            hostUID: drop.hostUID,
-                            reason: deleteReason.isEmpty ? nil : deleteReason
-                        )
-                        drops.removeAll { $0.id == drop.id }
-                    }
+            // Reason-Picker-Sheet — vordefinierte Gründe als Chips +
+            // optionales Custom-Feld. Der Host bekommt dieselbe Nachricht
+            // beim nächsten App-Resume als Bestätigungs-Sheet.
+            .sheet(item: $pendingDelete) { drop in
+                AdminEndDropReasonSheet(drop: drop) { reason in
+                    RealtimeDBManager.shared.adminDeleteDrop(
+                        dropID: drop.id,
+                        hostUID: drop.hostUID,
+                        reason: reason
+                    )
+                    drops.removeAll { $0.id == drop.id }
+                    pendingDelete = nil
+                } onCancel: {
                     pendingDelete = nil
                 }
-            } message: {
-                Text("„\(pendingDelete?.emoji ?? "") \(pendingDelete?.activityName ?? "")" +
-                     " von \(pendingDelete?.hostName ?? "")" +
-                     "\" wird entfernt. Der Host erhält einen Hinweis.")
+                .presentationDetents([.medium, .large])
             }
         }
         .onAppear { loadDrops() }
@@ -1210,6 +1432,177 @@ struct AdminDropsMonitorSheet: View {
         RealtimeDBManager.shared.adminFetchActiveDrops { result in
             drops = result
             isLoading = false
+        }
+    }
+}
+
+// MARK: - Admin End-Drop Reason Sheet
+//
+// Vordefinierte Gründe + optional eigener Text — für den Live-Drops-
+// Monitor. Der gewählte Grund wird mit dem Drop-Lösch-Aufruf an
+// `adminDeleteDrop` durchgereicht und landet als `adminNotice` im
+// Firebase-Pfad des Hosts. Der Host bekommt die Nachricht beim
+// nächsten App-Resume als bestätigungspflichtiges Sheet.
+
+private struct AdminEndDropReasonSheet: View {
+    let drop: AdminDropEntry
+    let onConfirm: (String) -> Void
+    let onCancel: () -> Void
+
+    /// Liste vordefinierter Gründe. Reihenfolge nach geschätzter
+    /// Häufigkeit — die häufigsten oben, "Sonstiges" als Fallback.
+    private static let presetReasons: [(icon: String, title: String, color: Color)] = [
+        ("exclamationmark.triangle.fill", "Verstoß gegen Nutzungsbedingungen", .accentRed),
+        ("eye.slash.fill",                "Unangemessener Inhalt",            .accentRed),
+        ("person.crop.circle.badge.xmark","Belästigung gemeldet",              .accentRed),
+        ("mappin.slash",                  "Falsche Standortangabe",            .accentOrange),
+        ("megaphone.fill",                "Spam / Werbung",                    .accentOrange),
+        ("arrow.uturn.backward",          "Wiederholtes Fehlverhalten",        .accentOrange),
+        ("ellipsis.circle",               "Sonstiges (eigener Grund)",         .textSecondary),
+    ]
+
+    @State private var selectedIndex: Int? = nil
+    @State private var customText: String = ""
+    @Environment(\.dismiss) private var dismiss
+
+    private var isCustom: Bool { selectedIndex == Self.presetReasons.count - 1 }
+    private var canConfirm: Bool {
+        guard let idx = selectedIndex else { return false }
+        if idx == Self.presetReasons.count - 1 {
+            return !customText.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        return true
+    }
+    private var resolvedReason: String {
+        guard let idx = selectedIndex else { return "" }
+        if idx == Self.presetReasons.count - 1 {
+            return customText.trimmingCharacters(in: .whitespaces)
+        }
+        return Self.presetReasons[idx].title
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    // Drop-Vorschau
+                    HStack(spacing: 10) {
+                        Text(drop.emoji).font(.system(size: 28))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(drop.activityName)
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundColor(.textPrimary)
+                            Text("von \(drop.hostName)")
+                                .font(.system(size: 12))
+                                .foregroundColor(.textSecondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(14)
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 14))
+
+                    Text("Grund auswählen")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.textSecondary)
+                        .textCase(.uppercase)
+
+                    // Reason-Liste
+                    VStack(spacing: 8) {
+                        ForEach(Array(Self.presetReasons.enumerated()), id: \.offset) { idx, reason in
+                            Button {
+                                withAnimation(.spring(response: 0.25)) {
+                                    selectedIndex = idx
+                                    if idx != Self.presetReasons.count - 1 {
+                                        customText = ""
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: reason.icon)
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(reason.color)
+                                        .frame(width: 28)
+                                    Text(reason.title)
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(.textPrimary)
+                                        .multilineTextAlignment(.leading)
+                                    Spacer()
+                                    if selectedIndex == idx {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.system(size: 17))
+                                            .foregroundColor(reason.color)
+                                    } else {
+                                        Image(systemName: "circle")
+                                            .font(.system(size: 17))
+                                            .foregroundColor(.textTertiary.opacity(0.6))
+                                    }
+                                }
+                                .padding(.horizontal, 14).padding(.vertical, 12)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(selectedIndex == idx
+                                              ? reason.color.opacity(0.10)
+                                              : Color.primary.opacity(0.04))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(selectedIndex == idx
+                                                ? reason.color.opacity(0.5)
+                                                : Color.clear, lineWidth: 1.5)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    // Custom-Textfeld nur wenn „Sonstiges" gewählt
+                    if isCustom {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Eigener Grund")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.textSecondary)
+                            TextField("z.B. Inhalt nicht regelkonform", text: $customText, axis: .vertical)
+                                .lineLimit(2...4)
+                                .font(.system(size: 14))
+                                .padding(12)
+                                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+                        }
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+
+                    Spacer(minLength: 12)
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 6)
+                .padding(.bottom, 90) // Platz für Footer-Buttons
+            }
+            .navigationTitle("Drop entfernen")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Abbrechen") { onCancel() }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                Button {
+                    onConfirm(resolvedReason)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "trash.fill")
+                        Text("Entfernen & Host benachrichtigen")
+                    }
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(canConfirm ? Color.accentRed : Color.gray, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canConfirm)
+                .padding(.horizontal, 18)
+                .padding(.bottom, 14)
+                .background(Color.bgPrimary.opacity(0.92))
+            }
         }
     }
 }

@@ -1297,6 +1297,62 @@ class RealtimeDBManager: ObservableObject {
         }
     }
 
+    /// Holt alle Drops eines Users (sowohl aktive als auch inaktive/abgelaufene),
+    /// solange sie noch in Firebase liegen. Hinweis: `cancelDrop` löscht Drops
+    /// per `removeValue()` — diese sind nicht mehr abrufbar. Nur expiresAt-
+    /// abgelaufene Einträge bleiben passiv in der DB stehen und werden hier
+    /// zurückgegeben. Sortiert nach Erstellung (neueste zuerst).
+    func adminFetchUserDrops(uid: String, completion: @escaping ([AdminUserDropEntry]) -> Void) {
+        db.child("drops").observeSingleEvent(of: .value) { snap in
+            let now = Date()
+            var entries: [AdminUserDropEntry] = []
+            for child in snap.children {
+                guard let dropSnap = child as? DataSnapshot,
+                      let dict = dropSnap.value as? [String: Any],
+                      (dict["userID"] as? String) == uid
+                else { continue }
+                let active   = dict["active"]       as? Bool   ?? false
+                let emoji    = dict["emoji"]        as? String ?? ""
+                let activity = dict["activityName"] as? String ?? "Drop"
+                let lat      = dict["lat"]          as? Double
+                let lng      = dict["lng"]          as? Double
+                let tsMs     = dict["timestamp"]    as? Double
+                let createdAt = tsMs.map { Date(timeIntervalSince1970: $0 / 1000) }
+                let expiresTs = dict["expiresAt"]   as? Double
+                let expiresAt = expiresTs.map { Date(timeIntervalSince1970: $0) }
+                let participants = dict["currentParticipants"] as? Int ?? 1
+
+                // Status ableiten
+                let status: AdminUserDropEntry.Status
+                if !active {
+                    status = .ended
+                } else if let exp = expiresAt, now > exp {
+                    status = .expired
+                } else {
+                    status = .live
+                }
+
+                let city: String? = {
+                    guard let lat = lat, let lng = lng else { return nil }
+                    return ServiceCities.city(for: CLLocationCoordinate2D(latitude: lat, longitude: lng))?.name
+                }()
+
+                entries.append(AdminUserDropEntry(
+                    id: dropSnap.key,
+                    emoji: emoji,
+                    activityName: activity,
+                    status: status,
+                    createdAt: createdAt,
+                    expiresAt: expiresAt,
+                    cityName: city,
+                    currentParticipants: participants
+                ))
+            }
+            entries.sort { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }
+            DispatchQueue.main.async { completion(entries) }
+        }
+    }
+
     /// Einzelnen Drop eines Nutzers sofort beenden (Admin)
     func adminEndDrop(dropID: String, completion: (() -> Void)? = nil) {
         db.child("drops").child(dropID).updateChildValues(["active": false]) { _, _ in
@@ -1960,6 +2016,25 @@ struct AdminDropEntry: Identifiable {
         let coord = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
         return ServiceCities.city(for: coord)?.name ?? "—"
     }
+}
+
+/// Schmaler Drop-Eintrag für die User-Detail-Sicht im Admin-Panel.
+/// Hat zusätzlich einen `status` (live / abgelaufen / beendet) damit
+/// der Admin auf einen Blick sieht in welchem Zustand der Drop ist.
+struct AdminUserDropEntry: Identifiable {
+    enum Status {
+        case live      // active: true und expiresAt > now
+        case expired   // active: true aber expiresAt <= now (nicht aufgeräumt)
+        case ended     // active: false (z.B. vom Admin via adminEndDrop beendet)
+    }
+    let id: String                // Firebase-Drop-Key
+    let emoji: String
+    let activityName: String
+    let status: Status
+    let createdAt: Date?
+    let expiresAt: Date?
+    let cityName: String?
+    let currentParticipants: Int  // Host + Joiner
 }
 
 // MARK: - Live-Joiner-Info aus dropins/{dropID}/{joinerID}
