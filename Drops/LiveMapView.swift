@@ -120,11 +120,28 @@ struct LiveMapView: View {
     /// Eigener 8-Char BLE-Token — wird explizit an DropMapPin übergeben (nicht per @EnvironmentObject,
     /// da Map-Annotation-Content nicht zuverlässig den SwiftUI-Environment erbt).
     var myPinToken: String {
-        String(store.currentUser.id.uuidString.replacingOccurrences(of: "-", with: "").prefix(8))
+        // Konsistent mit dem AppStore.myBLEToken (firebaseUID-prefix).
+        // Vorher nutzte das die lokale UUID — das hat NICHT mit den
+        // BLE-confirmedTokens gematched, weil die Joiner ihren BLE-Token
+        // aus firebaseUID ableiten. UI-Filter wie "p.token == myToken"
+        // sahen dann nie eine Übereinstimmung → Joiner blieb auf
+        // "Unterwegs" obwohl BLE bestätigt hatte.
+        store.myBLEToken
     }
 
     var filteredAnnotations: [MapAnnotationItem] {
-        let base = store.allMapAnnotations
+        // Volle Stranger-Drops von der Karte entfernen — sie sollen nicht
+        // mehr beitretbar erscheinen. Im Umgebungstab bleiben sie aber
+        // sichtbar (dort als „Voll" markiert), damit User sehen dass es
+        // den Drop gibt. Eigene Drops und der gerade gejointe Drop bleiben
+        // immer auf der Karte (sonst verschwindet er einem unter den
+        // Füßen während man hinläuft).
+        let joinedDropID = store.activeJoinedDropID?.uuidString
+        let base = store.allMapAnnotations.filter { ann in
+            guard ann.type == .stranger else { return true }
+            if ann.id.uuidString == joinedDropID { return true }
+            return !ann.isFull
+        }
         // Der „Nur weiblich"-Filter läuft jetzt im Umgebungs-Tab, nicht mehr hier.
         guard selectedActivity != "Alle" else { return base }
         return base.filter { selectedActivity.contains($0.emoji) }
@@ -174,7 +191,13 @@ struct LiveMapView: View {
                         Annotation("", coordinate: item.coordinate, anchor: .center) {
                             DropMapPin(
                                 item: item,
-                                isJoined: joinedIDs.contains(item.id),
+                                // Store ist Source of Truth: deckt Pending + Accepted
+                                // ab, auch nach Tab-Wechsel oder App-Restart. Der
+                                // lokale `joinedIDs`-Set ist nur für sofortige UI-
+                                // Reaktion direkt nach dem Tap auf "Ich komme vorbei".
+                                isJoined: joinedIDs.contains(item.id)
+                                    || store.hasJoinedDrop(dropID: item.id)
+                                    || store.activeJoinedDropID == item.id,
                                 onTap: { selectedItem = item },
                                 myToken: myPinToken,
                                 confirmedTokens: store.bluetoothMeetup.confirmedTokens
@@ -255,6 +278,37 @@ struct LiveMapView: View {
             }
 
             VStack {
+                // ── Activity-Indikator (links oben) ──────────────────────
+                // Zeigt wie viele Drops in der gefilterten Sicht sichtbar
+                // sind. Hilft dem User einzuschätzen ob's gerade „los ist"
+                // ohne erst die Karte abzuscannen. Erscheint nur wenn ≥1
+                // Drop sichtbar ist — bei Null würde die Empty-Map sich
+                // selbst erklären.
+                HStack {
+                    let count = filteredAnnotations.filter {
+                        $0.type == .stranger || $0.type == .friend || $0.type == .myDrop
+                    }.count
+                    if count > 0 {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(Color.onlineGreen)
+                                .frame(width: 6, height: 6)
+                            Text("\(count) \(count == 1 ? "Drop" : "Drops") in der Nähe")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.textPrimary)
+                        }
+                        .padding(.horizontal, 11).padding(.vertical, 7)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .overlay(
+                            Capsule().stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
+                        )
+                        .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
+                        .padding(.leading, 16)
+                    }
+                    Spacer()
+                }
+                .padding(.top, 8)
+
                 // ── Power-Hour Countdown-Pille (oben) ────────────────────
                 // Auto-updates jede Minute via TimelineView. Sichtbar in
                 // zwei Phasen:
@@ -265,7 +319,7 @@ struct LiveMapView: View {
                     if let cd = AppStore.powerHourCountdown(at: ctx.date) {
                         PowerHourCountdownPill(countdown: cd)
                             .padding(.horizontal, 16)
-                            .padding(.top, 8)
+                            .padding(.top, 4)
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
                 }
@@ -288,41 +342,25 @@ struct LiveMapView: View {
                         Button {
                             store.selectedTab = .create
                         } label: {
-                            HStack(spacing: 12) {
-                                // Bolt im weißen Glas-Kreis links
+                            // Schmaler Single-Line-Pill — selbe Höhe wie der
+                            // Recenter-Button daneben (16pt Icon + 13pt
+                            // Padding = 42pt). Vorher: zwei-zeilige Wide-Pill
+                            // mit 32pt-Bolt-Kreis, wirkte deutlich gewichtiger
+                            // als der schlanke Glass-Circle daneben.
+                            HStack(spacing: 7) {
                                 Image(systemName: "bolt.fill")
-                                    .font(.system(size: 16, weight: .bold))
-                                    .foregroundColor(.white)
-                                    .frame(width: 32, height: 32)
-                                    .background(
-                                        Circle().fill(Color.white.opacity(0.18))
-                                    )
-
-                                // Power-Hour ändert NUR Titel + Punktzahl —
-                                // Bonus wird in store.currentBoostBonus
-                                // berechnet (15 normal, 25 in Power-Hour).
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(store.isPowerHourActive
-                                         ? "Power-Hour aktiv"
-                                         : "Boost-Phase aktiv")
-                                        .font(.system(size: 14, weight: .bold))
-                                        .foregroundColor(.white)
-                                    Text("+\(store.currentBoostBonus) Punkte für jeden Drop, den du jetzt erstellst")
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.white.opacity(0.88))
-                                        .lineLimit(2)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                        .multilineTextAlignment(.leading)
-                                }
-
-                                Spacer(minLength: 0)
+                                    .font(.system(size: 13, weight: .bold))
+                                Text(store.isPowerHourActive
+                                     ? "Power-Hour · +\(store.currentBoostBonus) Pkt"
+                                     : "Boost aktiv · +\(store.currentBoostBonus) Pkt")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.85)
                             }
+                            .foregroundColor(.white)
                             .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
+                            .padding(.vertical, 12)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            // Capsule statt RoundedRectangle → maximal runde
-                            // Ecken (Radius = Hälfte der Höhe), so wie die
-                            // iOS 26 Tab Bar es auch macht.
                             .background(
                                 Capsule().fill(
                                     LinearGradient(
@@ -360,23 +398,43 @@ struct LiveMapView: View {
             }
         }
         .sheet(item: $selectedItem) { item in
-            DropJoinSheet(item: item, isJoined: joinedIDs.contains(item.id)) {
-                joinedIDs.insert(item.id)
-                store.sendJoinRequest(to: item)   // Request statt Direkt-Join
-            }
-            .environmentObject(store)
-            .presentationDetents([.fraction(0.45)])
-            .presentationDragIndicator(.hidden)
-            .sheetBackground()
-        }
-        // Host: eingehende Beitrittsanfrage
-        .sheet(item: $store.activeIncomingRequest) { req in
-            IncomingJoinRequestSheet(request: req)
+            // Joiner-Pin: das ist KEIN Drop, sondern eine Person die zu
+            // unserem Drop unterwegs ist. DropJoinSheet würde fälschlich
+            // "Ich komme vorbei" anzeigen — wir routen stattdessen auf
+            // eine kompakte Info-Ansicht ohne CTA.
+            if item.type == .joiner {
+                JoinerLiveInfoSheet(item: item)
+                    .environmentObject(store)
+                    .presentationDetents([.fraction(0.4)])
+                    .presentationDragIndicator(.visible)
+                    .sheetBackground()
+            } else {
+                // isJoined deckt drei Quellen ab:
+                //  - lokal: gerade eben angetappt (joinedIDs)
+                //  - Pending/Accepted Request im Store
+                //  - bereits aktiv gejoinder Drop (activeJoinedDropID)
+                // Sonst wäre der Button "Ich komme vorbei" auch dann aktiv,
+                // wenn der User den Drop schon gejoinder hat und nochmal tappt.
+                DropJoinSheet(
+                    item: item,
+                    isJoined: joinedIDs.contains(item.id)
+                        || store.hasJoinedDrop(dropID: item.id)
+                        || store.activeJoinedDropID == item.id
+                ) {
+                    joinedIDs.insert(item.id)
+                    store.sendJoinRequest(to: item)   // Request ohne Message — Map-Pfad
+                }
                 .environmentObject(store)
-                .presentationDetents([.fraction(0.52)])
-                .presentationDragIndicator(.visible)
+                .presentationDetents([.fraction(0.55)])
+                .presentationDragIndicator(.hidden)
                 .sheetBackground()
+            }
         }
+        // Hinweis: das `IncomingJoinRequestSheet` (Host-seitig) ist
+        // auf MainTabView-Ebene angehängt, damit es egal in welchem
+        // Tab der Host gerade ist auftaucht. Wäre es nur hier, würde
+        // bei Host im Profil/Umgebung gar kein Pop-up kommen — nur
+        // die Push-Notification.
         .sheet(isPresented: $showSafety) {
             SafetySheetView().environmentObject(store)
         }
@@ -602,14 +660,54 @@ struct IncomingJoinRequestSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             // ── Anfrage-Header ─────────────────────────────────────
-            VStack(spacing: 6) {
-                Text("Beitrittsanfrage")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.secondary)
+            // "Beitrittsanfrage" als Brand-Capsule statt nur grau-Text —
+            // sticht auf hellem Sheet-Background sofort raus, der User
+            // erkennt den Kontext ohne zu lesen.
+            VStack(spacing: 10) {
+                HStack(spacing: 6) {
+                    Image(systemName: "person.fill.badge.plus")
+                        .font(.system(size: 11, weight: .bold))
+                    Text("Beitrittsanfrage")
+                        .font(.system(size: 12, weight: .heavy))
+                        .tracking(0.4)
+                        .textCase(.uppercase)
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(
+                    Capsule().fill(
+                        LinearGradient(
+                            colors: [Color.brand, Color.accentOrange],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                    )
+                    .shadow(color: Color.brand.opacity(0.35), radius: 8, y: 2)
+                )
+
                 Text(store.activeDrops.first?.activity.name ?? "Dein Drop")
-                    .font(.system(size: 17, weight: .bold))
+                    .font(.system(size: 19, weight: .bold))
+                    .foregroundColor(.textPrimary)
+
+                // Hinweis wenn mehrere Anfragen in der Queue stehen — User
+                // weiß dann dass nach Annehmen/Ablehnen direkt das nächste
+                // Sheet kommt. Vorher: keine Visualisierung der Queue.
+                let waitingCount = max(0, store.pendingJoinRequests.count - 1)
+                if waitingCount > 0 {
+                    HStack(spacing: 5) {
+                        Image(systemName: "person.2.badge.gearshape.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Noch \(waitingCount) weitere Anfrage\(waitingCount == 1 ? "" : "n")")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundColor(.accentOrange)
+                    .padding(.horizontal, 9).padding(.vertical, 4)
+                    .background(Color.accentOrange.opacity(0.12), in: Capsule())
+                    .padding(.top, 2)
+                }
             }
-            .padding(.top, 20).padding(.bottom, 24)
+            // Mehr Top-Padding — sonst landet die Brand-Capsule unter dem
+            // Sheet-Drag-Indicator und ist halb überlappt/abgeschnitten.
+            .padding(.top, 36).padding(.bottom, 24)
 
             // ── Profil ────────────────────────────────────────────
             VStack(spacing: 12) {
@@ -687,6 +785,28 @@ struct IncomingJoinRequestSheet: View {
                     }
                     .foregroundStyle(.secondary)
                 }
+
+                // Joiner-Nachricht — optional, in Sprechblasen-Stil damit
+                // der Host sofort sieht dass es Original-Worte vom Joiner sind.
+                if let msg = request.joinerMessage,
+                   !msg.trimmingCharacters(in: .whitespaces).isEmpty {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "quote.bubble.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(.brand)
+                            .padding(.top, 2)
+                        Text(msg)
+                            .font(.system(size: 13))
+                            .foregroundColor(.textPrimary)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+                    .background(Color.brand.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal, 24)
+                    .padding(.top, 12)
+                }
             }
             .padding(.bottom, 32)
 
@@ -736,6 +856,9 @@ struct DropJoinSheet: View {
     @AppStorage("appLanguage") private var appLanguage = "de"
     let item: MapAnnotationItem
     var isJoined: Bool
+    /// Wird bei Tap auf "Ich komme vorbei" gefeuert — Map-Pfad sendet
+    /// die Anfrage ohne Nachricht; den Compose-Flow gibt's nur einmal,
+    /// im FeedView-JoinConfirmSheet (DropJoinSheet ist primär Info-Sheet).
     let onJoin: () -> Void
 
     @State private var joining = false
@@ -1101,14 +1224,30 @@ struct DropJoinSheet: View {
                     .padding(.horizontal, 18)
                 }
                 .padding(.bottom, 24)
-                .alert(tr("drop.confirm_end_title"), isPresented: $showCancelAlert) {
-                    Button(tr("common.cancel"), role: .cancel) {}
-                    Button(tr("common.done"), role: .destructive) {
+                .sheet(isPresented: $showCancelAlert) {
+                    EndDropSheet(
+                        activityEmoji: item.emoji,
+                        activityName: item.activity,
+                        participantCount: item.participants.count,
+                        elapsedSeconds: Date().timeIntervalSince(item.createdAt)
+                    ) {
                         store.cancelDrop(id: item.id)
+                        showCancelAlert = false
                         dismiss()
+                    } onCancel: {
+                        showCancelAlert = false
                     }
-                } message: {
-                    Text(tr("drop.end_drop_message"))
+                    // Sheet kompakter — vorher 0.82 (zu groß auf normalen
+                    // iPhones, viel Leerraum). 0.62 reicht für das straffere
+                    // Layout (kleineres Hero-Visual, engere Spacings) ohne
+                    // zu scrollen.
+                    .presentationDetents([.fraction(0.62)])
+                    // Drop-Beenden-Warnung darf nicht versehentlich
+                    // weggewischt werden — User muss bewusst Beenden
+                    // oder Abbrechen tippen.
+                    .presentationDragIndicator(.hidden)
+                    .interactiveDismissDisabled()
+                    .sheetBackground()
                 }
                 .alert("Live Activity deaktiviert", isPresented: $store.showLiveActivitySettingsHint) {
                     Button("Einstellungen öffnen") {
@@ -1139,66 +1278,91 @@ struct DropJoinSheet: View {
                 .padding(.horizontal, 18)
                 .padding(.bottom, 24)
             } else {
-                Button {
-                    guard !isJoined && !joining else { return }
-                    joining = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
-                        joining = false
-                        onJoin()
-                        dismiss()
-                        // Sofort auf den Aktiv-Tab wechseln
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            store.selectedTab = .create
+                // Map-Pfad: schickt direkt ohne Compose-UI. Wer eine
+                // Nachricht mitgeben will, geht über den Umgebungs-Tab
+                // (FeedView → JoinConfirmSheet mit Quick-Chips + freier
+                // Eingabe). Doppelte Compose-UI verwirrt nur.
+                //
+                // TimelineView refresht den Cooldown-Countdown sekündlich
+                // — sonst zeigt der Button "X Min" stale bis das nächste
+                // Sheet-Update kommt. Wichtig: nach Verlassen muss der User
+                // sehen wie der Cooldown abläuft, sonst probiert er es
+                // wieder und wieder.
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    let cooldown = store.joinCooldownRemaining(dropID: item.id)
+                    let inCooldown = cooldown > 0 && !isJoined
+                    Button {
+                        guard !isJoined && !joining && !inCooldown else { return }
+                        joining = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                            joining = false
+                            onJoin()
+                            dismiss()
+                            // Sofort auf den Aktiv-Tab wechseln
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                store.selectedTab = .create
+                            }
                         }
-                    }
-                } label: {
-                    let isPending = store.myJoinRequestStatus == "pending" && isJoined
-                    let isDeclined = store.myJoinRequestStatus == "declined" && isJoined
-                    ZStack {
-                        if joining || isPending {
-                            HStack(spacing: 8) {
-                                ProgressView().tint(.white).scaleEffect(0.85)
-                                Text(isPending ? "Warte auf Bestätigung…" : "")
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundColor(.white.opacity(0.85))
+                    } label: {
+                        let isPending = store.myJoinRequestStatus == "pending" && isJoined
+                        let isDeclined = store.myJoinRequestStatus == "declined" && isJoined
+                        ZStack {
+                            if inCooldown {
+                                let mins = Int(cooldown / 60) + 1
+                                HStack(spacing: 8) {
+                                    Image(systemName: "clock.fill").font(.system(size: 15))
+                                    Text("Noch \(mins) Min Cooldown")
+                                        .font(.system(size: 15, weight: .semibold))
+                                }
+                                .foregroundColor(.white.opacity(0.9))
+                            } else if joining || isPending {
+                                HStack(spacing: 8) {
+                                    ProgressView().tint(.white).scaleEffect(0.85)
+                                    Text(isPending ? "Warte auf Bestätigung…" : "")
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(.white.opacity(0.85))
+                                }
+                            } else if isDeclined {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "xmark.circle.fill").font(.system(size: 17))
+                                    Text("Nicht bestätigt").font(.system(size: 16, weight: .bold))
+                                }
+                                .foregroundColor(.white)
+                            } else if isJoined {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "checkmark.circle.fill").font(.system(size: 17))
+                                    Text(tr("drop.im_in")).font(.system(size: 16, weight: .bold))
+                                }
+                                .foregroundColor(.white)
+                            } else {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "figure.walk.arrival").font(.system(size: 17))
+                                    Text(tr("drop.coming_by")).font(.system(size: 16, weight: .bold))
+                                }
+                                .foregroundColor(.white)
                             }
-                        } else if isDeclined {
-                            HStack(spacing: 8) {
-                                Image(systemName: "xmark.circle.fill").font(.system(size: 17))
-                                Text("Nicht bestätigt").font(.system(size: 16, weight: .bold))
-                            }
-                            .foregroundColor(.white)
-                        } else if isJoined {
-                            HStack(spacing: 8) {
-                                Image(systemName: "checkmark.circle.fill").font(.system(size: 17))
-                                Text(tr("drop.im_in")).font(.system(size: 16, weight: .bold))
-                            }
-                            .foregroundColor(.white)
-                        } else {
-                            HStack(spacing: 8) {
-                                Image(systemName: "figure.walk.arrival").font(.system(size: 17))
-                                Text(tr("drop.coming_by")).font(.system(size: 16, weight: .bold))
-                            }
-                            .foregroundColor(.white)
                         }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(
-                        Capsule().fill(
-                            isDeclined ? Color.red.opacity(0.7) :
-                            isJoined   ? Color.onlineGreen :
-                            joining    ? accentColor.opacity(0.7) : accentColor
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(
+                            Capsule().fill(
+                                inCooldown ? Color.textTertiary :
+                                isDeclined ? Color.red.opacity(0.7) :
+                                isJoined   ? Color.onlineGreen :
+                                joining    ? accentColor.opacity(0.7) : accentColor
+                            )
+                            .shadow(color: (inCooldown ? Color.clear : accentColor).opacity(0.4), radius: 12, y: 5)
                         )
-                        .shadow(color: accentColor.opacity(0.4), radius: 12, y: 5)
-                    )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isJoined || joining || inCooldown)
+                    .animation(.spring(response: 0.3), value: isJoined)
+                    .animation(.spring(response: 0.3), value: joining)
+                    .animation(.spring(response: 0.3), value: inCooldown)
+                    let _ = ctx.date  // hält die TimelineView am Tickern
                 }
-                .buttonStyle(.plain)
-                .disabled(isJoined || joining)
                 .padding(.horizontal, 18)
                 .padding(.bottom, 24)
-                .animation(.spring(response: 0.3), value: isJoined)
-                .animation(.spring(response: 0.3), value: joining)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1536,6 +1700,7 @@ struct ActiveDropTabView: View {
     @State private var now = Date()
     @State private var arrivedAnimated = false
     @State private var showShareSheet = false
+    @State private var showRouteSheet = false
     @State private var lastExtendedAt: Date? = nil
     @State private var lastExtendCooldownSecs: Int = 0  // Hälfte der gewählten Verlängerung
 
@@ -1554,8 +1719,14 @@ struct ActiveDropTabView: View {
     var isOwnDrop: Bool { item.type == .myDrop }
 
     /// Eigener Token (8-stellig)
+    /// Konsistent mit AppStore.myBLEToken (firebaseUID-prefix). Vorher nutzte
+    /// dies die lokale UUID — das hat NICHT mit den BLE-confirmedTokens
+    /// gematched, weil Joiner ihren BLE-Token aus firebaseUID ableiten.
+    /// Folge: UI-Filter wie `p.token == myToken` sahen nie eine
+    /// Übereinstimmung → Joiner blieb auf "Unterwegs", obwohl BLE bestätigt
+    /// hatte.
     var myToken: String {
-        String(store.currentUser.id.uuidString.replacingOccurrences(of: "-", with: "").prefix(8))
+        store.myBLEToken
     }
 
     /// Schwelle in Metern, ab der GPS-Nähe als „vor Ort" gilt.
@@ -1604,7 +1775,12 @@ struct ActiveDropTabView: View {
         DropParticipant(name: item.name, emoji: item.emoji, token: "__host__")
     }
 
-    /// Physisch bestätigte Teilnehmer (BLE + Host immer "vor Ort" bei fremden Drops).
+    /// Physisch bestätigte Teilnehmer (BLE-bestätigt ODER der Host bei
+    /// fremden Drops, wenn der Joiner noch keine participants-Liste hat).
+    /// Self (das eigene Token) zählt nur als „vor Ort", wenn `isArrived`
+    /// wirklich greift — sonst stand der Host bei einem Pin-Drop oder
+    /// der Joiner kurz nach Beitritt fälschlich auf „vor Ort", obwohl
+    /// er noch unterwegs war.
     var confirmedHere: [DropParticipant] {
         if item.participants.isEmpty && !isOwnDrop {
             // Host ist immer vor Ort — ggf. weitere BLE-bestätigte einfügen
@@ -1619,11 +1795,16 @@ struct ActiveDropTabView: View {
             return result
         }
         return item.participants.filter { p in
-            p.token == myToken || store.bluetoothMeetup.confirmedTokens.contains(p.token)
+            // Self: nur wenn physisch angekommen (GPS ≤ 20 m oder BLE).
+            // Andere Teilnehmer: nur wenn BLE bestätigt hat.
+            if p.token == myToken { return isArrived }
+            return store.bluetoothMeetup.confirmedTokens.contains(p.token)
         }
     }
 
     /// Unterwegs (beigetreten, aber noch nicht per BLE bestätigt).
+    /// Self landet hier solange `isArrived` false ist — auch der Host,
+    /// wenn er einen Pin-Drop fern vom aktuellen Standort erstellt hat.
     var onTheWay: [DropParticipant] {
         if item.participants.isEmpty && !isOwnDrop {
             // Aktueller User ist unterwegs bis BLE bestätigt
@@ -1633,7 +1814,10 @@ struct ActiveDropTabView: View {
                                     token: myToken)]
         }
         return item.participants.filter { p in
-            p.token != myToken && !store.bluetoothMeetup.confirmedTokens.contains(p.token)
+            // Self: in „Unterwegs" wenn noch nicht angekommen.
+            // Andere: in „Unterwegs" wenn BLE noch nicht bestätigt hat.
+            if p.token == myToken { return !isArrived }
+            return !store.bluetoothMeetup.confirmedTokens.contains(p.token)
         }
     }
 
@@ -1689,7 +1873,15 @@ struct ActiveDropTabView: View {
                     // Top-Spacer für Safe Area
                     Color.clear.frame(height: 16)
 
-                    if isArrived {
+                    // Host bekommt IMMER die arrivedContent-View — auch wenn
+                    // er physisch noch nicht am Drop ist (Drop wurde an einem
+                    // Pin-Ort statt am aktuellen Standort erstellt). Vorher
+                    // landete der Host in der Joiner-„Unterwegs"-View, die
+                    // dann „Dein Host" zeigte (unsinnig — er IST der Host)
+                    // und ihn weder bei Vor-Ort noch Unterwegs auflistete.
+                    // Die Banner-Zeile in arrivedContent zeigt dem Host
+                    // jetzt prominent „Du bist unterwegs zu deinem Drop".
+                    if isOwnDrop || isArrived {
                         arrivedContent
                     } else {
                         onTheWayContent
@@ -1706,11 +1898,39 @@ struct ActiveDropTabView: View {
         .onChange(of: isArrived) { _, arrived in
             if arrived { withAnimation(.spring(response: 0.5)) { arrivedAnimated = true } }
         }
-        .alert(tr("drop.confirm_end_title"), isPresented: $showCancelAlert) {
-            Button(tr("common.cancel"), role: .cancel) {}
-            Button(tr("common.done"), role: .destructive) { store.cancelDrop(id: item.id) }
-        } message: {
-            Text(tr("drop.end_drop_message"))
+        .sheet(isPresented: $showCancelAlert) {
+            EndDropSheet(
+                activityEmoji: item.emoji,
+                activityName: item.activity,
+                participantCount: item.participants.count,
+                elapsedSeconds: Date().timeIntervalSince(item.createdAt)
+            ) {
+                store.cancelDrop(id: item.id)
+                showCancelAlert = false
+            } onCancel: {
+                showCancelAlert = false
+            }
+            // Sheet kompakter — vorher 0.82 (zu groß auf normalen
+            // iPhones, viel Leerraum). 0.62 passt zum strafferen Layout.
+            .presentationDetents([.fraction(0.62)])
+            // Drop-Beenden-Warnung darf nicht versehentlich
+            // weggewischt werden — User muss bewusst Beenden oder
+            // Abbrechen tippen.
+            .presentationDragIndicator(.hidden)
+            .interactiveDismissDisabled()
+            .sheetBackground()
+        }
+        // In-App-Route-Sheet — wird vom Joiner-Navigation-Button und
+        // vom Host-Banner getriggert. Zeigt eine MKMapView mit
+        // Walking-Polyline statt Apple Maps zu öffnen.
+        .sheet(isPresented: $showRouteSheet) {
+            InAppRouteSheet(
+                destination: item.coordinate,
+                destinationName: item.locationTitle.isEmpty ? item.activity : item.locationTitle,
+                accentColor: accentColor
+            )
+            .environmentObject(store)
+            .presentationDragIndicator(.visible)
         }
     }
 
@@ -1844,9 +2064,9 @@ struct ActiveDropTabView: View {
                     }
                     Spacer()
                     Button {
-                        let mi = MKMapItem(placemark: MKPlacemark(coordinate: item.coordinate))
-                        mi.name = item.activity
-                        mi.openInMaps(launchOptions: [MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeWalking])
+                        // In-App-Route statt Apple Maps öffnen — siehe
+                        // .sheet(isPresented: $showRouteSheet) am body.
+                        showRouteSheet = true
                     } label: {
                         Label(tr("map.navigation"), systemImage: "arrow.triangle.turn.up.right.circle.fill")
                             .font(.system(size: 13, weight: .semibold)).foregroundColor(accentColor)
@@ -1929,12 +2149,71 @@ struct ActiveDropTabView: View {
         .padding(.top, 16).padding(.bottom, 32)
     }
 
+    // MARK: - Host-Unterwegs-Banner
+
+    /// Banner für den Host, wenn er einen Drop an einem Pin-Ort erstellt
+    /// hat und selbst noch nicht physisch dort ist (`isArrived == false`
+    /// und `isOwnDrop`). Zeigt Distanz, Gehzeit und einen Maps-Button —
+    /// damit man sofort sieht „aha, ich muss noch hin".
+    @ViewBuilder
+    private var hostOnTheWayBanner: some View {
+        sectionCard {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(Color.accentOrange.opacity(0.15))
+                        .frame(width: 40, height: 40)
+                    PulsingLiveDot()
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Du bist unterwegs")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(textPrimary)
+                    HStack(spacing: 6) {
+                        if let dist = liveDistanceMeters {
+                            Text(dist < 1000
+                                 ? "\(Int(dist)) m entfernt"
+                                 : String(format: "%.1f km entfernt", dist / 1000))
+                                .font(.system(size: 12))
+                                .foregroundColor(textSecondary)
+                                .contentTransition(.numericText())
+                                .animation(.easeInOut(duration: 0.3), value: liveDistanceMeters)
+                        }
+                        if let mins = liveWalkMinutes {
+                            Text("· ~\(mins) Min")
+                                .font(.system(size: 12))
+                                .foregroundColor(textTertiary)
+                        }
+                    }
+                }
+                Spacer()
+                Button {
+                    // In-App-Route statt Apple Maps öffnen
+                    showRouteSheet = true
+                } label: {
+                    Image(systemName: "arrow.triangle.turn.up.right.circle.fill")
+                        .font(.system(size: 22))
+                        .foregroundColor(.accentOrange)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
     // MARK: - Vor-Ort-Ansicht (freigeschaltet)
 
     @ViewBuilder
     private var arrivedContent: some View {
         VStack(spacing: 0) {
             dropHeader
+
+            // Host ist physisch noch nicht am Drop (Pin-Drop fern vom
+            // aktuellen Standort) — prominent zeigen „du bist unterwegs"
+            // mit Distanz + Apple-Maps-Button. Sobald er ≤ 20 m ist,
+            // schaltet `isArrived` um und dieser Banner verschwindet.
+            if isOwnDrop && !isArrived {
+                hostOnTheWayBanner
+            }
 
             if isOwnDrop {
                 // ── Standort + Beschreibung ───────────────────────────
@@ -2437,11 +2716,32 @@ struct ActiveDropTabView: View {
                 .padding(.top, 6)
             }
         }
-        .confirmationDialog(tr("drop.confirm_leave_title"), isPresented: $showLeaveConfirm, titleVisibility: .visible) {
-            Button(tr("common.back"), role: .destructive) { store.leaveDropJoin(dropID: item.id) }
-            Button(tr("common.cancel"), role: .cancel) {}
-        } message: {
-            Text(tr("drop.leave_warning"))
+        .sheet(isPresented: $showLeaveConfirm) {
+            // Elapsed seconds aus dem joinRequest des Stores — bei pending
+            // Requests = 0 (kein Score-Risiko), bei akzeptierten 12+ min
+            // löst die Score-Warnung aus.
+            let elapsed: TimeInterval = {
+                if let req = store.joinRequests.first(where: { $0.dropID == item.id }) {
+                    return Date().timeIntervalSince(req.createdAt)
+                }
+                return 0
+            }()
+            LeaveDropSheet(
+                activityEmoji: item.emoji,
+                activityName: item.activity,
+                elapsedSeconds: elapsed
+            ) {
+                store.leaveDropJoin(dropID: item.id)
+                showLeaveConfirm = false
+            } onCancel: {
+                showLeaveConfirm = false
+            }
+            .presentationDetents([.fraction(0.65)])
+            // Verlassen-Warnung darf nicht versehentlich weggewischt
+            // werden — User muss bewusst Verlassen oder Abbrechen tippen.
+            .presentationDragIndicator(.hidden)
+            .interactiveDismissDisabled()
+            .sheetBackground()
         }
     }
 
@@ -3066,6 +3366,7 @@ struct MiniProfileSheet: View {
     @State private var showReportSheet = false
     @State private var showRemoveFriendAlert = false
     @State private var fetchedPlus: Bool = false
+    @State private var inviteSent: Bool = false
     /// Aus Firebase nachgezogen — für Beta-Badge-Cutoff und Alter im Subtitle.
     @State private var fetchedCreatedAt: Date? = nil
     @State private var fetchedAge: Int? = nil
@@ -3097,41 +3398,117 @@ struct MiniProfileSheet: View {
         store.encounters.filter { $0.friendName == name && $0.confirmed }.count
     }
 
+    /// „Dabei seit 3 Monaten" / „Neu dabei" — leitet Drops-Member-Status
+    /// aus dem in Firebase gespeicherten `createdAt` ab (geladen in
+    /// onAppear via `fetchUserMeta`). nil, wenn noch nicht geladen.
+    private var memberSinceLabel: String? {
+        guard let created = fetchedCreatedAt else { return nil }
+        let now = Date()
+        let comps = Calendar.current.dateComponents([.year, .month, .day],
+                                                     from: created, to: now)
+        let years = comps.year ?? 0
+        let months = comps.month ?? 0
+        let days = comps.day ?? 0
+        if years >= 1 {
+            return years == 1 ? "Dabei seit 1 Jahr" : "Dabei seit \(years) Jahren"
+        }
+        if months >= 1 {
+            return months == 1 ? "Dabei seit 1 Monat" : "Dabei seit \(months) Monaten"
+        }
+        if days >= 1 {
+            return days == 1 ? "Seit gestern dabei" : "Seit \(days) Tagen dabei"
+        }
+        return "Heute dabei"
+    }
+
+    /// Kompakte Info-Zeile innerhalb der Stats-Card.
+    @ViewBuilder
+    private func miniInfoRow(icon: String, tint: Color, text: String) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(tint.opacity(0.14))
+                    .frame(width: 28, height: 28)
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(tint)
+            }
+            Text(text)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(.textSecondary)
+            Spacer()
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             Capsule().fill(Color(UIColor.systemGray4))
                 .frame(width: 36, height: 4)
-                .padding(.top, 10).padding(.bottom, 22)
+                .padding(.top, 10).padding(.bottom, 18)
 
-            // Avatar
+            // ── Avatar mit Sunset-Glow-Ring ────────────────────────────
+            // Vorher: dünner accentColor-Ring (Cyan/Brand-Grün, abh. vom
+            // Caller). Jetzt: Sunset-Gradient-Ring (Orange→Grün) als
+            // einheitliches Branding, plus subtiler doppelter Glow für
+            // mehr Premium-Feeling. Avatar selbst etwas größer (84→92).
             ZStack {
+                // Outer Glow (dezent)
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color(hex: "E48C3A").opacity(0.20),
+                                     Color(hex: "5FA937").opacity(0.16)],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 116, height: 116)
+                    .blur(radius: 14)
+
+                // Gradient-Ring (Sunset)
+                Circle()
+                    .stroke(
+                        LinearGradient(
+                            colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 2.5
+                    )
+                    .frame(width: 96, height: 96)
+
                 if let img = selfie {
                     Image(uiImage: img)
                         .resizable().scaledToFill()
-                        .frame(width: 84, height: 84)
+                        .frame(width: 92, height: 92)
                         .clipShape(Circle())
-                        .overlay(Circle().stroke(accentColor.opacity(0.35), lineWidth: 2.5))
                 } else if let urlStr = profileImageURL {
-                    RemoteProfileImage(url: urlStr, fallbackEmoji: emoji, size: 84,
-                                       strokeColor: accentColor.opacity(0.35))
+                    RemoteProfileImage(url: urlStr, fallbackEmoji: emoji, size: 92,
+                                       strokeColor: .clear)
                 } else {
                     Circle()
-                        .fill(accentColor.opacity(0.12))
-                        .frame(width: 84, height: 84)
-                        .overlay(Text(emoji).font(.system(size: 42)))
-                        .overlay(Circle().stroke(accentColor.opacity(0.25), lineWidth: 2))
+                        .fill(
+                            LinearGradient(
+                                colors: [Color(hex: "E48C3A").opacity(0.14),
+                                         Color(hex: "5FA937").opacity(0.10)],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 92, height: 92)
+                        .overlay(Text(emoji).font(.system(size: 44)))
                 }
             }
-            .padding(.bottom, 12)
+            .frame(height: 120)
+            .padding(.bottom, 10)
 
             HStack(spacing: 6) {
                 Text(name)
-                    .font(.system(size: 20, weight: .bold))
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundColor(.textPrimary)
                 if isVerified {
+                    // Verified-Check jetzt Sunset-Orange statt Brand-Grün
                     Image(systemName: "checkmark.seal.fill")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color.brand)
+                        .foregroundColor(Color(hex: "E48C3A"))
                 }
                 // Beta-Badge nur für Early-Adopter (registriert vor 04.05.2026)
                 if qualifiesForBetaBadge {
@@ -3165,60 +3542,108 @@ struct MiniProfileSheet: View {
                         .foregroundColor(.textSecondary)
                 }
             }
-            .padding(.bottom, 20)
+            .padding(.bottom, 18)
 
-            // Zuverlässigkeits-Ring mit Tier-Icon + Badge-Name
-            HStack(spacing: 14) {
-                ZStack {
-                    Circle()
-                        .stroke(tierColor.opacity(0.15), lineWidth: 5)
-                        .frame(width: 54, height: 54)
-                    Circle()
-                        .trim(from: 0, to: CGFloat(tierProgress))
-                        .stroke(tierColor, style: StrokeStyle(lineWidth: 5, lineCap: .round))
-                        .frame(width: 54, height: 54)
-                        .rotationEffect(.degrees(-90))
-                        .animation(.easeOut(duration: 0.6), value: reliabilityScore)
-                    Image(systemName: tierIcon)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(tierColor)
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(tierLabel)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.textPrimary)
-                    Text("\(reliabilityScore) Pkt\(totalCommits > 0 ? " · \(totalCommits) Drops" : "")")
-                        .font(.system(size: 12))
-                        .foregroundColor(.textSecondary)
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 18).padding(.vertical, 14)
-            .liquidGlass(cornerRadius: 16)
-            .padding(.horizontal, 20)
-
-            // Frühere Begegnungen — nur wenn > 0
-            if priorEncountersCount > 0 {
-                HStack(spacing: 10) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 14))
-                        .foregroundColor(.accentOrange)
-                    Text("Schon \(priorEncountersCount == 1 ? "1× getroffen" : "\(priorEncountersCount)× getroffen")")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.textSecondary)
+            // ── Zuverlässigkeits-Ring + Member-Seit zusammen in 1 Card ──
+            // Vorher: 1 separate Card pro Info. Jetzt: kompakter Combo-
+            // Layout mit Divider — weniger vertikalem Platz, dichter Info.
+            VStack(spacing: 0) {
+                // Tier-Ring + Badge
+                HStack(spacing: 14) {
+                    ZStack {
+                        Circle()
+                            .stroke(tierColor.opacity(0.15), lineWidth: 5)
+                            .frame(width: 56, height: 56)
+                        Circle()
+                            .trim(from: 0, to: CGFloat(tierProgress))
+                            .stroke(tierColor, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                            .frame(width: 56, height: 56)
+                            .rotationEffect(.degrees(-90))
+                            .animation(.easeOut(duration: 0.6), value: reliabilityScore)
+                        Image(systemName: tierIcon)
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundColor(tierColor)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(tierLabel)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(.textPrimary)
+                        Text("\(reliabilityScore) Pkt\(totalCommits > 0 ? " · \(totalCommits) Drops" : "")")
+                            .font(.system(size: 12))
+                            .foregroundColor(.textSecondary)
+                    }
                     Spacer()
                 }
-                .padding(.horizontal, 18).padding(.vertical, 10)
-                .liquidGlass(cornerRadius: 12)
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
+                .padding(.horizontal, 16).padding(.vertical, 14)
+
+                // Sekundär-Zeilen — Member-Seit, frühere Begegnungen.
+                // Jeweils mit Divider und kompakter Icon-Spalte für visuelle
+                // Konsistenz. Beides optional — nur rendern wenn Daten da.
+                if let memberSince = memberSinceLabel {
+                    Divider().padding(.leading, 52)
+                    miniInfoRow(
+                        icon: "sparkle",
+                        tint: Color(hex: "5FA937"),
+                        text: memberSince
+                    )
+                }
+                if priorEncountersCount > 0 {
+                    Divider().padding(.leading, 52)
+                    miniInfoRow(
+                        icon: "person.2.wave.2.fill",
+                        tint: Color(hex: "E48C3A"),
+                        text: "Schon \(priorEncountersCount)× getroffen"
+                    )
+                }
             }
+            .liquidGlass(cornerRadius: 18)
+            .padding(.horizontal, 20)
 
             Spacer()
 
             // Bei Freunden: "Freund entfernen" — bei Fremden: Melden + Blockieren.
             // Keine Aktionen auf sich selbst.
             if name != store.currentUser.name {
+                // Einladen-Button — nur sichtbar wenn ich gerade hoste UND
+                // der User ein Freund mit bekannter UID ist. Sonst hat der
+                // Button keinen Adressaten oder Drop, zu dem eingeladen
+                // werden könnte.
+                if isFriend, !store.activeDrops.isEmpty,
+                   let targetUID = userUID, !targetUID.isEmpty {
+                    // Invite-Button mit Sunset-Gradient — fühlt sich an wie
+                    // ein „big positive action" statt einfacher Brand-Pill.
+                    Button {
+                        store.inviteFriendToDrop(friendUID: targetUID)
+                        withAnimation(.spring(response: 0.3)) { inviteSent = true }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { dismiss() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: inviteSent ? "checkmark.circle.fill" : "paperplane.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                            Text(inviteSent ? "Einladung gesendet" : "Zu meinem Drop einladen")
+                                .font(.system(size: 15, weight: .bold, design: .rounded))
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            Capsule().fill(
+                                inviteSent
+                                ? AnyShapeStyle(Color.onlineGreen)
+                                : AnyShapeStyle(LinearGradient(
+                                    colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                                    startPoint: .leading, endPoint: .trailing
+                                ))
+                            )
+                        )
+                        .shadow(color: Color(hex: "E48C3A").opacity(inviteSent ? 0 : 0.35),
+                                radius: 12, y: 5)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(inviteSent)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 10)
+                }
                 if isFriend {
                     Button { showRemoveFriendAlert = true } label: {
                         HStack(spacing: 6) {
@@ -3813,5 +4238,155 @@ struct ReportUserSheet: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - JoinerLiveInfoSheet
+// Kompakte Info-Ansicht wenn der Host auf einen Joiner-Pin auf seiner
+// Karte tippt. KEIN "Ich komme vorbei"-Button (der Joiner kommt ja zu
+// uns, nicht andersrum). Zeigt Avatar, Name, Alter, Reliability-Tier
+// und — wenn GPS bekannt — Distanz / ETA zum eigenen Drop.
+struct JoinerLiveInfoSheet: View {
+    @EnvironmentObject var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+    let item: MapAnnotationItem
+
+    /// Live-Info aus joinerLiveInfos via stableUUID-Match. item.id ist
+    /// die hash-basierte UUID — wir suchen die UID rückwärts indem wir
+    /// gegen alle bekannten Joiner-UIDs vergleichen.
+    private var joinerInfo: JoinerLiveInfo? {
+        for (uid, info) in store.joinerLiveInfos
+        where AppStore.stableUUID(from: uid) == item.id {
+            return info
+        }
+        return nil
+    }
+
+    /// Distanz zum eigenen Drop in km — Joiner ist unterwegs ZU uns.
+    private var distanceKm: Double? {
+        guard let info = joinerInfo,
+              let myDrop = store.activeDrops.first else { return nil }
+        let joiner = CLLocation(latitude: info.lat, longitude: info.lng)
+        let drop = CLLocation(latitude: myDrop.location.coordinate.latitude,
+                              longitude: myDrop.location.coordinate.longitude)
+        return joiner.distance(from: drop) / 1000.0
+    }
+
+    /// ETA in Minuten — grobe Walking-Speed-Annahme (5 km/h).
+    private var etaMinutes: Int? {
+        guard let km = distanceKm else { return nil }
+        return Int((km / 5.0) * 60.0)
+    }
+
+    private var reliabilityTier: String {
+        guard let pts = joinerInfo?.reliabilityPoints else { return "" }
+        return ReliabilityScore.badge(forPoints: pts)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header: Avatar + Name (+ Age) + "ist auf dem Weg"-Label
+            HStack(spacing: 14) {
+                ZStack {
+                    if let url = joinerInfo?.profileImageURL, !url.isEmpty {
+                        RemoteProfileImage(
+                            url: url,
+                            fallbackEmoji: item.emoji,
+                            size: 60,
+                            strokeColor: .clear
+                        )
+                    } else {
+                        Circle()
+                            .fill(Color.onlineGreen.opacity(0.14))
+                            .frame(width: 60, height: 60)
+                        Text(item.emoji.isEmpty ? "👤" : item.emoji)
+                            .font(.system(size: 30))
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(item.name)
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(.textPrimary)
+                        if let age = joinerInfo?.age {
+                            Text("· \(age)")
+                                .font(.system(size: 15))
+                                .foregroundColor(.textSecondary)
+                        }
+                    }
+                    HStack(spacing: 5) {
+                        PulsingLiveDot()
+                        Text("Auf dem Weg zu deinem Drop")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.textSecondary)
+                    }
+                    if !reliabilityTier.isEmpty {
+                        Text(reliabilityTier)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.brand)
+                            .padding(.horizontal, 7).padding(.vertical, 2)
+                            .background(Color.brand.opacity(0.12), in: Capsule())
+                            .padding(.top, 2)
+                    }
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 18)
+
+            Divider().padding(.horizontal, 20)
+
+            // Live-Stats: Distanz + ETA
+            if let km = distanceKm, let eta = etaMinutes {
+                HStack(spacing: 0) {
+                    statBlock(
+                        icon: "figure.walk",
+                        value: "\(eta) Min",
+                        label: "Weg",
+                        color: .brand
+                    )
+                    Divider().frame(height: 36)
+                    statBlock(
+                        icon: "location.fill",
+                        value: String(format: "%.1f km", km),
+                        label: "Entfernt",
+                        color: .onlineGreen
+                    )
+                }
+                .padding(.horizontal, 20).padding(.vertical, 16)
+            }
+
+            Spacer(minLength: 12)
+
+            // Schließen-Button — kein CTA, weil keine Aktion nötig ist.
+            // Der Host beobachtet einfach wie der Joiner näher kommt.
+            Button { dismiss() } label: {
+                Text("Schließen")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.textPrimary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(Capsule().fill(Color.primary.opacity(0.06)))
+            }
+            .padding(.horizontal, 20).padding(.bottom, 24)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.ultraThinMaterial)
+    }
+
+    @ViewBuilder
+    private func statBlock(icon: String, value: String, label: String, color: Color) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 16))
+                .foregroundColor(color)
+            Text(value)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(.textPrimary)
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundColor(.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
     }
 }
