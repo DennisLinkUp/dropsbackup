@@ -112,8 +112,20 @@ class RealtimeDBManager: ObservableObject {
 
         // updateChildValues überschreibt nur die angegebenen Felder
         db.child("users").child(uid).updateChildValues(payload)
-        // createdAt nur beim ersten Schreiben setzen
-        db.child("users").child(uid).child("createdAt").setValue(ServerValue.timestamp()) { _, _ in }
+        // createdAt nur setzen wenn noch nicht vorhanden — sonst würde ein
+        // Re-Login einen frischen Timestamp setzen und das Beta-Badge-Flag
+        // (cutoff vor 04.05.2026) wäre kaputt. setValue alleine überschreibt
+        // immer; mit observeSingleEvent prüfen wir vorher.
+        let createdRef = db.child("users").child(uid).child("createdAt")
+        createdRef.observeSingleEvent(of: .value) { snap in
+            // Nur setzen wenn das Feld komplett fehlt ODER 0 ist (von einem
+            // fehlerhaften alten Schreiben). Existierende valide Werte
+            // bleiben unangetastet.
+            let existing = snap.value as? Double ?? 0
+            if !snap.exists() || existing <= 0 {
+                createdRef.setValue(ServerValue.timestamp()) { _, _ in }
+            }
+        }
     }
 
     /// Lädt das Profil des aktuell eingeloggten Nutzers einmalig.
@@ -509,15 +521,32 @@ class RealtimeDBManager: ObservableObject {
             // Absolute Startzeit (epoch sec) — für Cloud-Function 30-Min-Reminder.
             "startAt": startAt.timeIntervalSince1970,
             "maxParticipants": maxParticipants,
+            // Start mit 1 (nur Host). Wird vom Host live aktualisiert,
+            // sobald Joiner via dropins/ rein-/rauskommen — siehe
+            // updateCurrentParticipants. Andere Clients lesen das Feld
+            // im Umgebungstab und auf der Karte.
+            "currentParticipants": 1,
             "active": true
         ]
         if !hostGender.isEmpty { payload["hostGender"] = hostGender }
-        dropRef.setValue(payload)
-        // Auto-Cleanup bei App-Termination (Force-Quit, Deinstallation, Crash):
-        // Firebase löscht den Drop, sobald die Client-Verbindung abreißt.
-        // Hintergrund allein triggert das nicht — Connection bleibt bei
-        // backgroundeter App bestehen, Drop bleibt also sichtbar.
-        dropRef.onDisconnectRemoveValue()
+
+        // Debug-Logs damit man in der Xcode-Console sieht ob Auth/Write klappt.
+        let firebaseUID = Auth.auth().currentUser?.uid ?? "<NICHT AUTHENTIFIZIERT>"
+        print("[publishDrop] dropID=\(dropID) userID=\(userID) firebaseUID=\(firebaseUID)")
+
+        dropRef.setValue(payload) { error, ref in
+            if let error = error {
+                print("[publishDrop] ❌ FEHLER beim Schreiben: \(error.localizedDescription)")
+                print("[publishDrop]    Database-Pfad: \(ref.url)")
+            } else {
+                print("[publishDrop] ✓ erfolgreich geschrieben: \(ref.url)")
+            }
+        }
+        // KEIN onDisconnect-Cleanup mehr — User hat App-Kill als Bug
+        // gemeldet ("Drop wird beendet"). Drops sollen nur explizit per
+        // cancelDrop oder beim Ablauf der expiresAt entfernt werden.
+        // Beim App-Restart re-hydrieren wir aktive Drops via
+        // loadMyActiveDrops.
     }
 
     /// Verlängert den Drop — aktualisiert nur das expiresAt-Feld in Firebase.
@@ -531,6 +560,22 @@ class RealtimeDBManager: ObservableObject {
     /// Löscht den eigenen Drop aus der DB
     func unpublishDrop(dropID: String) {
         db.child("drops").child(dropID).removeValue()
+    }
+
+    /// Prüft per Single-Event ob ein Drop in Firebase noch existiert.
+    /// Wird vom Joiner genutzt um zwischen "Host hat gecancelt" und
+    /// "Drop nur außer Reichweite/transienter Snapshot" zu unterscheiden,
+    /// bevor Auto-Leave triggert.
+    func dropExists(dropID: String, completion: @escaping (Bool) -> Void) {
+        db.child("drops").child(dropID).observeSingleEvent(of: .value) { snap in
+            // Drop existiert wenn der Snapshot Werte hat UND active ist.
+            if let dict = snap.value as? [String: Any],
+               let active = dict["active"] as? Bool, active {
+                completion(true)
+            } else {
+                completion(false)
+            }
+        }
     }
 
     /// Setzt den Drops+-Boost eines Drops in Firebase (active = true → boosted, false → unboosted).
@@ -570,6 +615,10 @@ class RealtimeDBManager: ObservableObject {
                 let hostGender      = dict["hostGender"] as? String
                 let maxParticipants = dict["maxParticipants"] as? Int ?? 10
                 let isBoosted       = dict["isBoosted"] as? Bool ?? false
+                // currentParticipants (Host + Joiner). Legacy-Drops ohne
+                // dieses Feld → 1 (nur Host) — sonst würde der Joiner-Counter
+                // im Feed bei alten Einträgen "0 / 10" zeigen.
+                let currentParticipants = dict["currentParticipants"] as? Int ?? 1
                 let dropCoord = CLLocationCoordinate2D(latitude: lat, longitude: lng)
                 let distance = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
                     .distance(from: CLLocation(latitude: lat, longitude: lng))
@@ -586,7 +635,8 @@ class RealtimeDBManager: ObservableObject {
                         scheduledTime: scheduled,
                         hostGender: hostGender,
                         maxParticipants: maxParticipants,
-                        isBoosted: isBoosted
+                        isBoosted: isBoosted,
+                        currentParticipants: currentParticipants
                     ))
                 }
             }
@@ -744,37 +794,57 @@ class RealtimeDBManager: ObservableObject {
         ])
     }
 
-    /// Host observiert Joiner-Positionen für seinen Drop — .childAdded + .childChanged.
-    /// Callback bekommt die aktuelle Joiner-UID + coordinate bei jedem Update.
+    /// Host observiert Joiner-Positionen für seinen Drop — .childAdded +
+    /// .childChanged + .childRemoved.
+    /// Callback bekommt die komplette Joiner-Info (UID + name + emoji + age + coordinate)
+    /// damit der Map-Pin den richtigen Namen / Alter zeigen kann statt "Joiner"-Fallback.
     /// .childAdded ist wichtig damit die initiale Position (von joinDrop) erfasst wird,
     /// nicht erst beim ersten Move-Update — sonst zeigt der Host den User-Default
     /// (München-Center) statt der echten Joiner-Position.
+    /// .childRemoved feuert wenn der Joiner via leaveActiveJoin den Eintrag
+    /// löscht — sonst bleibt der Joiner ewig in der "Unterwegs"-Liste.
     @discardableResult
     func observeJoinerLocations(dropID: String,
-                                onUpdate: @escaping (_ joinerID: String, _ lat: Double, _ lng: Double) -> Void) -> DatabaseHandle {
+                                onUpdate: @escaping (_ joinerID: String, _ info: JoinerLiveInfo) -> Void,
+                                onRemove: ((_ joinerID: String) -> Void)? = nil) -> DatabaseHandle {
         let ref = db.child("dropins").child(dropID)
+        let parse: (DataSnapshot) -> JoinerLiveInfo? = { snap in
+            guard let dict = snap.value as? [String: Any],
+                  let lat  = dict["lat"] as? Double,
+                  let lng  = dict["lng"] as? Double else { return nil }
+            return JoinerLiveInfo(
+                lat: lat, lng: lng,
+                name: dict["name"] as? String,
+                emoji: dict["emoji"] as? String,
+                age: dict["age"] as? Int,
+                profileImageURL: dict["profileImageURL"] as? String,
+                reliabilityPoints: dict["reliabilityPoints"] as? Int
+            )
+        }
         // Initial-Snapshot holen für bereits existierende Einträge mit lat/lng
         ref.observeSingleEvent(of: .value) { snap in
             for case let child as DataSnapshot in snap.children {
-                if let dict = child.value as? [String: Any],
-                   let lat  = dict["lat"] as? Double,
-                   let lng  = dict["lng"] as? Double {
-                    DispatchQueue.main.async { onUpdate(child.key, lat, lng) }
+                if let info = parse(child) {
+                    DispatchQueue.main.async { onUpdate(child.key, info) }
                 }
             }
         }
         // Live-Updates: childAdded für neue Joiner, childChanged für Bewegungen
         let handle = ref.observe(.childChanged) { snapshot in
-            guard let dict = snapshot.value as? [String: Any],
-                  let lat  = dict["lat"] as? Double,
-                  let lng  = dict["lng"] as? Double else { return }
-            DispatchQueue.main.async { onUpdate(snapshot.key, lat, lng) }
+            if let info = parse(snapshot) {
+                DispatchQueue.main.async { onUpdate(snapshot.key, info) }
+            }
         }
         ref.observe(.childAdded) { snapshot in
-            guard let dict = snapshot.value as? [String: Any],
-                  let lat  = dict["lat"] as? Double,
-                  let lng  = dict["lng"] as? Double else { return }
-            DispatchQueue.main.async { onUpdate(snapshot.key, lat, lng) }
+            if let info = parse(snapshot) {
+                DispatchQueue.main.async { onUpdate(snapshot.key, info) }
+            }
+        }
+        // Joiner verlässt → dropins/{dropID}/{joinerID} wird gelöscht.
+        // Host muss den Eintrag aus seiner UI (Vor Ort / Unterwegs / Karte)
+        // entfernen können, sonst bleibt der Joiner ewig in der Liste.
+        ref.observe(.childRemoved) { snapshot in
+            DispatchQueue.main.async { onRemove?(snapshot.key) }
         }
         return handle
     }
@@ -813,7 +883,8 @@ class RealtimeDBManager: ObservableObject {
     /// Joiner sendet Beitrittsanfrage — Status: "pending"
     func sendJoinRequest(dropID: String, joinerID: String, joinerName: String,
                          joinerEmoji: String, joinerAge: Int?, profileImageURL: String?,
-                         reliabilityPoints: Int = 100, isPlus: Bool = false) {
+                         reliabilityPoints: Int = 100, isPlus: Bool = false,
+                         message: String? = nil) {
         var payload: [String: Any] = [
             "name":              joinerName,
             "emoji":             joinerEmoji,
@@ -824,6 +895,13 @@ class RealtimeDBManager: ObservableObject {
         ]
         if let age = joinerAge { payload["age"] = age }
         if let url = profileImageURL { payload["profileImageURL"] = url }
+        // Optionale Begleit-Nachricht — Joiner kann sich kurz vorstellen
+        // ("Hi, ich liebe Wandern, freu mich!"). Host sieht sie im
+        // IncomingJoinRequestSheet und kann besser entscheiden.
+        if let msg = message?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !msg.isEmpty {
+            payload["message"] = String(msg.prefix(200))
+        }
         db.child("joinRequests").child(dropID).child(joinerID).setValue(payload)
     }
 
@@ -835,7 +913,8 @@ class RealtimeDBManager: ObservableObject {
                                                        _ imageURL: String?,
                                                        _ reliabilityPoints: Int,
                                                        _ isPlus: Bool,
-                                                       _ requestedAt: Date) -> Void) -> DatabaseHandle {
+                                                       _ requestedAt: Date,
+                                                       _ message: String?) -> Void) -> DatabaseHandle {
         db.child("joinRequests").child(dropID).observe(.childAdded) { snap in
             guard let dict   = snap.value as? [String: Any],
                   let name   = dict["name"]   as? String,
@@ -848,7 +927,10 @@ class RealtimeDBManager: ObservableObject {
             let isPlus   = dict["isPlus"]            as? Bool ?? false
             let ts       = (dict["requestedAt"]   as? Double ?? 0) / 1000
             let date     = ts > 0 ? Date(timeIntervalSince1970: ts) : Date()
-            DispatchQueue.main.async { onNew(snap.key, name, emoji, age, imageURL, points, isPlus, date) }
+            let message  = dict["message"]        as? String
+            DispatchQueue.main.async {
+                onNew(snap.key, name, emoji, age, imageURL, points, isPlus, date, message)
+            }
         }
     }
 
@@ -883,10 +965,144 @@ class RealtimeDBManager: ObservableObject {
         db.child("joinRequests").child(dropID).removeValue()
     }
 
+    /// Joiner-seitiges Cancel: löscht den eigenen Pending-Request unter
+    /// joinRequests/{dropID}/{joinerID}. Nutzt der Joiner wenn er die
+    /// Anfrage zurückzieht bevor der Host akzeptiert hat.
+    func cancelJoinRequest(dropID: String, joinerID: String) {
+        db.child("joinRequests").child(dropID).child(joinerID).removeValue()
+    }
+
+    // MARK: - Drop-Feedback (👍/👎 nach Drop-Ende)
+    //
+    // Schreibt einen Vote pro (rater, ratedUser, dropID)-Tripel nach
+    // `userFeedback/{ratedUID}/{raterUID}_{dropID}`. Der Pfad-Key macht
+    // Doppel-Votes idempotent (gleicher User kann nicht mehrfach für
+    // denselben Drop voten). Aggregat-Statistiken werden serverseitig
+    // (Cloud Function später) auf `users/{uid}/feedbackThumbs`-Counter
+    // gemappt — Client schreibt nur den Roh-Vote.
+    func submitDropFeedback(raterUID: String, ratedUID: String,
+                            dropID: String, vote: String) {
+        guard !raterUID.isEmpty, !ratedUID.isEmpty,
+              !dropID.isEmpty, !vote.isEmpty else { return }
+        let safeRater = raterUID.replacingOccurrences(of: ".", with: "_")
+            .replacingOccurrences(of: "#", with: "_")
+            .replacingOccurrences(of: "$", with: "_")
+            .replacingOccurrences(of: "[", with: "_")
+            .replacingOccurrences(of: "]", with: "_")
+            .replacingOccurrences(of: "/", with: "_")
+        let key = "\(safeRater)_\(dropID)"
+        let payload: [String: Any] = [
+            "vote":      vote,
+            "raterUID":  raterUID,
+            "dropID":    dropID,
+            "timestamp": ServerValue.timestamp()
+        ]
+        db.child("userFeedback").child(ratedUID).child(key).setValue(payload)
+    }
+
+    // MARK: - Drop-Einladungen (Host → Freund)
+
+    /// Schreibt eine direkte Drop-Einladung an einen Freund. Wird beim Tap
+    /// auf "Zu meinem Drop einladen" im MiniProfileSheet aufgerufen. Der
+    /// empfangene Freund sieht via observeIncomingDropInvitations einen
+    /// Sheet "X lädt dich zu Y ein" und kann den Drop direkt öffnen.
+    /// Die Invite wird nach 30 min automatisch abgelaufen behandelt
+    /// (clientseitig — wir cleanen sie auf Empfänger-Seite).
+    func sendDropInvitation(recipientUID: String, dropID: String,
+                            dropEmoji: String, dropActivity: String,
+                            dropLat: Double, dropLng: Double,
+                            hostUID: String, hostName: String,
+                            hostEmoji: String) {
+        let inviteID = UUID().uuidString
+        let payload: [String: Any] = [
+            "dropID":       dropID,
+            "dropEmoji":    dropEmoji,
+            "dropActivity": dropActivity,
+            "dropLat":      dropLat,
+            "dropLng":      dropLng,
+            "hostUID":      hostUID,
+            "hostName":     hostName,
+            "hostEmoji":    hostEmoji,
+            "createdAt":    ServerValue.timestamp()
+        ]
+        db.child("dropInvitations")
+            .child(recipientUID)
+            .child(inviteID)
+            .setValue(payload)
+    }
+
+    /// Empfänger-seitiger Observer: feuert wenn eine neue Drop-Einladung
+    /// für mich eintrifft. Callback bekommt alle Daten direkt — der
+    /// inviteID-Snapshot-Key wird mit zurückgegeben damit der Empfänger
+    /// die Einladung nach Annahme/Ablehnung wieder löschen kann.
+    @discardableResult
+    func observeIncomingDropInvitations(
+        myUID: String,
+        onInvite: @escaping (_ inviteID: String, _ dropID: String,
+                             _ dropEmoji: String, _ dropActivity: String,
+                             _ dropLat: Double, _ dropLng: Double,
+                             _ hostUID: String, _ hostName: String,
+                             _ hostEmoji: String, _ createdAt: Date) -> Void
+    ) -> DatabaseHandle {
+        let ref = db.child("dropInvitations").child(myUID)
+        return ref.observe(.childAdded) { snap in
+            guard let dict = snap.value as? [String: Any],
+                  let dropID = dict["dropID"] as? String,
+                  let dropActivity = dict["dropActivity"] as? String,
+                  let hostUID = dict["hostUID"] as? String,
+                  let hostName = dict["hostName"] as? String
+            else { return }
+            let dropEmoji = dict["dropEmoji"] as? String ?? "✨"
+            let hostEmoji = dict["hostEmoji"] as? String ?? "👤"
+            let lat = dict["dropLat"] as? Double ?? 0
+            let lng = dict["dropLng"] as? Double ?? 0
+            let ts = (dict["createdAt"] as? Double ?? 0) / 1000
+            let date = ts > 0 ? Date(timeIntervalSince1970: ts) : Date()
+            // Ältere Einladungen (>30 min) ignorieren — wahrscheinlich
+            // schon nicht mehr relevant. Plus aufräumen damit's nicht
+            // immer wieder feuert.
+            if Date().timeIntervalSince(date) > 30 * 60 {
+                ref.child(snap.key).removeValue()
+                return
+            }
+            DispatchQueue.main.async {
+                onInvite(snap.key, dropID, dropEmoji, dropActivity,
+                         lat, lng, hostUID, hostName, hostEmoji, date)
+            }
+        }
+    }
+
+    /// Empfänger-Cleanup: nach Accept/Decline löschen.
+    func dismissDropInvitation(myUID: String, inviteID: String) {
+        db.child("dropInvitations").child(myUID).child(inviteID).removeValue()
+    }
+
+    func removeIncomingDropInvitationsObserver(_ handle: DatabaseHandle, myUID: String) {
+        db.child("dropInvitations").child(myUID).removeObserver(withHandle: handle)
+    }
+
+    /// Joiner-seitiges Leave: entfernt den eigenen Eintrag unter
+    /// dropins/{dropID}/{joinerID}. Sorgt dafür, dass der Host den
+    /// Joiner-Pin nicht mehr auf der Karte sieht, sobald der Joiner
+    /// den Drop verlässt.
+    func removeJoinerFromDrop(dropID: String, joinerID: String) {
+        db.child("dropins").child(dropID).child(joinerID).removeValue()
+    }
+
     // MARK: - Drop canceln
 
     func cancelDrop(dropID: String) {
         db.child("drops").child(dropID).removeValue()
+    }
+
+    /// Aktualisiert die aktuelle Teilnehmerzahl (Host + Joiner) auf
+    /// `drops/{dropID}/currentParticipants`. Wird vom Host getriggert,
+    /// wenn ein Joiner über `dropins/` rein-/rauskommt. Andere Clients
+    /// lesen das Feld in `observeNearbyDrops` und können so „Voll"
+    /// markieren bzw. den Drop von der Karte ausblenden, ohne selbst
+    /// die Joiner-Liste lesen zu müssen.
+    func updateCurrentParticipants(dropID: String, count: Int) {
+        db.child("drops").child(dropID).child("currentParticipants").setValue(count)
     }
 
     // MARK: - Begegnungen (Encounters)
@@ -948,10 +1164,12 @@ class RealtimeDBManager: ObservableObject {
                       let dict   = snap.value as? [String: Any],
                       let uid    = dict["userID"] as? String
                 else { continue }
-                // Earliest-drop tracking: läuft auf ALLE drops (auch inaktive/expired)
-                if let lat = dict["latitude"] as? Double,
-                   let lng = dict["longitude"] as? Double {
-                    let ts = (dict["createdAt"] as? Double) ?? Double.greatestFiniteMagnitude
+                // Earliest-drop tracking: läuft auf ALLE drops (auch inaktive/expired).
+                // Schlüssel sind `lat`/`lng` (nicht `latitude`/`longitude`) — so
+                // werden Drops im publishDrop geschrieben.
+                if let lat = dict["lat"] as? Double,
+                   let lng = dict["lng"] as? Double {
+                    let ts = (dict["timestamp"] as? Double) ?? Double.greatestFiniteMagnitude
                     if let cur = earliestDropCoord[uid] {
                         if ts < cur.ts {
                             earliestDropCoord[uid] = (ts, lat, lng)
@@ -972,6 +1190,33 @@ class RealtimeDBManager: ObservableObject {
             group.leave()
         }
 
+        // 2b. dropins/-Fallback: User die nur als Joiner aktiv waren (nie
+        // selber einen Drop erstellt haben), haben keine Stadt aus den
+        // drops/-Daten. Der Joiner schreibt aber lat/lng nach dropins/
+        // beim Beitreten — das ist eine sehr gute Stadt-Proxy.
+        group.enter()
+        var joinerCoord: [String: (lat: Double, lng: Double)] = [:]
+        db.child("dropins").observeSingleEvent(of: .value) { snapshot in
+            for dropChild in snapshot.children {
+                guard let dropSnap = dropChild as? DataSnapshot else { continue }
+                for joinerChild in dropSnap.children {
+                    guard let joinerSnap = joinerChild as? DataSnapshot,
+                          let dict = joinerSnap.value as? [String: Any],
+                          let lat = dict["lat"] as? Double,
+                          let lng = dict["lng"] as? Double
+                    else { continue }
+                    let joinerUID = joinerSnap.key
+                    // Erstes Coord-Sample pro User reicht — wir wollen ja
+                    // nur die City herausbekommen. Spätere Werte wären
+                    // nur live-tracking-Updates für denselben Drop.
+                    if joinerCoord[joinerUID] == nil {
+                        joinerCoord[joinerUID] = (lat, lng)
+                    }
+                }
+            }
+            group.leave()
+        }
+
         // 3. Zusammenführen
         group.notify(queue: .main) {
             for i in entries.indices {
@@ -981,9 +1226,15 @@ class RealtimeDBManager: ObservableObject {
                     entries[i].activeDropActivity = info.label
                     entries[i].activeDropID       = info.dropKey
                 }
-                // Registrations-Stadt aus erstem Drop des Users
+                // Registrations-Stadt — Priorität: eigener Drop > Joiner-Coord.
+                // Eigene Drops sind „eigene Stadt" (User hostet wo er wohnt),
+                // Joiner-Coord ist „Stadt wo der User aktiv ist" — beides
+                // dieselbe Info aus Service-Cities-Sicht.
                 if let first = earliestDropCoord[uid] {
                     let coord = CLLocationCoordinate2D(latitude: first.lat, longitude: first.lng)
+                    entries[i].cityName = ServiceCities.city(for: coord)?.name
+                } else if let joinCoord = joinerCoord[uid] {
+                    let coord = CLLocationCoordinate2D(latitude: joinCoord.lat, longitude: joinCoord.lng)
                     entries[i].cityName = ServiceCities.city(for: coord)?.name
                 }
             }
@@ -1141,14 +1392,17 @@ class RealtimeDBManager: ObservableObject {
                 let expiresAt = dict["expiresAt"] as? Double ?? 0
                 // Nur wirklich aktive (expiresAt in der Zukunft)
                 if expiresAt > 0 && expiresAt < now { continue }
+                // Schlüssel sind `lat`/`lng` wie in publishDrop geschrieben —
+                // vorher latitude/longitude → immer 0/0 → Stadt-Filter-Chips
+                // im Drops-Monitor zeigten alle Drops als "Ohne Stadt".
                 let entry = AdminDropEntry(
                     id:            snap.key,
                     hostUID:       dict["userID"]       as? String ?? "",
                     hostName:      dict["displayName"]  as? String ?? "—",
                     emoji:         dict["emoji"]        as? String ?? "🔵",
                     activityName:  dict["activityName"] as? String ?? "",
-                    latitude:      dict["latitude"]     as? Double ?? 0,
-                    longitude:     dict["longitude"]    as? Double ?? 0,
+                    latitude:      dict["lat"]          as? Double ?? 0,
+                    longitude:     dict["lng"]          as? Double ?? 0,
                     participants:  (dict["participants"] as? [String: Any])?.count ?? 1,
                     createdAt:     Date(timeIntervalSince1970: (dict["timestamp"] as? Double ?? 0) / 1000),
                     expiresAt:     Date(timeIntervalSince1970: expiresAt)
@@ -1197,6 +1451,61 @@ class RealtimeDBManager: ObservableObject {
         db.child("users").child(uid).child("isBanned").observeSingleEvent(of: .value) { snapshot in
             completion(snapshot.value as? Bool ?? false)
         }
+    }
+
+    // MARK: - Admin-Notices (Host-Seite)
+    //
+    // Wenn ein Admin im Live-Drops-Monitor einen Drop entfernt, wird unter
+    // `users/{hostUID}/adminNotices/{noticeID}` ein Eintrag mit Grund
+    // abgelegt (siehe adminDeleteDrop). Der Host beobachtet diesen Pfad
+    // im AppStore — sobald ein neuer Notice ankommt, zeigt die App ein
+    // bestätigungspflichtiges Sheet, das der User explizit wegtippen muss.
+
+    /// Ein einzelner Admin-Hinweis an den User. `id` ist der Firebase-Key
+    /// (Millisekunden-Timestamp als String) — genutzt für „Verstanden"-
+    /// Acknowledgement-Delete.
+    struct AdminNotice: Identifiable {
+        let id: String         // Firebase-Key
+        let type: String       // z.B. "drop_removed"
+        let dropID: String?
+        let reason: String
+        let at: Date
+    }
+
+    /// Beobachtet Admin-Hinweise für den eingeloggten User.
+    /// Liefert bei jedem ChildAdded-Event den neuen Notice. Der Caller
+    /// (AppStore) zeigt diesen dann im UI und ruft anschließend
+    /// `acknowledgeAdminNotice` auf, um den Eintrag zu löschen.
+    @discardableResult
+    func observeAdminNotices(onNew: @escaping (AdminNotice) -> Void) -> DatabaseHandle? {
+        guard let uid = Auth.auth().currentUser?.uid else { return nil }
+        let ref = db.child("users").child(uid).child("adminNotices")
+        return ref.observe(.childAdded) { snap in
+            guard let dict = snap.value as? [String: Any] else { return }
+            let type   = dict["type"]   as? String ?? "info"
+            let reason = dict["reason"] as? String ?? "—"
+            let dropID = dict["dropID"] as? String
+            // Server-timestamp kommt als ms zurück; bei Local-Echo evtl.
+            // schon als Date-konform.
+            let atRaw = dict["at"] as? Double ?? 0
+            let date = Date(timeIntervalSince1970: atRaw / 1000)
+            DispatchQueue.main.async {
+                onNew(AdminNotice(id: snap.key, type: type, dropID: dropID,
+                                  reason: reason, at: date))
+            }
+        }
+    }
+
+    func removeAdminNoticesObserver(_ handle: DatabaseHandle) {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        db.child("users").child(uid).child("adminNotices").removeObserver(withHandle: handle)
+    }
+
+    /// Löscht einen Admin-Notice nach „Verstanden" — sonst würde er beim
+    /// nächsten App-Start erneut auftauchen.
+    func acknowledgeAdminNotice(noticeID: String) {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        db.child("users").child(uid).child("adminNotices").child(noticeID).removeValue()
     }
 
     // MARK: - Kontakt-Matching
@@ -1443,11 +1752,37 @@ class RealtimeDBManager: ObservableObject {
         }
     }
 
+    /// Live-Observer auf `config/` — feuert beim Initial-Load UND bei
+    /// jeder Server-seitigen Änderung. Damit reagieren laufende Apps
+    /// sofort wenn du in der Firebase Console `minRequiredVersion`
+    /// auf eine neuere Version setzt — kein App-Restart nötig.
+    @discardableResult
+    func observeAppVersionConfig(onUpdate: @escaping (_ minRequired: String?, _ recommended: String?) -> Void) -> DatabaseHandle {
+        let ref = db.child("config")
+        return ref.observe(.value) { snap in
+            let dict = snap.value as? [String: Any] ?? [:]
+            let minReq = dict["minRequiredVersion"] as? String
+            let rec    = dict["recommendedVersion"] as? String
+            DispatchQueue.main.async { onUpdate(minReq, rec) }
+        }
+    }
+
+    func removeAppVersionConfigObserver(_ handle: DatabaseHandle) {
+        db.child("config").removeObserver(withHandle: handle)
+    }
+
     func fetchUserMeta(uid: String, completion: @escaping (_ createdAt: Date?, _ birthdate: Date?) -> Void) {
         guard !uid.isEmpty else { completion(nil, nil); return }
         db.child("users").child(uid).observeSingleEvent(of: .value) { snap in
             let dict = snap.value as? [String: Any] ?? [:]
-            let createdAt: Date? = (dict["createdAt"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) }
+            // createdAt nur als gültig nehmen wenn der ms-Wert plausibel ist
+            // (>= 2024, andernfalls 0/legacy-Bug → nil zurückgeben).
+            // Sonst würde createdAt=0 zu Date(1970) und triggert fälschlich
+            // den Beta-Badge-Cutoff.
+            let createdAt: Date? = {
+                guard let ms = dict["createdAt"] as? Double, ms > 1_700_000_000_000 else { return nil }
+                return Date(timeIntervalSince1970: ms / 1000)
+            }()
             let birthdate: Date? = (dict["birthdate"] as? Double).map { Date(timeIntervalSince1970: $0) }
             DispatchQueue.main.async { completion(createdAt, birthdate) }
         }
@@ -1627,6 +1962,25 @@ struct AdminDropEntry: Identifiable {
     }
 }
 
+// MARK: - Live-Joiner-Info aus dropins/{dropID}/{joinerID}
+//
+// Wird vom Host-seitigen Live-Pin gerendert (Map) sowie vom
+// Detail-Sheet wenn jemand auf den Pin tappt. Werte kommen aus
+// `joinDrop`/`updateJoinerLiveLocation`-Writes und werden via
+// `observeJoinerLocations` zusammengelesen.
+struct JoinerLiveInfo {
+    let lat: Double
+    let lng: Double
+    let name: String?
+    let emoji: String?
+    let age: Int?
+    let profileImageURL: String?
+    let reliabilityPoints: Int?
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: lat, longitude: lng)
+    }
+}
+
 // MARK: - Datenmodell für Fremde Drops aus DB
 
 struct StrangerDropData: Identifiable {
@@ -1641,4 +1995,8 @@ struct StrangerDropData: Identifiable {
     let hostGender: String?    // "männlich" | "weiblich" | "divers" | nil (älter)
     let maxParticipants: Int   // vom Host gesetzt; Default 10 für ältere Einträge
     let isBoosted: Bool        // Drops+: goldener Boost-Rahmen auf der Karte
+    /// Aktuelle Teilnehmerzahl (Host + Joiner). Wird vom Host live gepflegt
+    /// (`updateCurrentParticipantsForOwnDrop`). Default 1 = nur Host für
+    /// Legacy-Einträge ohne dieses Feld.
+    let currentParticipants: Int
 }
