@@ -152,11 +152,12 @@
     .wordmark .logo {
       width: 32px; height: 32px;
       border-radius: 9px;
-      background: var(--gradient);
       box-shadow: 0 4px 14px rgba(228,140,58,0.35);
-      display: grid; place-items: center;
-      color: white; font-weight: 900; font-size: 18px;
+      display: block;
+      object-fit: cover;
     }
+    /* Etwas größeres Footer-Logo für Lesbarkeit */
+    footer .wordmark .logo { width: 36px; height: 36px; border-radius: 10px; }
     .nav-links {
       display: flex; gap: 22px; align-items: center;
       font-size: 14px; font-weight: 500;
@@ -455,7 +456,7 @@
 
   <nav class="topbar">
     <a class="wordmark" href="/">
-      <span class="logo">D</span>
+      <img src="/app-icon.png" alt="" class="logo">
       Drops
     </a>
     <div class="nav-links">
@@ -626,7 +627,7 @@
 
   <footer>
     <a class="wordmark" href="/">
-      <span class="logo">D</span>
+      <img src="/app-icon.png" alt="" class="logo">
       Drops
     </a>
     <div class="footer-links">

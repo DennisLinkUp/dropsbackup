@@ -86,14 +86,12 @@
       text-decoration: none;
     }
     .nav-logo .dot {
-      width: 28px; height: 28px;
+      width: 30px; height: 30px;
       border-radius: 8px;
-      background: var(--gradient);
       box-shadow: 0 4px 12px rgba(228,140,58,0.35);
-      display: grid; place-items: center;
-      color: white; font-weight: 900; font-size: 14px;
+      object-fit: cover;
+      display: block;
     }
-    .nav-logo .dot::after { content: "D"; }
     .nav-back {
       font-size: 14px; font-weight: 500; color: var(--text2);
       text-decoration: none; transition: color .2s;
@@ -227,7 +225,7 @@
 
 <nav>
   <a class="nav-logo" href="/">
-    <span class="dot"></span>
+    <img class="dot" src="/app-icon.png" alt="">
     Drops
   </a>
   <a class="nav-back" href="index.html">Zurück</a>
