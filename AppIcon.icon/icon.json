@@ -1,0 +1,135 @@
+{
+  "fill" : {
+    "linear-gradient" : [
+      "display-p3:0.78809,0.92139,0.81592,1.00000",
+      "display-p3:0.85498,0.81982,0.94141,1.00000"
+    ],
+    "orientation" : {
+      "start" : {
+        "x" : 0.5,
+        "y" : 0
+      },
+      "stop" : {
+        "x" : 0.5,
+        "y" : 0.7
+      }
+    }
+  },
+  "groups" : [
+    {
+      "layers" : [
+
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    },
+    {
+      "layers" : [
+        {
+          "fill" : "none",
+          "image-name" : "radar_wave1 6.svg",
+          "name" : "radar_wave1 6",
+          "opacity" : 0.8,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              91.86665505631754,
+              4.979384156524304
+            ]
+          }
+        },
+        {
+          "fill" : "none",
+          "image-name" : "radar_wave2 4.svg",
+          "name" : "radar_wave2 4",
+          "opacity" : 0.6,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              108.38278408857559,
+              17.366480930717955
+            ]
+          }
+        },
+        {
+          "fill" : "none",
+          "glass" : true,
+          "image-name" : "LetterD-D.svg",
+          "name" : "LetterD-D",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              1.2291683862224545,
+              -0.4053290490485324
+            ]
+          }
+        },
+        {
+          "fill" : "none",
+          "image-name" : "radar_dot 3.svg",
+          "name" : "radar_dot 3",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              87.44766183449616,
+              0.8503518984597918
+            ]
+          }
+        }
+      ],
+      "position" : {
+        "scale" : 1,
+        "translation-in-points" : [
+          15.778144617116823,
+          0.4053290490485324
+        ]
+      },
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    },
+    {
+      "layers" : [
+
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    },
+    {
+      "layers" : [
+
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

@@ -134,8 +134,72 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        // Notifications auch im Vordergrund anzeigen (für SOS, DropIn-Alerts)
-        completionHandler([.banner, .badge, .sound])
+        // Im Vordergrund unterdrücken wir manche Notifications, weil die App
+        // sie eh als In-App-Sheet zeigt (sonst kommt Push UND Sheet).
+        let userInfo = notification.request.content.userInfo
+        let type = userInfo["type"] as? String ?? ""
+        let suppressInForeground: Set<String> = [
+            "join_request",     // Host bekommt Sheet via activeIncomingRequest
+            "join_accepted",    // Joiner sieht's via myJoinRequestStatus-Observer
+            "join_declined",
+            "dropin",           // Joiner taucht in Vor-Ort-Liste auf, Push wäre doppelt
+            "encounter",        // BLE-Confirmation passiert eh in der App
+            "powerhour_pre",    // Live-Pille zeigt Countdown
+            "powerhour_start",  // Banner ist eh im Map
+            "powerhour_endwarn",
+            "points_earned",    // Punkte-Toast zeigt's bereits in der App
+            "evening_reengagement" // App ist offen → kein Reminder nötig
+        ]
+        if suppressInForeground.contains(type) {
+            // Im Foreground unterdrücken wir das Banner — UND wir clearen
+            // das Badge sofort, weil der User die Sache eh ingame mitkriegt.
+            AppDelegate.clearBadge()
+            completionHandler([])
+            return
+        }
+        // Standard: Banner + Sound im Vordergrund (für SOS, DropIn-Alerts,
+        // Re-Engagement etc.). KEIN .badge mehr — sonst addiert iOS auf 1.
+        completionHandler([.banner, .sound])
+    }
+
+    // MARK: - applicationDidBecomeActive: Badge clearen
+    //
+    // Wenn der User die App öffnet (egal über welchen Weg — Icon-Tap,
+    // Notification-Tap, App-Switcher), gibt's keinen Grund das Badge
+    // weiter anzuzeigen. Sonst klebt die "1" am Icon bis er manuell
+    // alle Notifications aus dem Notification Center wischt.
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        AppDelegate.clearBadge()
+    }
+
+    /// Setzt Badge-Counter auf 0. Nutzt iOS 17+ API wenn verfügbar
+    /// (UIApplication.applicationIconBadgeNumber ist deprecated), sonst
+    /// Fallback. Räumt auch alle bereits ausgelieferten Notifications
+    /// im Notification Center auf, damit das Badge nicht beim nächsten
+    /// App-Restart wieder erscheint.
+    static func clearBadge() {
+        let center = UNUserNotificationCenter.current()
+        if #available(iOS 16.0, *) {
+            center.setBadgeCount(0) { _ in }
+        } else {
+            DispatchQueue.main.async {
+                UIApplication.shared.applicationIconBadgeNumber = 0
+            }
+        }
+        // Optional: alte ausgelieferte Notifications wegräumen damit der
+        // Notification Center nicht 20 alte "📍 Jemand ist eingeDroppt!"
+        // Einträge zeigt. Wir behalten Notifications der letzten Stunde
+        // — wenn der User gerade weggeschaut hat soll er sie noch sehen.
+        center.getDeliveredNotifications { notifs in
+            let oneHour: TimeInterval = 60 * 60
+            let stale = notifs.filter {
+                Date().timeIntervalSince($0.date) > oneHour
+            }
+            let staleIDs = stale.map(\.request.identifier)
+            if !staleIDs.isEmpty {
+                center.removeDeliveredNotifications(withIdentifiers: staleIDs)
+            }
+        }
     }
 
     func userNotificationCenter(
@@ -152,6 +216,10 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
                 userInfo: ["type": type, "data": userInfo]
             )
         }
+        // User hat die Notification getappt → App geht in den Vordergrund
+        // → Badge clearen. applicationDidBecomeActive würde das auch tun,
+        // hier explizit damit der Tap-Path schnell ist.
+        AppDelegate.clearBadge()
         completionHandler()
     }
 
@@ -242,5 +310,13 @@ class DropsSceneDelegate: NSObject, UIWindowSceneDelegate {
         print("🚦 [QA] SceneDelegate performActionFor: \(shortcutItem.type)")
         AppDelegate.routeQuickAction(shortcutItem.type)
         completionHandler(true)
+    }
+
+    /// Scene wird aktiv (App im Vordergrund) — Badge zurücksetzen damit
+    /// die "1" am Icon verschwindet. SwiftUI App-Lifecycle hat keinen
+    /// applicationDidBecomeActive-Hook auf View-Ebene — die Scene-API
+    /// ist der zuverlässige Weg.
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        AppDelegate.clearBadge()
     }
 }

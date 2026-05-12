@@ -1067,26 +1067,29 @@ struct CityGateView: View {
             // ── Aurora Hintergrund ─────────────────────────
             Color(hex: "f5f7fe").ignoresSafeArea()
 
+            // Aurora-Blobs aufs App-Icon abgestimmt: Orange dominant oben,
+            // Grün dominant unten, Coral in der Mitte als Übergang.
+            // Vorher: 34D36E/A78BFA/2DD4BF/FBBF24 (grün/violet/teal/amber).
             Circle()
-                .fill(Color(hex: "34D36E").opacity(0.32))
+                .fill(Color(hex: "E48C3A").opacity(0.32))      // Orange (icon-top)
                 .frame(width: 500)
                 .offset(x: animateAurora ? -140 : -100, y: animateAurora ? -280 : -240)
                 .blur(radius: 90)
 
             Circle()
-                .fill(Color(hex: "A78BFA").opacity(0.26))
+                .fill(Color(hex: "F6BD4D").opacity(0.26))      // Warmer Amber
                 .frame(width: 420)
                 .offset(x: animateAurora ? 180 : 140, y: animateAurora ? -260 : -220)
                 .blur(radius: 80)
 
             Circle()
-                .fill(Color(hex: "2DD4BF").opacity(0.20))
+                .fill(Color(hex: "5FA937").opacity(0.22))      // Grün (icon-bottom)
                 .frame(width: 360)
                 .offset(x: animateAurora ? -160 : -120, y: animateAurora ? 340 : 300)
                 .blur(radius: 75)
 
             Circle()
-                .fill(Color(hex: "FBBF24").opacity(0.16))
+                .fill(Color(hex: "F4956A").opacity(0.18))      // Coral-Akzent
                 .frame(width: 300)
                 .offset(x: animateAurora ? 150 : 110, y: animateAurora ? 320 : 280)
                 .blur(radius: 70)

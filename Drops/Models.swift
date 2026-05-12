@@ -165,10 +165,31 @@ struct DropEvent: Identifiable {
     var durationMinutes: Int = 120  // 0 = kein Limit (12h Fallback)
     var isBoosted: Bool = false     // Drops+ Feature: Boost auf der Karte
 
-    /// Ablaufzeitpunkt: durationMinutes == 0 → 12h-Fallback (kein Limit)
+    /// Verzögerung zwischen `createdAt` und tatsächlichem Drop-Start.
+    /// "In 30 Min" → 1800s usw. Wird zu `expiresAt` addiert damit die
+    /// Drop-Dauer ERST AB dem geplanten Start läuft, nicht ab dem
+    /// Erstellungszeitpunkt. Vorher: Drop erstellt um 18:00 mit
+    /// "In 30 Min" + 2h Dauer → expiresAt = 20:00, also 30 Min vor
+    /// dem geplanten Ende um 20:30 schon abgelaufen.
+    static func scheduledStartOffset(for scheduledTime: String) -> TimeInterval {
+        switch scheduledTime {
+        case "In 30 Min": return 30 * 60
+        case "In 1 Std":  return 60 * 60
+        case "In 2 Std":  return 120 * 60
+        default:          return 0  // "Jetzt", "Heute Abend", oder unbekannt
+        }
+    }
+
+    /// Tatsächlicher Drop-Start = createdAt + Scheduled-Offset.
+    var startsAt: Date {
+        createdAt.addingTimeInterval(Self.scheduledStartOffset(for: scheduledTime))
+    }
+
+    /// Ablaufzeitpunkt: durationMinutes == 0 → 12h-Fallback (kein Limit).
+    /// Bei geplanten Drops läuft die Dauer ab `startsAt`, nicht ab `createdAt`.
     var expiresAt: Date {
         if durationMinutes > 0 {
-            return createdAt.addingTimeInterval(Double(durationMinutes) * 60)
+            return startsAt.addingTimeInterval(Double(durationMinutes) * 60)
         }
         switch scheduledTime {
         case "Heute Abend":
@@ -267,6 +288,10 @@ struct IncomingJoinRequest: Identifiable {
     /// Entfernung in Metern vom Drop-Standort — wird vom Host berechnet
     /// sobald Joiner-Live-Position in Firebase steht.
     var joinerDistanceMeters: Double? = nil
+    /// Optionale Begleit-Nachricht des Joiners ("Hi, freu mich!"). Wird
+    /// dem Host im IncomingJoinRequestSheet angezeigt damit er Kontext
+    /// hat, bevor er Accept/Decline drückt.
+    let joinerMessage: String?
     let requestedAt: Date
 
     /// Nach 5 Min Auto-Accept wenn Host nicht reagiert
@@ -416,13 +441,33 @@ struct MapAnnotationItem: Identifiable {
     /// Firebase UID des Hosts — für Drop-Invite-Bonus (+5 an Host wenn via Link gejoint).
     var hostUID: String? = nil
     var isStranger: Bool { type == .stranger }
-    var isFull: Bool { participants.count >= maxParticipants }
-    var spotsLeft: Int { max(0, maxParticipants - participants.count) }
+    /// Live-Teilnehmerzahl aus `drops/{id}/currentParticipants` (Host + Joiner).
+    /// Nur bei Stranger-Drops gesetzt — beim eigenen Drop ist `participants`
+    /// ohnehin lokal vollständig. Wenn `nil` → Fallback auf `participants.count`.
+    var liveParticipantCount: Int? = nil
+    /// Effektive Teilnehmerzahl: Stranger-Drops nutzen den Live-Wert vom
+    /// Host, eigene Drops die lokale `participants`-Liste.
+    var effectiveParticipantCount: Int {
+        liveParticipantCount ?? participants.count
+    }
+    var isFull: Bool { effectiveParticipantCount >= maxParticipants }
+    var spotsLeft: Int { max(0, maxParticipants - effectiveParticipantCount) }
 
-    /// Ablaufzeitpunkt — spiegelt DropEvent.expiresAt.
+    /// Tatsächlicher Drop-Start = createdAt + Scheduled-Offset
+    /// (siehe DropEvent.scheduledStartOffset). Bei „Jetzt" identisch
+    /// mit createdAt.
+    var startsAt: Date {
+        createdAt.addingTimeInterval(
+            DropEvent.scheduledStartOffset(for: scheduledTime ?? "Jetzt")
+        )
+    }
+
+    /// Ablaufzeitpunkt — spiegelt DropEvent.expiresAt. Bei geplanten
+    /// Drops ("In 30 Min" usw.) läuft die Dauer erst ab `startsAt`
+    /// damit der Timer nicht vor dem geplanten Beginn schon abläuft.
     var expiresAt: Date {
         if durationMinutes > 0 {
-            return createdAt.addingTimeInterval(Double(durationMinutes) * 60)
+            return startsAt.addingTimeInterval(Double(durationMinutes) * 60)
         }
         switch scheduledTime ?? "Jetzt" {
         case "Heute Abend":
@@ -484,11 +529,16 @@ struct PastDropParticipant: Identifiable, Codable {
     let reliabilityScore: Int
     var wasHost: Bool = false
     var didShowUp: Bool = true
+    /// Profilbild-URL des Teilnehmers — wird beim Drop-Ende eingefroren,
+    /// damit die "Letzte Drops"-Liste und die Drop-Zusammenfassung das
+    /// Foto zeigen statt nur das Emoji-Fallback. Optional, weil ältere
+    /// PastDrop-Einträge (vor diesem Feld) noch ohne URL existieren.
+    var profileImageURL: String? = nil
 
     // ID wird beim Decodieren neu erzeugt — sie hat keine semantische
     // Bedeutung über den App-Run hinweg.
     enum CodingKeys: String, CodingKey {
-        case name, emoji, reliabilityScore, wasHost, didShowUp
+        case name, emoji, reliabilityScore, wasHost, didShowUp, profileImageURL
     }
 }
 
@@ -506,9 +556,13 @@ struct PastDrop: Identifiable, Codable {
     }
 
     var participantCount: Int { participants.count }
+    /// Durchschnittliche Zuverlässigkeit in Prozent. `reliabilityScore` ist
+    /// historisch ein Roh-Punktestand (kann > 100 sein) — fürs Anzeigen
+    /// als „%" cappen wir auf 100, sonst kommen Werte wie 151%/202% raus.
     var avgReliability: Int {
         guard !participants.isEmpty else { return 0 }
-        return participants.map(\.reliabilityScore).reduce(0, +) / participants.count
+        let total = participants.map { min($0.reliabilityScore, 100) }.reduce(0, +)
+        return total / participants.count
     }
     var dateLabel: String {
         let cal = Calendar.current
@@ -537,6 +591,19 @@ struct Encounter: Identifiable {
     let createdAt: Date
     var confirmed: Bool
     var denied: Bool
+    /// Firebase-UID des getroffenen Users — wird gebraucht um nach BLE-
+    /// Bestätigung eine Freundschaftsanfrage zu schicken. Optional damit
+    /// alte/legacy Encounter ohne UID weiter funktionieren.
+    var friendUID: String? = nil
+    /// Profilbild-URL — Avatar in der Encounter-Liste statt nur Emoji.
+    var friendProfileImageURL: String? = nil
+    /// Drop-ID (Firebase-Key, gleich `drop.id.uuidString`) zu dem dieser
+    /// Encounter gehört. Wird beim Pre-Erstellen (Accept/Join) gesetzt.
+    /// Solange dieser Drop noch in den aktiven Drops/dem aktiven Join
+    /// steht, wird der Encounter im UI ausgeblendet — er soll erst in
+    /// "Letzte Begegnungen" auftauchen, wenn der Drop vorbei ist. Optional
+    /// für Legacy-Einträge ohne dropID (die werden wie bisher angezeigt).
+    var dropID: String? = nil
 
     static let confirmationWindow: TimeInterval = 12 * 60 * 60
 
@@ -847,7 +914,16 @@ class AppStore: ObservableObject {
     /// SwiftUI-Scene laufen). Wird in LinkUpApp init gesetzt.
     nonisolated(unsafe) static weak var shared: AppStore?
 
-    @Published var isAuthenticated = false
+    @Published var isAuthenticated = false {
+        didSet {
+            // Drop-Einladungs-Observer beim Login starten — egal ob frisch
+            // signed-in oder warm-restart. Idempotent: Re-Aufruf entfernt
+            // den alten Handle und registriert neu.
+            if isAuthenticated, !oldValue {
+                startObservingDropInvitations()
+            }
+        }
+    }
     /// true = App ist gesperrt nach Timeout → Face ID erforderlich, kein Logout
     @Published var isSessionLocked = false
     /// Pending Quick-Action — gesetzt von AppDelegate.routeQuickAction wenn
@@ -988,6 +1064,14 @@ class AppStore: ObservableObject {
     /// fremder User ohne propagierten Wert) → false (kein Badge).
     static func qualifiesForBetaBadge(createdAt: Date?) -> Bool {
         guard let created = createdAt else { return false }
+        // Sanity-Floor: Drops gibt's erst seit Anfang 2026. Werte vor
+        // 01.01.2025 sind Datums-Bugs (z.B. createdAt=0 → 1970) und
+        // dürfen den Badge NICHT auslösen.
+        var minC = DateComponents(); minC.year = 2025; minC.month = 1; minC.day = 1
+        minC.timeZone = TimeZone(identifier: "Europe/Berlin")
+        let minPlausible = Calendar(identifier: .gregorian).date(from: minC) ?? Date(timeIntervalSince1970: 0)
+        guard created >= minPlausible else { return false }
+
         var c = DateComponents()
         c.year = 2026; c.month = 5; c.day = 4
         c.hour = 0; c.minute = 0; c.second = 0
@@ -1031,11 +1115,20 @@ class AppStore: ObservableObject {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
     }
 
-    /// Lädt Version-Config + setzt appVersionStatus. Idempotent OK aufrufbar
-    /// auch beim Foregrounding (re-evaluiert mit aktuellem RTDB-Stand).
+    /// Live-Observer-Handle für `config/`. Wird einmalig in `init`
+    /// registriert. Solange der Listener läuft, reagiert die App
+    /// sofort wenn du in Firebase `minRequiredVersion` änderst —
+    /// kein Cold-Start nötig.
+    private var appVersionConfigHandle: DatabaseHandle? = nil
+
+    /// Lädt Version-Config + setzt appVersionStatus. Erstaufruf
+    /// registriert einen Live-Observer, alle weiteren Aufrufe sind
+    /// no-ops (Observer feuert ohnehin bei jedem Config-Change).
+    /// `refreshAppVersionStatus()` beim Foregrounding bleibt safe —
+    /// der Observer würde dort auch ein Initial-Snapshot liefern.
     func refreshAppVersionStatus() {
         let current = currentAppVersion
-        RealtimeDBManager.shared.fetchAppVersionConfig { [weak self] minReq, rec in
+        let apply: (String?, String?) -> Void = { [weak self] minReq, rec in
             guard let self = self else { return }
             // Min-Required hat Vorrang
             if let minReq = minReq, !minReq.isEmpty,
@@ -1051,6 +1144,17 @@ class AppStore: ObservableObject {
                 return
             }
             self.appVersionStatus = .ok
+        }
+
+        if appVersionConfigHandle == nil {
+            // Erstaufruf → Live-Observer registrieren. Feuert sofort
+            // mit Initial-Snapshot + bei jedem späteren Update.
+            appVersionConfigHandle = RealtimeDBManager.shared
+                .observeAppVersionConfig(onUpdate: apply)
+        } else {
+            // Re-Trigger (z.B. Foregrounding) → einmal lesen, falls
+            // der Observer aus irgendeinem Grund stehen geblieben ist.
+            RealtimeDBManager.shared.fetchAppVersionConfig(completion: apply)
         }
     }
 
@@ -1081,8 +1185,13 @@ class AppStore: ObservableObject {
     func loadOwnCreatedAtIfNeeded() {
         guard ownCreatedAt == nil,
               let uid = FirebaseAuth.Auth.auth().currentUser?.uid else { return }
+        print("[BetaBadge] loadOwnCreatedAt für UID=\(uid)")
         RealtimeDBManager.shared.fetchUserMeta(uid: uid) { [weak self] created, _ in
-            DispatchQueue.main.async { self?.ownCreatedAt = created }
+            DispatchQueue.main.async {
+                self?.ownCreatedAt = created
+                let qualifies = AppStore.qualifiesForBetaBadge(createdAt: created)
+                print("[BetaBadge] createdAt=\(created.map { String(describing: $0) } ?? "nil") → qualifiesForBeta=\(qualifies)")
+            }
         }
     }
 
@@ -1100,8 +1209,38 @@ class AppStore: ObservableObject {
         /// Nur wahr wenn der Punkt-Push aus einer aktiven Power-Hour kam.
         /// Steuert eine kleine Bolt-Variation in der Toast-UI.
         let isPowerHour: Bool
+        /// Optionaler Begründungs-Text — z.B. "Drop bestätigt", "Streak-Bonus",
+        /// "Host-Erfolg". Wird im Toast als kleine Subline angezeigt damit
+        /// der User nicht im Dunkeln tappt warum gerade Punkte kamen.
+        var reason: String? = nil
     }
     @Published var pointsToast: PointsToast? = nil
+    /// Letzter Punkte-Award-Grund, gesetzt von den verschiedenen Award-
+    /// Funktionen vor dem Score-Inkrement. Der Toast-Observer liest ihn
+    /// und resettet danach. Verwendet als „Annotation" für den nächsten
+    /// Toast — sonst müssten wir jede Score-Mutation manuell touchen.
+    fileprivate var nextPointsReason: String? = nil
+
+    /// Eindeutiger BLE-Token für den aktuellen User: erste 8 Zeichen der
+    /// Firebase-UID. Wird sowohl beim Werben (BLE-Advertise) als auch
+    /// beim Matchen (drop.participants[].token) verwendet — nur so
+    /// können Host und Joiner sich gegenseitig identifizieren.
+    /// VORHER nutzte der Code `currentUser.id.uuidString.prefix(8)`
+    /// (lokale UUID), aber `acceptJoinRequest` setzt den Token-Wert vom
+    /// JOINER aus dessen firebaseUID — dadurch hatte der Host einen
+    /// firebaseUID-basierten Token im participant.token, aber der Joiner
+    /// advertisierte mit local-UUID-Token → keine Match → BLE-Bestätigung
+    /// erreichte die UI nie, Joiner blieb ewig auf "Unterwegs".
+    var myBLEToken: String {
+        let uid = FirebaseAuth.Auth.auth().currentUser?.uid
+            ?? UserDefaults.standard.string(forKey: UDKey.firebaseUID)
+            ?? ""
+        guard !uid.isEmpty else {
+            // Fallback (vor Auth/Hydration) — sollte selten passieren.
+            return String(currentUser.id.uuidString.replacingOccurrences(of: "-", with: "").prefix(8))
+        }
+        return String(uid.prefix(8))
+    }
 
     /// Letzter beobachteter Punktestand. Initial bei loadAll() gesetzt,
     /// damit die Hydration aus UserDefaults/Firebase keinen Toast triggert.
@@ -1149,6 +1288,17 @@ class AppStore: ObservableObject {
 
     /// Status der eigenen Anfrage als Joiner: "pending" | "accepted" | "declined"
     @Published var myJoinRequestStatus: String = ""
+    /// Drop-ID der aktuell ausstehenden Beitrittsanfrage. Wird gesetzt sobald
+    /// `sendJoinRequest` rausgeht und gecleart wenn Host akzeptiert/ablehnt
+    /// oder der Joiner zurückzieht. Verwendet von FeedView/LiveMapView um
+    /// "Ausstehend" statt "Bin dabei!" anzuzeigen — sonst wirkt's so als
+    /// hätte der Host schon bestätigt, was zu Verwirrung führt.
+    @Published var pendingJoinDropID: UUID? = nil
+    /// Timer-Task für den 5-Min-Auto-Accept-Watcher auf Joiner-Seite. Wenn
+    /// der Host nach 5 min nicht reagiert hat, gehen wir auf die DB und
+    /// kicken Auto-Accept selbst (Host-App könnte ja closed sein). Push
+    /// folgt automatisch über den Status-Observer.
+    private var pendingAutoAcceptTask: DispatchWorkItem? = nil
 
     private var joinRequestObserverHandle: DatabaseHandle?
     private var myJoinStatusObserverHandle: DatabaseHandle?
@@ -1214,6 +1364,9 @@ class AppStore: ObservableObject {
                     uid: uid, name: idxName,
                     phone: idxPhone, email: idxEmail
                 )
+                // Eingehende Drop-Einladungen beobachten (Freund klickt
+                // "Zu meinem Drop einladen" → wir bekommen ein Sheet).
+                startObservingDropInvitations()
             }
 
             // Sofort-Check per Telefon/E-Mail — kein Firebase-Roundtrip nötig
@@ -1338,6 +1491,10 @@ class AppStore: ObservableObject {
         // Avatare kommen aus users/{theirUID}/profileImageURL (RTDB-Cache).
         if let uid = FirebaseAuth.Auth.auth().currentUser?.uid {
             startObservingFriends(ownerUID: uid)
+            // Admin-Notices live mitlesen — wenn ein Admin den Drop des
+            // Users entfernt hat (auch offline geschehen), wird das Sheet
+            // beim nächsten App-Start sofort präsentiert.
+            startObservingAdminNotices()
         }
 
         // ── Veraltete Drop-Benachrichtigungen aus vorherigen Sessions löschen ─
@@ -2176,15 +2333,21 @@ class AppStore: ObservableObject {
         Task { @MainActor in PushNotificationManager.shared.trackAction() }
 
         // ── Firebase: DropIn schreiben + Host benachrichtigen ──────────
+        // Nur GPS schreiben wenn wirklich Fix vorhanden — nicht der
+        // Default-München-Center. Sonst Joiner-Pin landet auf falschem
+        // Standort beim Host. Updates kommen via updateJoinerLiveLocation.
         let uid = FirebaseAuth.Auth.auth().currentUser?.uid ?? currentUser.id.uuidString
+        let isDefaultMunichLegacy = abs(currentUser.coordinate.latitude  - 48.1371) < 0.0005
+                                  && abs(currentUser.coordinate.longitude - 11.5754) < 0.0005
+        let legacyValidGPS = !isDefaultMunichLegacy
         RealtimeDBManager.shared.joinDrop(
             dropID: drop.id.uuidString,
             joinerID: uid,
             joinerName: currentUser.name,
             joinerEmoji: currentUser.emoji,
             joinerAge: userAge,
-            joinerLat: currentUser.coordinate.latitude,
-            joinerLng: currentUser.coordinate.longitude
+            joinerLat: legacyValidGPS ? currentUser.coordinate.latitude : nil,
+            joinerLng: legacyValidGPS ? currentUser.coordinate.longitude : nil
         )
         // Auf DropIns des Hosts hören (falls der Host derselbe User auf anderem Gerät ist – Schutz)
         startObservingDropIns(forDropID: drop.id.uuidString)
@@ -2195,7 +2358,19 @@ class AppStore: ObservableObject {
     }
 
     func hasJoinedDrop(dropID: UUID) -> Bool {
-        joinRequests.contains { $0.dropID == dropID && !$0.isExpired }
+        // Sowohl bereits accepted (in joinRequests) als auch noch pending
+        // (myJoinRequestStatus == "pending" für genau diesen Drop) zählen
+        // als "dabei". Vorher: nur accepted → User klickte "Bin dabei!"
+        // bei Pending-Status, aber UI zeigte's nicht und nach Verlassen
+        // hing der Pending-State weiter.
+        if joinRequests.contains(where: { $0.dropID == dropID && !$0.isExpired }) {
+            return true
+        }
+        if myJoinRequestStatus == "pending",
+           activeDropAnnotation?.id == dropID {
+            return true
+        }
+        return false
     }
 
     /// Verbleibende Cooldown-Sekunden für einen Drop (0 wenn frei).
@@ -2222,6 +2397,31 @@ class AppStore: ObservableObject {
             }
         }
         joinRequests.removeAll { $0.dropID == dropID }
+
+        // Pending Join-Request canceln: Firebase-Eintrag löschen, Observer
+        // abmelden, lokalen Status reseten. Vorher blieb das Pending-Flag
+        // hängen → "Bin dabei!" im Umgebungstab obwohl der User verlassen
+        // hat, plus der Host bekam keine Cancel-Notification.
+        let uid = FirebaseAuth.Auth.auth().currentUser?.uid ?? currentUser.id.uuidString
+        RealtimeDBManager.shared.cancelJoinRequest(
+            dropID: dropID.uuidString, joinerID: uid
+        )
+        if let handle = myJoinStatusObserverHandle {
+            RealtimeDBManager.shared.removeJoinRequestObserver(handle, dropID: dropID.uuidString)
+            myJoinStatusObserverHandle = nil
+        }
+        if activeDropAnnotation?.id == dropID {
+            activeDropAnnotation = nil
+        }
+        myJoinRequestStatus = ""
+        // Pending-State + Auto-Accept-Watcher canceln — sonst feuert der
+        // 5-Min-Timer auf einen Drop den der User gerade verlassen hat.
+        if pendingJoinDropID == dropID {
+            pendingJoinDropID = nil
+            pendingAutoAcceptTask?.cancel()
+            pendingAutoAcceptTask = nil
+        }
+
         if activeJoinedDropID == dropID { leaveActiveJoin() }
         DropNotificationManager.cancelReminders(for: dropID)
         endDropLiveActivity()
@@ -2290,6 +2490,29 @@ class AppStore: ObservableObject {
         encounters.filter { !$0.confirmed && !$0.denied && !$0.isExpired }
     }
 
+    /// IDs der Drops, die gerade noch laufen (eigener oder beigetretener).
+    /// Encounter mit einer dieser dropIDs werden im Profil ausgeblendet —
+    /// sie sollen erst auftauchen, wenn der Drop wirklich vorbei ist.
+    private var liveDropIDsForEncounterFilter: Set<String> {
+        var ids = Set<String>()
+        for d in activeDrops where !d.isExpired { ids.insert(d.id.uuidString) }
+        if let joined = activeJoinedDropID { ids.insert(joined.uuidString) }
+        return ids
+    }
+
+    /// Encounters, die in „Letzte Begegnungen" angezeigt werden sollen.
+    /// Pre-erstellte Encounter (Accept/Join) werden ausgeblendet, solange
+    /// ihr zugehöriger Drop noch läuft — sonst stünde der Treffende im
+    /// Profil schon als Begegnung, obwohl man sich noch gar nicht
+    /// getroffen hat. Legacy-Encounter ohne dropID bleiben sichtbar.
+    var visibleEncounters: [Encounter] {
+        let live = liveDropIDsForEncounterFilter
+        return encounters.filter { enc in
+            guard let did = enc.dropID else { return true }
+            return !live.contains(did)
+        }
+    }
+
     func confirmEncounter(id: UUID) {
         if let i = encounters.firstIndex(where: { $0.id == id }) {
             encounters[i].confirmed = true
@@ -2339,10 +2562,14 @@ class AppStore: ObservableObject {
                 self.lastObservedPoints = newPoints
                 guard delta > 0 else { return }
                 // Letzter Toast wird durch neuen ersetzt — neue ID damit
-                // SwiftUI ein .transition triggert.
+                // SwiftUI ein .transition triggert. Reason wird vom letzten
+                // Award-Pfad mitgegeben (z.B. "Drop besucht", "Host-Erfolg").
+                let reason = self.nextPointsReason
+                self.nextPointsReason = nil
                 self.pointsToast = PointsToast(
                     delta: delta,
-                    isPowerHour: self.isPowerHourActive
+                    isPowerHour: self.isPowerHourActive,
+                    reason: reason
                 )
             }
     }
@@ -2361,6 +2588,87 @@ class AppStore: ObservableObject {
     static let boostThreshold = 5
     static let boostBonus     = 15
     static let powerHourBonus = 25
+
+    // MARK: - Anti-Farm: Mindestdauer & Pair-Cooldown
+    //
+    // Schutz gegen Punkte-Farming mit zwei Accounts in einem Raum:
+    //   1) Drop muss ≥ 15 min aktiv gewesen sein, sonst keine Punkte.
+    //   2) Zwei UIDs können sich nur 1× alle 12h gegenseitig Punkte
+    //      einbringen (Encounter-Bonus + Host-Newcomer-Bonus).
+    // Beide Schichten kombiniert verhindern die häufigsten Farm-Setups
+    // ohne ehrliche User zu treffen (15 min ist die Schwelle für ein
+    // "echtes" Treffen, 12h trifft fast nie zwei reale Drops/Tag mit
+    // derselben Person).
+    static let minPaidDropDuration: TimeInterval = 15 * 60
+    static let pairCooldownSeconds: TimeInterval = 12 * 60 * 60
+
+    // GPS-Fallback-Bestätigung (falls BLE nicht greift, z. B. weil Nutzer
+    // BLE deaktiviert hat / iOS den Background-Scan zwischendurch killt):
+    //
+    //   • Joiner muss innerhalb 20 m vom Drop-Standort sein
+    //     (bewusst eng — GPS in der Stadt ist 5–15 m genau,
+    //     20 m fängt das Rauschen ab ohne falsch-positive Treffer
+    //     vom Nachbartisch / anderen Hauseingang).
+    //   • UND er muss diese Position für mindestens 60 s gehalten
+    //     haben (kurzes Vorbeilaufen zählt nicht als "anwesend").
+    //
+    // Vorher war es einfach < 100 m beim Drop-Ende — das hat zwei reale
+    // Probleme erzeugt: (a) Joiner, die nur kurz an der Adresse vorbei-
+    // gefahren sind, wurden als "vor Ort" gewertet; (b) der Schwellen-
+    // wert war so locker, dass auch GPS-Drift quer durch den Häuser-
+    // block reichte. Mit 20 m + 1 min Verweildauer fällt beides weg.
+    static let gpsArrivalThresholdMeters: Double = 20
+    static let gpsArrivalDwellSeconds: TimeInterval = 60
+
+    /// UD-Key für den letzten Pair-Award-Zeitpunkt zwischen mir und
+    /// otherUID. Sortiert die UIDs damit (A,B) und (B,A) denselben Key
+    /// ergeben — sonst würde jede Seite ihren eigenen Cooldown-Eintrag
+    /// schreiben und die Logik wäre asymmetrisch.
+    private func pairCooldownKey(for otherUID: String) -> String {
+        let myUID = UserDefaults.standard.string(forKey: UDKey.firebaseUID) ?? ""
+        let pair = [myUID, otherUID].sorted().joined(separator: "_")
+        return "ud_pairAwardAt_\(pair)"
+    }
+
+    /// True wenn dieser User-Pair innerhalb der letzten 12 h schon
+    /// einmal Punkte für ein gemeinsames Treffen vergeben wurden.
+    /// Bei fehlender UID (z.B. unbekannter Joiner) → false (großzügig).
+    func isPairOnCooldown(otherUID: String?) -> Bool {
+        guard let otherUID = otherUID, !otherUID.isEmpty else { return false }
+        let ud = UserDefaults.standard
+        guard let lastTS = ud.object(forKey: pairCooldownKey(for: otherUID)) as? Date else {
+            return false
+        }
+        return Date().timeIntervalSince(lastTS) < Self.pairCooldownSeconds
+    }
+
+    /// Markiert einen Pair-Award als jetzt erfolgt — sperrt den Pair
+    /// für die nächsten 12 h gegen weitere Punkte.
+    func markPairAwarded(otherUID: String?) {
+        guard let otherUID = otherUID, !otherUID.isEmpty else { return }
+        UserDefaults.standard.set(Date(), forKey: pairCooldownKey(for: otherUID))
+    }
+
+    // MARK: - Info-Toast (Anti-Farm-Feedback)
+    //
+    // Eigener Kanal getrennt vom positiven `pointsToast` — wir nutzen ihn
+    // wenn KEINE Punkte vergeben werden (Drop zu kurz, Pair auf Cooldown),
+    // damit der User nicht denkt es wäre ein Bug.
+    struct InfoToast: Identifiable, Equatable {
+        let id = UUID()
+        let message: String
+        let icon: String           // SF Symbol
+    }
+    @Published var infoToast: InfoToast? = nil
+
+    func showInfoToast(_ message: String, icon: String = "hourglass") {
+        let toast = InfoToast(message: message, icon: icon)
+        infoToast = toast
+        // Auto-dismiss nach 3.5 s — neue Toast überschreibt vorherigen.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in
+            if self?.infoToast?.id == toast.id { self?.infoToast = nil }
+        }
+    }
 
     /// Definition eines Power-Hour-Zeitfensters: Wochentage + Uhrzeit-Spanne.
     /// `weekdays` nutzt die Apple-Convention (1 = Sonntag … 7 = Samstag).
@@ -2544,12 +2852,31 @@ class AppStore: ObservableObject {
     /// Wird aufgerufen wenn ein eigener Drop zustande gekommen ist (min. 1 weiterer Teilnehmer
     /// war vor Ort). +12 Host-Bonus + Prüfung Neuling-Host-Bonus (+5 pro Drop-Entdecker).
     func recordHostSuccess(arrivedParticipants: [DropParticipant]) {
+        nextPointsReason = "Host-Erfolg · Drop bestätigt"
+        // Anti-Farm: Joiner mit aktivem 12h-Cooldown rausfiltern.
+        // Wenn KEIN Joiner mehr "frisch" ist (alle schon heute getroffen)
+        // → kein Host-Bonus, keine Newcomer-Punkte. Drop wandert trotzdem
+        // in den Verlauf (das passiert in cancelDrop), aber ohne Punkte-
+        // Belohnung. Sonst könnte man Multi-Drop-Farming mit denselben
+        // Alt-Accounts betreiben.
+        let freshJoiners = arrivedParticipants.filter { p in
+            !isPairOnCooldown(otherUID: p.firebaseUID)
+        }
+        guard !freshJoiners.isEmpty else {
+            // Alle Pairs auf Cooldown → Drop zählt für Statistik, keine Punkte.
+            showInfoToast("Heute schon mit allen getroffen — keine Punkte (12 h Cooldown)",
+                          icon: "clock.arrow.circlepath")
+            saveAll()
+            return
+        }
+
         reliabilityScore.hostSuccesses += 1
         reliabilityScore.totalCommits += 1
         reliabilityScore.showUps += 1
         applyStreakBonus()
         // Neuling-Bonus: für jeden gejointen Drop-Entdecker (<200 Pkt) +5
-        let newcomers = arrivedParticipants.filter {
+        // — aber nur wenn der Pair NICHT auf Cooldown ist (freshJoiners).
+        let newcomers = freshJoiners.filter {
             ReliabilityScore.badge(forPoints: $0.reliabilityScore) == "Drop-Entdecker"
                 || ReliabilityScore.badge(forPoints: $0.reliabilityScore) == "Neustart"
         }
@@ -2558,13 +2885,18 @@ class AppStore: ObservableObject {
         // tatsächlich Teilnehmer hatte. Belohnt erfolgreiches Hosten ohne
         // farmbar zu sein — kann genau einmal pro User vergeben werden.
         let ud = UserDefaults.standard
-        if !arrivedParticipants.isEmpty,
+        if !freshJoiners.isEmpty,
            !ud.bool(forKey: UDKey.firstHostBonusReceived) {
             reliabilityScore.creationBonusPoints += 10
             ud.set(true, forKey: UDKey.firstHostBonusReceived)
         }
         // Boost: +5 wenn die Umgebung gerade leer ist
         applyBoostBonusIfActive(reason: "Drop gehostet")
+
+        // Pair-Cooldown markieren — alle Fresh-Joiner sind jetzt für 12 h
+        // gegen weitere Host-/Encounter-Punkte gesperrt.
+        for p in freshJoiners { markPairAwarded(otherUID: p.firebaseUID) }
+
         saveAll()
         pushReliabilityScoreToFirestore()
         maybeAskForReview()
@@ -2661,17 +2993,114 @@ class AppStore: ObservableObject {
         }
         // Zusätzlich: Live-Positions-Updates der Joiner beobachten → Pins auf der Karte
         joinerLocationObserverHandle = RealtimeDBManager.shared.observeJoinerLocations(
-            dropID: dropID
-        ) { [weak self] joinerID, lat, lng in
-            guard let self = self else { return }
-            self.joinerLiveCoordinates[joinerID] = CLLocationCoordinate2D(latitude: lat, longitude: lng)
-        }
+            dropID: dropID,
+            onUpdate: { [weak self] joinerID, info in
+                guard let self = self else { return }
+                self.joinerLiveInfos[joinerID] = info
+
+                // GPS-Verweilzeit-Tracking (für anyGPSNear-Gate beim
+                // Drop-Ende). Ist der Joiner innerhalb der Schwelle, setzen
+                // wir den Eintritts-Zeitpunkt einmal — verlässt er sie,
+                // löschen wir ihn, damit er die Verweilzeit von vorn
+                // sammeln muss.
+                if let myDropID = self.dropInObservedDropID,
+                   let drop = self.activeDrops.first(where: { $0.id.uuidString == myDropID }) {
+                    let dropLoc = CLLocation(
+                        latitude: drop.location.coordinate.latitude,
+                        longitude: drop.location.coordinate.longitude
+                    )
+                    let joinerLoc = CLLocation(latitude: info.lat, longitude: info.lng)
+                    let dist = joinerLoc.distance(from: dropLoc)
+                    if dist <= AppStore.gpsArrivalThresholdMeters {
+                        if self.joinerNearSinceUTC[joinerID] == nil {
+                            self.joinerNearSinceUTC[joinerID] = Date()
+                        }
+                    } else {
+                        self.joinerNearSinceUTC.removeValue(forKey: joinerID)
+                    }
+                }
+
+                // SAFETY-NET: Wenn der Joiner in dropins/ steht aber NICHT
+                // in drop.participants ist (z.B. weil Host die Anfrage
+                // verpasst hat oder Auto-Accept ohne Sheet lief), ihn
+                // jetzt nachträglich anhand der dropins-Daten anhängen.
+                // Sonst zeigt das Drop-Sheet ihn nicht in Unterwegs/Vor Ort,
+                // und der Map-Pin fällt auf den "Joiner"-Default-Namen.
+                if let dropIdx = self.activeDrops.firstIndex(where: { $0.id.uuidString == dropID }),
+                   !self.activeDrops[dropIdx].participants.contains(where: { $0.firebaseUID == joinerID }) {
+                    let token = String(joinerID.replacingOccurrences(of: "-", with: "").prefix(8))
+                    let joinerUser = User(
+                        id: UUID(),
+                        name: info.name ?? "Teilnehmer",
+                        emoji: info.emoji ?? "👤",
+                        isAvailable: true,
+                        statusMessage: "Unterwegs",
+                        coordinate: info.coordinate,
+                        profileImageURL: info.profileImageURL,
+                        firebaseUID: joinerID,
+                        reliabilityPoints: info.reliabilityPoints ?? 100
+                    )
+                    self.activeDrops[dropIdx].participants.append(joinerUser)
+                    self.refreshLiveActivityParticipants()
+                    print("[joiners] safety-net added \(info.name ?? joinerID) to drop.participants (was missing)")
+                }
+
+                // Live-Teilnehmerzahl auf Firebase pushen, damit andere
+                // Clients (Karte / Umgebungstab) den Drop als „Voll"
+                // markieren bzw. ausblenden können. Host zählt mit (+1).
+                let count = self.joinerLiveInfos.count + 1
+                RealtimeDBManager.shared.updateCurrentParticipants(dropID: dropID, count: count)
+            },
+            onRemove: { [weak self] joinerID in
+                guard let self = self else { return }
+                // 1) Live-Pin-Daten weg — Karte rendert den Joiner nicht mehr
+                self.joinerLiveInfos.removeValue(forKey: joinerID)
+                // 1a) GPS-Verweilzeit-Tracker zurücksetzen, sonst würde
+                //     ein abgemeldeter Joiner später beim Drop-Ende fälsch-
+                //     licherweise als "anwesend" zählen, falls der Stempel
+                //     im Dict bliebe.
+                self.joinerNearSinceUTC.removeValue(forKey: joinerID)
+                // 2) Aus drop.participants entfernen — sonst bleibt der Joiner
+                //    in der "Unterwegs"-/"Vor Ort"-Liste des Drop-Sheets.
+                //    activeDrops[idx] wird neu gesetzt, damit SwiftUI re-rendert.
+                if let dropIdx = self.activeDrops.firstIndex(where: { $0.id.uuidString == dropID }) {
+                    let before = self.activeDrops[dropIdx].participants.count
+                    self.activeDrops[dropIdx].participants.removeAll {
+                        $0.firebaseUID == joinerID
+                    }
+                    if self.activeDrops[dropIdx].participants.count != before {
+                        self.refreshLiveActivityParticipants()
+                    }
+                }
+                // Live-Teilnehmerzahl runter — sobald wieder Platz ist,
+                // sehen andere Clients den Drop sofort wieder als „nicht
+                // voll" und können beitreten.
+                let count = self.joinerLiveInfos.count + 1
+                RealtimeDBManager.shared.updateCurrentParticipants(dropID: dropID, count: count)
+            }
+        )
     }
 
-    /// Live-Koordinaten der Joiner pro UID — wird von observeJoinerLocations befüllt.
-    /// Die Kartendarstellung pickt sich daraus die Pins. Wird beim Drop-Ende gecleart.
-    @Published var joinerLiveCoordinates: [String: CLLocationCoordinate2D] = [:]
+    /// Live-Daten der Joiner pro UID (Coord + Name + Emoji + Age + Profilbild +
+    /// Reliability). Wird durch observeJoinerLocations befüllt aus
+    /// `dropins/{dropID}/{joinerID}` — daher kennt der Host den richtigen
+    /// Joiner-Namen direkt (statt "Joiner"-Fallback) und kann den Pin sauber
+    /// rendern. Wird beim Drop-Ende gecleart.
+    @Published var joinerLiveInfos: [String: JoinerLiveInfo] = [:]
+    /// Backwards-compat Computed: Map auf coords, falls anderer Code das
+    /// noch erwartet.
+    var joinerLiveCoordinates: [String: CLLocationCoordinate2D] {
+        Dictionary(uniqueKeysWithValues: joinerLiveInfos.map { ($0.key, $0.value.coordinate) })
+    }
     private var joinerLocationObserverHandle: DatabaseHandle? = nil
+
+    /// Zeitpunkt, ab dem ein Joiner per GPS innerhalb der
+    /// `gpsArrivalThresholdMeters` vom Drop-Standort liegt. Wird beim
+    /// ersten Eintreten des Radius gesetzt und bei Verlassen wieder
+    /// gelöscht. Beim Drop-Ende muss `now - nearSince ≥ gpsArrivalDwellSeconds`
+    /// gelten, damit der Joiner als "anwesend" zählt.
+    /// Key: firebaseUID des Joiners.
+    private var joinerNearSinceUTC: [String: Date] = [:]
 
     // MARK: - Drop Views („wer hat geschaut")
 
@@ -2881,7 +3310,8 @@ class AppStore: ObservableObject {
             RealtimeDBManager.shared.removeJoinerLocationObserver(handle, dropID: dropID)
         }
         joinerLocationObserverHandle = nil
-        joinerLiveCoordinates.removeAll()
+        joinerLiveInfos.removeAll()
+        joinerNearSinceUTC.removeAll()
         if let handle = dropInObserverHandle, let dropID = dropInObservedDropID {
             RealtimeDBManager.shared.removeDropInObserver(handle, dropID: dropID)
         }
@@ -2893,12 +3323,27 @@ class AppStore: ObservableObject {
 
     func startObservingJoinRequests(forDropID dropID: String) {
         stopObservingJoinRequests()
+        // Cutoff-Time: Anfragen die ÄLTER sind als das Drop-Erstellungs-
+        // Zeitpunkt sollten unmöglich sein (fresh UUID), aber falls doch
+        // — Stale-Data ignorieren statt als "Phantom-Joiner" anzuzeigen.
+        // Gibt's immer noch Auto-Join-Probleme, wäre das hier zu sehen.
+        let cutoff = activeDrops.first(where: { $0.id.uuidString == dropID })?.createdAt
+            ?? Date().addingTimeInterval(-60)  // Fallback: max 60s alt
         joinRequestObserverHandle = RealtimeDBManager.shared.observeIncomingJoinRequests(
             dropID: dropID
-        ) { [weak self] joinerID, name, emoji, age, imageURL, points, isPlus, requestedAt in
+        ) { [weak self] joinerID, name, emoji, age, imageURL, points, isPlus, requestedAt, message in
             guard let self = self else { return }
+            // Stale-Request-Filter: alles vor cutoff = aus einem alten
+            // Snapshot oder Force-Quit-Garbage. NICHT als neue Anfrage
+            // verarbeiten, sonst landet ein Geist als pendingJoinRequest
+            // im Sheet → Auto-Accept würde ihn nach 5 min hineinziehen.
+            if requestedAt < cutoff.addingTimeInterval(-5) {
+                print("[joinReq] IGNORED stale request from \(name) — requestedAt=\(requestedAt) < cutoff=\(cutoff)")
+                return
+            }
             // Keine doppelten Einträge
             guard !self.pendingJoinRequests.contains(where: { $0.id == joinerID }) else { return }
+            print("[joinReq] new request from \(name) (\(joinerID)) for drop \(dropID)")
             let req = IncomingJoinRequest(
                 id: joinerID, dropID: dropID,
                 joinerName: name, joinerEmoji: emoji,
@@ -2906,6 +3351,7 @@ class AppStore: ObservableObject {
                 joinerProfileImageURL: imageURL,
                 joinerReliabilityPoints: points,
                 joinerIsPlus: isPlus,
+                joinerMessage: message,
                 requestedAt: requestedAt
             )
             self.pendingJoinRequests.append(req)
@@ -2943,6 +3389,51 @@ class AppStore: ObservableObject {
         RealtimeDBManager.shared.respondToJoinRequest(
             dropID: req.dropID, joinerID: req.id, accepted: true)
         removePendingRequest(req)
+
+        // Joiner zur participants-Liste des eigenen Drops hinzufügen, damit
+        // er im Drop-Sheet (Vor Ort / Unterwegs) und in der Live Activity
+        // erscheint. Match per dropID-String — DropEvent.id ist UUID, der
+        // joinRequest.dropID ist String (Firebase-Key).
+        if let dropIdx = activeDrops.firstIndex(where: { $0.id.uuidString == req.dropID }) {
+            // Verhindern dass derselbe Joiner doppelt eingetragen wird.
+            if !activeDrops[dropIdx].participants.contains(where: { $0.firebaseUID == req.id }) {
+                let token = String(req.id.replacingOccurrences(of: "-", with: "").prefix(8))
+                let joinerUser = User(
+                    id: UUID(),
+                    name: req.joinerName,
+                    emoji: req.joinerEmoji,
+                    isAvailable: true,
+                    statusMessage: "Unterwegs",
+                    coordinate: currentUser.coordinate,
+                    profileImageURL: req.joinerProfileImageURL,
+                    firebaseUID: req.id,
+                    reliabilityPoints: req.joinerReliabilityPoints
+                )
+                activeDrops[dropIdx].participants.append(joinerUser)
+            }
+
+            // Encounter pre-erstellen für die spätere BLE-Bestätigung —
+            // sobald BLE-Proximity feuert, wird `confirmed = true` gesetzt
+            // und der Joiner taucht im "Letzte Begegnungen"-Block auf.
+            // Ohne diesen Schritt blieb die Encounter-Liste leer obwohl
+            // BLE bestätigte. Doppel-Encounter werden über UID gefiltert.
+            let drop = activeDrops[dropIdx]
+            if !encounters.contains(where: { $0.friendUID == req.id && !$0.denied && !$0.isExpired }) {
+                let encounter = Encounter(
+                    friendName: req.joinerName,
+                    friendEmoji: req.joinerEmoji,
+                    activityEmoji: drop.activity.emoji,
+                    activityName: drop.activity.name,
+                    createdAt: Date(),
+                    confirmed: false, denied: false,
+                    friendUID: req.id,
+                    friendProfileImageURL: req.joinerProfileImageURL,
+                    dropID: drop.id.uuidString
+                )
+                encounters.insert(encounter, at: 0)
+            }
+        }
+
         refreshLiveActivityParticipants()
     }
 
@@ -2954,8 +3445,24 @@ class AppStore: ObservableObject {
 
     private func removePendingRequest(_ req: IncomingJoinRequest) {
         pendingJoinRequests.removeAll { $0.id == req.id }
+        // Sheet erst NACH einem kurzen Delay re-präsentieren wenn weitere
+        // Requests warten — sonst frisst SwiftUI's `.sheet(item:)`-Binding
+        // die schnelle nil → non-nil Transition und zeigt das nächste
+        // Sheet nicht. Bei schnell aufeinanderfolgenden Anfragen war das
+        // der Grund warum die 2. Anfrage „nicht ankam".
         if activeIncomingRequest?.id == req.id {
-            activeIncomingRequest = pendingJoinRequests.first
+            activeIncomingRequest = nil
+            if let next = pendingJoinRequests.first {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+                    guard let self = self else { return }
+                    // Re-Check: zwischenzeitlich könnte der Joiner cancellt
+                    // haben oder ein anderer Request hat den Spot belegt.
+                    if self.activeIncomingRequest == nil,
+                       self.pendingJoinRequests.contains(where: { $0.id == next.id }) {
+                        self.activeIncomingRequest = next
+                    }
+                }
+            }
         }
     }
 
@@ -2977,7 +3484,7 @@ class AppStore: ObservableObject {
 
     // MARK: - Join Request Flow (Joiner-Seite)
 
-    func sendJoinRequest(to drop: MapAnnotationItem) {
+    func sendJoinRequest(to drop: MapAnnotationItem, message: String? = nil) {
         guard !isInActiveDrop else { return }
         guard !hasJoinedDrop(dropID: drop.id) else { return }
         // Service-Zone-Gate: User muss in einer der 5 Launch-Städte sein um zu joinen.
@@ -2988,9 +3495,11 @@ class AppStore: ObservableObject {
            Date().timeIntervalSince(leftAt) < AppStore.joinCooldown { return }
 
         myJoinRequestStatus = "pending"
+        pendingJoinDropID = drop.id
         let uid = FirebaseAuth.Auth.auth().currentUser?.uid ?? currentUser.id.uuidString
 
-        // Anfrage senden
+        // Anfrage senden — inkl. optionaler Begleit-Nachricht damit der
+        // Host weiß was den Joiner bewegt ("Hi, ich liebe Wandern").
         RealtimeDBManager.shared.sendJoinRequest(
             dropID: drop.id.uuidString,
             joinerID: uid,
@@ -2999,7 +3508,8 @@ class AppStore: ObservableObject {
             joinerAge: userAge,
             profileImageURL: profileImageURL,
             reliabilityPoints: reliabilityScore.points,
-            isPlus: isDropsPlusActive
+            isPlus: isDropsPlusActive,
+            message: message
         )
 
         // Status beobachten
@@ -3010,9 +3520,22 @@ class AppStore: ObservableObject {
             self.myJoinRequestStatus = status
             switch status {
             case "accepted":
+                // Pending-State clearen, Auto-Accept-Watcher canceln,
+                // Push an User damit er weiß dass es jetzt läuft.
+                self.pendingJoinDropID = nil
+                self.pendingAutoAcceptTask?.cancel()
+                self.pendingAutoAcceptTask = nil
+                if !self.isAppActive {
+                    PushNotificationManager.shared.notifyMyJoinAccepted(
+                        hostName: drop.name, activityName: drop.activity
+                    )
+                }
                 // Jetzt tatsächlich joinen
                 self.completeJoin(drop: drop)
             case "declined":
+                self.pendingJoinDropID = nil
+                self.pendingAutoAcceptTask?.cancel()
+                self.pendingAutoAcceptTask = nil
                 self.myJoinRequestStatus = "declined"
                 // Nach 3 Sek zurücksetzen
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
@@ -3021,6 +3544,29 @@ class AppStore: ObservableObject {
             default: break
             }
         }
+
+        // 5-Min-Hinweis (KEIN Auto-Accept!): wenn Host nach 5 min nicht
+        // reagiert, feuern wir auf Joiner-Seite nur einen lokalen Push-
+        // Hinweis. Der eigentliche Auto-Accept läuft auf HOST-Seite via
+        // `scheduleAutoAccept` (existiert seit Anfang) — wenn Host-App zu
+        // ist passiert kein Auto-Accept, das ist ok.
+        // VORHER: hier wurde respondToJoinRequest(accepted: true) gefeuert,
+        // wodurch der Joiner sich SELBST in fremde Drops eintragen konnte
+        // — Bug "stehe automatisch drin". Jetzt nur noch passiver Hinweis.
+        // Für die UI nutzt FeedView/LiveMapView weiterhin pendingJoinDropID
+        // um "Ausstehend" zu zeigen, und der Host-side Status-Observer
+        // räumt den Pending-State auf wenn doch noch akzeptiert wird.
+        let autoTask = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            guard self.myJoinRequestStatus == "pending",
+                  self.pendingJoinDropID == drop.id else { return }
+            PushNotificationManager.shared.notifyHostDidntRespond(
+                hostName: drop.name, activityName: drop.activity
+            )
+        }
+        pendingAutoAcceptTask?.cancel()
+        pendingAutoAcceptTask = autoTask
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5 * 60, execute: autoTask)
 
         // Live Activity & Annotation merken
         activeDropAnnotation = drop
@@ -3035,6 +3581,10 @@ class AppStore: ObservableObject {
             myJoinStatusObserverHandle = nil
         }
         myJoinRequestStatus = ""
+        // Pending → Accepted: State + Auto-Watcher aufräumen.
+        pendingJoinDropID = nil
+        pendingAutoAcceptTask?.cancel()
+        pendingAutoAcceptTask = nil
 
         // Nach Accept: echten Standort nutzen
         let exactCoord = drop.realCoordinate ?? drop.coordinate
@@ -3042,6 +3592,34 @@ class AppStore: ObservableObject {
         resolvedDrop.coordinate = exactCoord
         resolvedDrop.isFuzzy    = false
         resolvedDrop.realCoordinate = nil
+
+        // activeDropAnnotation auf den ENTFUZZTEN Drop updaten — sonst
+        // zeigt der ActiveDropTabView die fuzzy Coordinate (oder gar keine,
+        // weil currentActiveAnnotation die alte Fuzzy-Version nicht mehr
+        // findet). Vorher: blank/weißer Tab nach Accept.
+        activeDropAnnotation = resolvedDrop
+
+        // Encounter pre-erstellen für die spätere BLE-Bestätigung — Host
+        // ist der erste Eintrag in resolvedDrop.participants. Wenn BLE
+        // dann das Treffen bestätigt, wird confirmed = true gesetzt und
+        // der Host erscheint im "Letzte Begegnungen"-Block + als
+        // Kontakt-Vorschlag.
+        if let host = resolvedDrop.participants.first,
+           let hostUID = host.firebaseUID ?? resolvedDrop.hostUID,
+           !encounters.contains(where: { $0.friendUID == hostUID && !$0.denied && !$0.isExpired }) {
+            let encounter = Encounter(
+                friendName: host.name,
+                friendEmoji: host.emoji,
+                activityEmoji: resolvedDrop.emoji,
+                activityName: resolvedDrop.activity,
+                createdAt: Date(),
+                confirmed: false, denied: false,
+                friendUID: hostUID,
+                friendProfileImageURL: host.profileImageURL,
+                dropID: resolvedDrop.id.uuidString
+            )
+            encounters.insert(encounter, at: 0)
+        }
 
         let note = JoinRequest(
             id: UUID(), dropID: drop.id,
@@ -3053,14 +3631,31 @@ class AppStore: ObservableObject {
         setActiveJoin(drop.id)
         DropNotificationManager.scheduleExpiryReminders(for: resolvedDrop)
         startDropLiveActivity(annotation: resolvedDrop, isHost: false)
+
+        // Nur GPS schreiben wenn wir wirklich einen Fix haben — nicht den
+        // Default-München-Center. Sonst landet der Joiner-Pin beim Host
+        // mitten in der Stadt, obwohl der Joiner z.B. nebenan steht.
+        // Default-Coord aus User-Init: (48.1371, 11.5754) ± Toleranz.
+        let isDefaultMunich = abs(currentUser.coordinate.latitude  - 48.1371) < 0.0005
+                           && abs(currentUser.coordinate.longitude - 11.5754) < 0.0005
+        let validGPS = !isDefaultMunich
         RealtimeDBManager.shared.joinDrop(
             dropID: drop.id.uuidString,
             joinerID: FirebaseAuth.Auth.auth().currentUser?.uid ?? currentUser.id.uuidString,
             joinerName: currentUser.name, joinerEmoji: currentUser.emoji,
             joinerAge: userAge,
-            joinerLat: currentUser.coordinate.latitude,
-            joinerLng: currentUser.coordinate.longitude
+            joinerLat: validGPS ? currentUser.coordinate.latitude : nil,
+            joinerLng: validGPS ? currentUser.coordinate.longitude : nil
         )
+
+        // Auf den Live-Tab (.create zeigt ActiveDropTabView wenn isInActiveDrop)
+        // umschalten — sonst sieht der User die Bestätigungs-Animation
+        // aber bleibt auf seinem letzten Tab (Feed/Map) hängen, ohne
+        // eindeutiges Signal "du bist jetzt drin". Kleines Delay damit
+        // First-Drop-Celebration und aktueller Sheet-Dismiss zuerst durch sind.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            self?.selectedTab = .create
+        }
 
         // First-Drop-Celebration: nur beim allerersten Join.
         maybeCelebrateFirstDrop(.joined)
@@ -3073,20 +3668,54 @@ class AppStore: ObservableObject {
         // Drop-Koordinate für GPS-Fallback merken
         joinSessionDropCoord = activeDropAnnotation?.coordinate
 
-        // BLE-Proximity starten
-        let myToken  = String(currentUser.id.uuidString.replacingOccurrences(of: "-", with: "").prefix(8))
-        bluetoothMeetup.start(userToken: myToken, dropID: id, joinedAt: Date())
+        // BLE-Proximity starten — Token aus firebaseUID damit Host und
+        // Joiner sich gegenseitig identifizieren können (siehe myBLEToken).
+        bluetoothMeetup.start(userToken: myBLEToken, dropID: id, joinedAt: Date())
         bluetoothMeetup.onMeetupConfirmed = { [weak self] partnerToken in
             self?.autoConfirmBLEMeetup(partnerToken: partnerToken)
         }
     }
 
     func leaveActiveJoin() {
+        // Joiner-Feedback-Prompt — VOR den defer-Cleanups auswerten,
+        // sonst sind activeDropAnnotation/joinSessionStartedAt schon weg.
+        // Nur wenn die Session lang genug war (≥ 5 min), damit ein 30-
+        // Sek.-Try nicht direkt eine Bewertung des Hosts auslöst.
+        if let started = joinSessionStartedAt,
+           Date().timeIntervalSince(started) >= 5 * 60 {
+            presentJoinerFeedbackPrompt()
+        }
         defer {
             bluetoothMeetup.stop()
             bleConfirmedInCurrentSession = false
             joinSessionStartedAt         = nil
             joinSessionDropCoord         = nil
+            // Joiner aus dropins/-Node entfernen, sonst sieht der Host weiter
+            // unseren Pin auf der Karte UND einen Eintrag im Vor-Ort-/
+            // Unterwegs-Block. Beides gilt als "noch dabei".
+            if let joinedID = activeJoinedDropID,
+               let uid = FirebaseAuth.Auth.auth().currentUser?.uid {
+                RealtimeDBManager.shared.removeJoinerFromDrop(
+                    dropID: joinedID.uuidString, joinerID: uid
+                )
+                // Lokalen joinRequest-Eintrag entfernen — sonst zeigt der
+                // Umgebungs-Tab (FeedView) weiter "Bin dabei!", weil
+                // hasJoinedDrop(dropID:) auch in `joinRequests` schaut.
+                joinRequests.removeAll { $0.dropID == joinedID }
+                // Pending-Status zurücksetzen — falls wir noch in der
+                // "Warte auf Bestätigung"-Phase waren.
+                myJoinRequestStatus = ""
+                if pendingJoinDropID == joinedID {
+                    pendingJoinDropID = nil
+                    pendingAutoAcceptTask?.cancel()
+                    pendingAutoAcceptTask = nil
+                }
+                // Cooldown-Timestamp setzen damit der User den Drop nicht
+                // sofort wieder joinen kann (existierende Logik in
+                // leaveDropJoin macht das gleich für den ID-spezifischen
+                // Fall — hier replizieren für den activeJoinedDropID-Pfad).
+                dropLeaveTimes[joinedID] = Date()
+            }
             activeJoinedDropID           = nil
             activeDropAnnotation         = nil
         }
@@ -3098,7 +3727,10 @@ class AppStore: ObservableObject {
         // Bereits per BLE bestätigt → kein No-Show nötig
         if bleConfirmedInCurrentSession { return }
 
-        // BLE-Fallback: GPS-Nähe prüfen (< 150 m vom Drop-Standort)
+        // GPS-Fallback ENG: User muss < 50 m am Drop-Standort gewesen
+        // sein UND die Session ≥ 10 min gelaufen sein. Vorher 150 m war
+        // viel zu großzügig — User die nur kurz vorbeigegangen sind
+        // bekamen Punkte. Jetzt: nur echte Anwesenheit zählt.
         if let dropCoord = joinSessionDropCoord {
             let userLoc = CLLocation(latitude: currentUser.coordinate.latitude,
                                      longitude: currentUser.coordinate.longitude)
@@ -3106,8 +3738,9 @@ class AppStore: ObservableObject {
                                      longitude: dropCoord.longitude)
             let dist = userLoc.distance(from: dropLoc)
 
-            if dist < 150 {
-                // GPS bestätigt Anwesenheit → Show-up (Joiner-Ankunft)
+            if dist < 50 {
+                // GPS bestätigt physische Anwesenheit → Show-up
+                nextPointsReason = "GPS-Bestätigung · Drop besucht"
                 reliabilityScore.totalCommits += 1
                 reliabilityScore.showUps += 1
                 applyStreakBonus()
@@ -3118,9 +3751,8 @@ class AppStore: ObservableObject {
                 return
             }
 
-            // Weit weg → No-Show
+            // Weiter weg als 50 m → No-Show, kein „GPS-Drive-By"-Bonus
             reliabilityScore.totalCommits += 1
-            // Score-Schutz für Drops+ ist als Feature angekündigt aber noch nicht aktiv
             reliabilityScore.noShows += 1
             breakStreak()
             saveAll()
@@ -3134,7 +3766,42 @@ class AppStore: ObservableObject {
     /// Wird aufgerufen wenn BLE-Proximity eine Begegnung automatisch bestätigt hat.
     private func autoConfirmBLEMeetup(partnerToken: String) {
         bleConfirmedInCurrentSession = true   // Verhindert No-Show beim Verlassen
+
+        // Anti-Farm Layer 1+2 (Joiner-Seite):
+        //   1) Drop muss seit Start ≥ 15 min laufen (sonst zu kurz für Punkte)
+        //   2) Pair (ich + Host) darf nicht auf 12 h-Cooldown stehen
+        // Beide Schichten verhindern Punkte-Farming durch Alt-Account-Setups.
+        // Ein BLE-bestätigtes Treffen aus einem Farm-Drop wird also nur
+        // als ShowUp markiert (keine Encounter-Belohnung), Streak/Score
+        // bleiben unberührt.
+        let dropAgeOK: Bool = {
+            guard let started = joinSessionStartedAt else { return true }
+            return Date().timeIntervalSince(started) >= Self.minPaidDropDuration
+        }()
+        let hostUID = activeDropAnnotation?.hostUID
+        let pairOK = !isPairOnCooldown(otherUID: hostUID)
+
+        guard dropAgeOK && pairOK else {
+            // Kein Score-Effekt — aber den Encounter trotzdem als bestätigt
+            // markieren, damit kein "Nicht erschienen" hinten dran droht.
+            if let idx = encounters.firstIndex(where: { !$0.confirmed && !$0.denied }) {
+                encounters[idx].confirmed = true
+                generateFriendSuggestions(from: encounters[idx])
+            }
+            if !dropAgeOK {
+                let neededMins = Int(Self.minPaidDropDuration / 60)
+                showInfoToast("Drop zu kurz für Punkte (mind. \(neededMins) min)",
+                              icon: "hourglass")
+            } else {
+                showInfoToast("Heute schon getroffen — keine Punkte (12 h Cooldown)",
+                              icon: "clock.arrow.circlepath")
+            }
+            saveAll()
+            return
+        }
+
         // Offenen Encounter suchen, der zu diesem Drop passt
+        nextPointsReason = "Bluetooth-Treffen bestätigt"
         if let idx = encounters.firstIndex(where: { !$0.confirmed && !$0.denied }) {
             encounters[idx].confirmed = true
             reliabilityScore.totalCommits += 1
@@ -3152,6 +3819,10 @@ class AppStore: ObservableObject {
             maybeAwardFirstArrivalBonus()
             maybeAwardDropInviteBonusToHost()
         }
+
+        // Pair markieren — nächste 12 h kein Punkte-Boost mit demselben Host.
+        markPairAwarded(otherUID: hostUID)
+
         saveAll()                           // Score lokal persistieren
         pushReliabilityScoreToFirestore()   // Score für andere sichtbar machen
     }
@@ -3267,7 +3938,7 @@ class AppStore: ObservableObject {
         }
         for drop in activeDrops where drop.host.id == currentUser.id && !drop.isExpired {
             // Host ist immer als "bestätigt anwesend" markiert
-            let myToken = String(currentUser.id.uuidString.replacingOccurrences(of: "-", with: "").prefix(8))
+            let myToken = myBLEToken
             let hostAge: Int? = userBirthdate.flatMap {
                 Calendar.current.dateComponents([.year], from: $0, to: Date()).year
             }
@@ -3281,16 +3952,49 @@ class AppStore: ObservableObject {
                                                      profileImageURL: profileImageURL)]
             let dropCLLoc = CLLocation(latitude: drop.location.coordinate.latitude,
                                         longitude: drop.location.coordinate.longitude)
-            for friend in nearbyFriends.prefix(3) {
-                let friendToken = String(friend.id.uuidString.replacingOccurrences(of: "-", with: "").prefix(8))
-                let friendCLLoc = CLLocation(latitude: friend.coordinate.latitude,
-                                              longitude: friend.coordinate.longitude)
-                let dist = friendCLLoc.distance(from: dropCLLoc)
-                dropParticipants.append(DropParticipant(name: friend.name, emoji: friend.emoji,
-                                                         token: friendToken,
-                                                         simulatedDistance: dist,
-                                                         liveCoordinate: friend.coordinate,
-                                                         firebaseUID: friend.firebaseUID))
+
+            // Echte akzeptierte Joiner aus drop.participants übernehmen
+            // (Host-Index 0 ist currentUser → wird oben schon eingetragen,
+            // also dropFirst überspringen). Live-Koordinaten kommen aus
+            // joinerLiveCoordinates wenn vorhanden — sonst Drop-Pos als
+            // Fallback. Damit erscheinen Joiner-Pins auf der Karte UND in
+            // der Vor-Ort-/Unterwegs-Liste sobald der Host annimmt.
+            for joinerUser in drop.participants.dropFirst() {
+                guard let uid = joinerUser.firebaseUID else { continue }
+                let joinerToken = String(uid.replacingOccurrences(of: "-", with: "").prefix(8))
+                let liveCoord = joinerLiveCoordinates[uid]
+                let dist: Double? = liveCoord.map {
+                    CLLocation(latitude: $0.latitude, longitude: $0.longitude)
+                        .distance(from: dropCLLoc)
+                }
+                dropParticipants.append(DropParticipant(
+                    name: joinerUser.name,
+                    emoji: joinerUser.emoji,
+                    reliabilityScore: joinerUser.reliabilityPoints,
+                    age: nil,
+                    token: joinerToken,
+                    simulatedDistance: dist,
+                    liveCoordinate: liveCoord,
+                    profileImageURL: joinerUser.profileImageURL,
+                    firebaseUID: uid
+                ))
+            }
+
+            // Fallback: nearbyFriends als Demo-Pins NUR wenn echte Joiner
+            // (drop.participants.count == 1, also nur der Host) noch leer
+            // sind — sonst wirkt der Drop-Sheet leer beim Erstellen.
+            if drop.participants.count <= 1 {
+                for friend in nearbyFriends.prefix(3) {
+                    let friendToken = String(friend.id.uuidString.replacingOccurrences(of: "-", with: "").prefix(8))
+                    let friendCLLoc = CLLocation(latitude: friend.coordinate.latitude,
+                                                  longitude: friend.coordinate.longitude)
+                    let dist = friendCLLoc.distance(from: dropCLLoc)
+                    dropParticipants.append(DropParticipant(name: friend.name, emoji: friend.emoji,
+                                                             token: friendToken,
+                                                             simulatedDistance: dist,
+                                                             liveCoordinate: friend.coordinate,
+                                                             firebaseUID: friend.firebaseUID))
+                }
             }
             items.append(MapAnnotationItem(
                 id: drop.id,
@@ -3311,14 +4015,16 @@ class AppStore: ObservableObject {
             ))
         }
         // Wenn keine Live-Drops da sind → lokaler Cache (kann leer sein in Production)
+        // Volle Drops bleiben drin — der Umgebungstab markiert sie als „Voll".
+        // Die Map filtert sie separat in `LiveMapView.filteredAnnotations`.
         if liveStrangerDrops.isEmpty {
             items += strangerDropsCache.filter {
                 !blockedUserNames.contains($0.name)
-                    && !$0.isFull
                     && ($0.creatorAgeGroup.map { $0.minAge <= ageFilterMax && $0.maxAge >= ageFilterMin } ?? true)
             }
         } else {
             let friendUIDs = Set(friends.compactMap { $0.firebaseUID })
+            let joinedDropID = activeJoinedDropID?.uuidString
             items += liveStrangerDrops
                 .filter { !blockedUserNames.contains($0.displayName) }
                 .map { drop in
@@ -3326,26 +4032,33 @@ class AppStore: ObservableObject {
                     // auch nach Map-Rerendering korrekt matchen
                     let stableID = UUID(uuidString: drop.id) ?? UUID()
                     let isFriendHost = friendUIDs.contains(drop.ownerID)
-                    // Freunde: echter Standort + kein Fuzz + normale Anzeige (kein Lock-Look).
-                    // Fremde: zufälliger Versatz 800m–1km, unscharfe Anzeige bis Join.
-                    // Der `.stranger` Typ bleibt in beiden Fällen (damit der Drop in der
-                    // Feed-Section „Öffentliche Drops" auftaucht), aber isFuzzy wird
-                    // bei Freunden abgeschaltet.
-                    let displayCoord = isFriendHost
+                    // Auch akzeptierte Join-Pfade enthüllen den echten Standort:
+                    // sobald der User dem Drop beigetreten ist (activeJoinedDropID),
+                    // soll der Pin nicht mehr fuzzy / locked angezeigt werden.
+                    let isJoined = joinedDropID == drop.id
+                    let revealReal = isFriendHost || isJoined
+                    let displayCoord = revealReal
                         ? drop.coordinate
                         : Self.fuzzyCoordinate(drop.coordinate, minMeters: 800, maxMeters: 1000, seed: drop.id)
                     return MapAnnotationItem(id: stableID, name: drop.displayName, emoji: drop.emoji,
                                             activity: drop.activityName, coordinate: displayCoord,
                                             type: .stranger, scheduledTime: drop.scheduledTime,
                                             maxParticipants: drop.maxParticipants,
-                                            isFuzzy: !isFriendHost,
+                                            isFuzzy: !revealReal,
                                              realCoordinate: drop.coordinate, hostGender: drop.hostGender,
                                              isBoosted: drop.isBoosted,
-                                             hostUID: drop.ownerID)
+                                             hostUID: drop.ownerID,
+                                             liveParticipantCount: drop.currentParticipants)
                 }
         }
         // ── Joiner unterwegs (echter GPS-Standort des Users) ───────────
-        for note in activeJoinNotifications {
+        // NUR für die eigenen Drops rendern. Sonst sieht der User auch
+        // sich selber als Joiner-Pin auf seiner Karte, wenn er einem
+        // fremden Drop beigetreten ist (joinRequests enthält dann seine
+        // eigene ausgehende Anfrage). Eigener Standort wird bereits durch
+        // den blauen System-Punkt gerendert.
+        let myDropIDs = Set(activeDrops.map(\.id))
+        for note in activeJoinNotifications where myDropIDs.contains(note.dropID) {
             items.append(MapAnnotationItem(
                 id: note.id,
                 name: note.requesterName,
@@ -3355,24 +4068,32 @@ class AppStore: ObservableObject {
                 type: .joiner
             ))
         }
-        // ── Host-Sicht: Joiner-Pins basierend auf Firebase-Live-Koordinaten ──
-        // joinerLiveCoordinates wird durch observeJoinerLocations befüllt.
-        // Pro Joiner einen Pin an seiner echten Position.
+        // ── Host-Sicht: Joiner-Pins basierend auf Firebase-Live-Daten ──
+        // joinerLiveInfos wird durch observeJoinerLocations befüllt und
+        // enthält neben coord auch Name/Emoji/Age direkt aus dem dropins-
+        // Eintrag des Joiners. Damit zeigt der Pin den richtigen Namen
+        // statt "Joiner"-Fallback. participants-Liste ist nur Sekundär-
+        // Source falls dropins-Felder fehlen.
         if let activeDrop = activeDrops.first {
-            for (joinerUID, coord) in joinerLiveCoordinates {
-                // Name + Emoji aus participants-Liste ziehen falls vorhanden
+            for (joinerUID, info) in joinerLiveInfos {
                 let match = activeDrop.participants.first(where: { $0.firebaseUID == joinerUID })
-                let pinName  = match?.name  ?? "Joiner"
-                let pinEmoji = match?.emoji ?? "👤"
-                // Stabile UUID aus dem UID-Hash, damit SwiftUI nicht jedes Mal neu rendert
-                let id = UUID(uuidString: joinerUID) ?? UUID()
+                let pinName  = info.name  ?? match?.name  ?? "Joiner"
+                let pinEmoji = info.emoji ?? match?.emoji ?? "👤"
+                let creatorAge = info.age
+                // Stable UUID aus Firebase-UID-Hash. Firebase-UIDs haben NICHT
+                // das UUID-Format → UUID(uuidString:) gibt nil → vorher
+                // generierte das jeden Render eine NEUE UUID → SwiftUI dachte
+                // es sei ein neuer Pin → die Karte hat dauerhaft re-rendert
+                // (1× pro Sekunde Bug). Jetzt deterministisch via SHA-Hash.
+                let id = Self.stableUUID(from: joinerUID)
                 items.append(MapAnnotationItem(
                     id: id,
                     name: pinName,
                     emoji: pinEmoji,
                     activity: "→ \(activeDrop.activity.emoji) \(activeDrop.activity.name)",
-                    coordinate: coord,
-                    type: .joiner
+                    coordinate: info.coordinate,
+                    type: .joiner,
+                    creatorAge: creatorAge
                 ))
             }
         }
@@ -3384,6 +4105,29 @@ class AppStore: ObservableObject {
         guard !strangerDropsPlaced else { return }
         strangerDropsPlaced = true
         strangerDropsCache = []
+    }
+
+    /// Deterministische UUID aus einem beliebigen String (z.B. Firebase-UID,
+    /// die kein UUID-Format hat). FNV-1a Hash → 16 bytes UUID-Layout. Gleicher
+    /// Input ergibt immer dieselbe UUID — SwiftUI behält dadurch View-Identity
+    /// über Re-Renders, statt jedes Mal neue Items zu erkennen.
+    static func stableUUID(from string: String) -> UUID {
+        var hashLow: UInt64  = 14_695_981_039_346_656_037
+        var hashHigh: UInt64 = 0xcbf29ce484222325
+        for byte in string.utf8 {
+            hashLow  ^= UInt64(byte)
+            hashLow  &*= 1_099_511_628_211
+            hashHigh ^= UInt64(byte) &+ (hashLow << 7)
+            hashHigh &*= 1_099_511_628_211
+        }
+        let bytes: [UInt8] = (0..<16).map { i in
+            let src = i < 8 ? hashLow : hashHigh
+            return UInt8(truncatingIfNeeded: src >> ((i % 8) * 8))
+        }
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3],
+                           bytes[4], bytes[5], bytes[6], bytes[7],
+                           bytes[8], bytes[9], bytes[10], bytes[11],
+                           bytes[12], bytes[13], bytes[14], bytes[15]))
     }
 
     /// Versetzt eine Koordinate um einen zufälligen aber stabilen Betrag (seed-basiert).
@@ -3450,23 +4194,321 @@ class AppStore: ObservableObject {
                 return !byUID && !byDropID
             }
 
+            // Nearby-Drop-Notification auch hier triggern — sonst feuert
+            // sie nur beim nächsten GPS-Update. Wenn ein neuer Drop in
+            // der Nähe gerade live wird, sollte der User direkt einen
+            // Push bekommen statt erst auf den nächsten Location-Heartbeat
+            // zu warten. Throttle/Radius werden im Manager gehandhabt.
+            if self.activeDrops.isEmpty && self.activeJoinedDropID == nil {
+                let visible = self.allMapAnnotations.filter {
+                    $0.type == .stranger || $0.type == .friend
+                }
+                PushNotificationManager.shared.checkNearbyDrops(
+                    visible, userLocation: self.currentUser.coordinate
+                )
+            }
+
             // 2. Auto-Leave: joinRequests bereinigen wenn der Drop vom Host gecancelt wurde
+            // WICHTIG: Wenn die Drops-Liste komplett leer ist, ist das fast
+            // immer ein transienter Firebase-Glitch (Host backgroundet,
+            // RTDB reconnected). Auto-Leave würde den Joiner permanent
+            // rauskicken. Plus: Drops außerhalb des Radius sind hier auch
+            // nicht drin → bei Joiner-Bewegung würden eigene aktive Drops
+            // fälschlich als „canceled" gewertet werden. Beide Fälle skippen.
+            guard !drops.isEmpty else { return }
+
             let liveIDs = Set(drops.map { $0.id })
             let cancelledJoins = self.joinRequests.filter { req in
                 !req.isExpired && !liveIDs.contains(req.dropID.uuidString)
             }
+            // Bei Verdacht (Drop fehlt im Radius-gefilterten Snapshot) NICHT
+            // sofort kicken, sondern via Single-Event den DB-Pfad prüfen.
+            // Wenn wirklich gelöscht → Auto-Leave. Wenn nur außer Reichweite
+            // → ignorieren, der Drop läuft weiter.
             for req in cancelledJoins {
-                self.joinRequests.removeAll { $0.dropID == req.dropID }
-                if self.activeJoinedDropID == req.dropID { self.leaveActiveJoin() }
-                DropNotificationManager.cancelReminders(for: req.dropID)
-                self.endDropLiveActivity()
+                let dropIDString = req.dropID.uuidString
+                let dropEmoji = req.dropEmoji
+                let dropActivity = req.dropActivity
+                let dropID = req.dropID
+                RealtimeDBManager.shared.dropExists(dropID: dropIDString) { [weak self] exists in
+                    guard let self = self else { return }
+                    if exists {
+                        // Drop läuft noch — der ist nur aus dem Radius gerutscht
+                        // oder gerade nicht im Snapshot. NICHT auto-leaven.
+                        return
+                    }
+                    // Wirklich gelöscht → User informieren + cleanen.
+                    self.handleHostCancelledDrop(
+                        dropID: dropID,
+                        dropEmoji: dropEmoji,
+                        dropActivity: dropActivity
+                    )
+                }
             }
         }
+    }
+
+    /// Cleanup wenn der Host einen Drop wirklich beendet hat (per
+    /// Single-Event-Check bestätigt). Refactor aus dem Auto-Leave-Loop —
+    /// damit der DB-Existenz-Check sauber strukturiert bleibt.
+    private func handleHostCancelledDrop(dropID: UUID, dropEmoji: String, dropActivity: String) {
+        if self.activeJoinedDropID == dropID {
+            self.hostCancelledDropAlert = HostCancelledAlert(
+                dropEmoji: dropEmoji,
+                activityName: dropActivity
+            )
+            if !self.isAppActive {
+                PushNotificationManager.shared.notifyHostCancelledDrop(
+                    dropEmoji: dropEmoji,
+                    activityName: dropActivity
+                )
+            }
+        }
+        self.joinRequests.removeAll { $0.dropID == dropID }
+        if self.activeJoinedDropID == dropID { self.leaveActiveJoin() }
+        if self.pendingJoinDropID == dropID {
+            self.pendingJoinDropID = nil
+            self.pendingAutoAcceptTask?.cancel()
+            self.pendingAutoAcceptTask = nil
+        }
+        self.myJoinRequestStatus = ""
+        DropNotificationManager.cancelReminders(for: dropID)
+        self.endDropLiveActivity()
+    }
+
+
+    // MARK: - Host-Cancelled-Drop Alert
+    //
+    // Wird gesetzt wenn der Host einen Drop beendet, dem dieser User
+    // beigetreten war. MainTabView bindet ein Sheet/Alert an diesen
+    // State und zeigt einen Hinweis, weil der Drop sonst stillschweigend
+    // aus der UI verschwinden würde.
+    struct HostCancelledAlert: Identifiable, Equatable {
+        let id = UUID()
+        let dropEmoji: String
+        let activityName: String
+    }
+    @Published var hostCancelledDropAlert: HostCancelledAlert? = nil
+
+    // MARK: - Drop-Feedback (👍/👎 nach Drop-Ende)
+    //
+    // Nach jedem abgeschlossenen Drop fragt die App den User wie es war —
+    // jeweils pro Mit-Teilnehmer ein 👍 oder 👎. Funktioniert für beide
+    // Seiten:
+    //   - Host: bewertet alle Joiner die wirklich vor Ort waren
+    //   - Joiner: bewertet den Host
+    // Votes landen unter userFeedback/{ratedUID}/{raterUID}_{dropID} in
+    // Firebase. Aggregat-Score für den Bewerteten wird serverseitig
+    // berechnet (TODO Cloud Function), Client schreibt nur den Vote.
+    struct FeedbackTarget: Identifiable, Equatable {
+        let id: String           // ratedUID (Firebase)
+        let name: String
+        let emoji: String
+        let profileImageURL: String?
+        let wasHost: Bool        // markiert den Host in der Liste
+    }
+
+    struct DropFeedbackPrompt: Identifiable, Equatable {
+        let id = UUID()
+        let dropID: String
+        let dropEmoji: String
+        let dropActivity: String
+        let targets: [FeedbackTarget]
+        /// Welche Rolle hatte ICH bei dem Drop — fürs UI-Wording
+        /// ("Wie waren deine Gäste?" vs. "Wie war der Host?").
+        let wasHostMyself: Bool
+    }
+    @Published var pendingFeedbackPrompt: DropFeedbackPrompt? = nil
+
+    /// Schreibt einen Vote zu Firebase. Idempotent über (rater, drop, rated).
+    func submitFeedbackVote(ratedUID: String, dropID: String, vote: String) {
+        let myUID = FirebaseAuth.Auth.auth().currentUser?.uid
+            ?? UserDefaults.standard.string(forKey: UDKey.firebaseUID)
+            ?? ""
+        guard !myUID.isEmpty else { return }
+        RealtimeDBManager.shared.submitDropFeedback(
+            raterUID: myUID, ratedUID: ratedUID,
+            dropID: dropID, vote: vote
+        )
+    }
+
+    /// Host-Trigger: nach `cancelDrop` mit echten Joinern. Baut Liste der
+    /// Bewertbaren (alle außer ich selber, mit firebaseUID).
+    fileprivate func presentHostFeedbackPrompt(drop: DropEvent,
+                                               participants: [User]) {
+        let targets = participants.compactMap { user -> FeedbackTarget? in
+            guard let uid = user.firebaseUID, !uid.isEmpty,
+                  user.name != currentUser.name else { return nil }
+            return FeedbackTarget(
+                id: uid, name: user.name, emoji: user.emoji,
+                profileImageURL: user.profileImageURL, wasHost: false
+            )
+        }
+        guard !targets.isEmpty else { return }
+        // Mit kleiner Verzögerung damit der Drop-Verlauf-Toast nicht überlappt
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.pendingFeedbackPrompt = DropFeedbackPrompt(
+                dropID: drop.id.uuidString,
+                dropEmoji: drop.activity.emoji,
+                dropActivity: drop.activity.name,
+                targets: targets,
+                wasHostMyself: true
+            )
+        }
+    }
+
+    /// Joiner-Trigger: beim `leaveActiveJoin` wenn Session ≥ 5 min lief
+    /// (sonst zu kurz für ein sinnvolles Feedback).
+    fileprivate func presentJoinerFeedbackPrompt() {
+        guard let annotation = activeDropAnnotation,
+              let host = annotation.participants.first,
+              let hostUID = host.firebaseUID ?? annotation.hostUID,
+              !hostUID.isEmpty else { return }
+        let target = FeedbackTarget(
+            id: hostUID,
+            name: host.name.isEmpty ? annotation.name : host.name,
+            emoji: host.emoji.isEmpty ? annotation.emoji : host.emoji,
+            profileImageURL: host.profileImageURL,
+            wasHost: true
+        )
+        let dropEmoji = annotation.emoji
+        let dropActivity = annotation.activity
+        let dropID = annotation.id.uuidString
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.pendingFeedbackPrompt = DropFeedbackPrompt(
+                dropID: dropID,
+                dropEmoji: dropEmoji,
+                dropActivity: dropActivity,
+                targets: [target],
+                wasHostMyself: false
+            )
+        }
+    }
+
+    // MARK: - Drop-Einladung von einem Freund (Empfänger-Seite)
+
+    /// Eingehende Drop-Einladung. Wird gesetzt wenn ein Freund mich via
+    /// MiniProfileSheet → "Zu meinem Drop einladen" angetippt hat.
+    struct IncomingDropInvitation: Identifiable, Equatable {
+        let id: String           // = inviteID (Firebase-Key)
+        let dropID: String
+        let dropEmoji: String
+        let dropActivity: String
+        let dropLat: Double
+        let dropLng: Double
+        let hostUID: String
+        let hostName: String
+        let hostEmoji: String
+        let createdAt: Date
+
+        var coordinate: CLLocationCoordinate2D {
+            CLLocationCoordinate2D(latitude: dropLat, longitude: dropLng)
+        }
+    }
+    @Published var incomingDropInvitation: IncomingDropInvitation? = nil
+    private var dropInvitationObserverHandle: DatabaseHandle? = nil
+
+    /// Vom MiniProfileSheet aufgerufen: schreibt eine direkte Einladung
+    /// an einen Freund für meinen aktiven Drop. Sichtbar nur wenn ich
+    /// gerade hoste — UI muss das vorher prüfen.
+    func inviteFriendToDrop(friendUID: String) {
+        guard let drop = activeDrops.first else { return }
+        let myUID = FirebaseAuth.Auth.auth().currentUser?.uid
+            ?? UserDefaults.standard.string(forKey: UDKey.firebaseUID)
+            ?? ""
+        guard !myUID.isEmpty, !friendUID.isEmpty else { return }
+        RealtimeDBManager.shared.sendDropInvitation(
+            recipientUID: friendUID,
+            dropID:       drop.id.uuidString,
+            dropEmoji:    drop.activity.emoji,
+            dropActivity: drop.activity.name,
+            dropLat:      drop.location.coordinate.latitude,
+            dropLng:      drop.location.coordinate.longitude,
+            hostUID:      myUID,
+            hostName:     currentUser.name,
+            hostEmoji:    currentUser.emoji
+        )
+        showInfoToast("Einladung gesendet", icon: "paperplane.fill")
+    }
+
+    /// Wird beim Auth-Login einmalig aufgerufen — registriert den Observer
+    /// auf eingehende Drop-Einladungen für meine UID.
+    func startObservingDropInvitations() {
+        if let handle = dropInvitationObserverHandle, let uid = FirebaseAuth.Auth.auth().currentUser?.uid {
+            RealtimeDBManager.shared.removeIncomingDropInvitationsObserver(handle, myUID: uid)
+            dropInvitationObserverHandle = nil
+        }
+        guard let myUID = FirebaseAuth.Auth.auth().currentUser?.uid else {
+            print("[invite] startObservingDropInvitations: SKIP — no Firebase Auth UID")
+            return
+        }
+        print("[invite] observing dropInvitations/\(myUID)")
+        dropInvitationObserverHandle = RealtimeDBManager.shared.observeIncomingDropInvitations(
+            myUID: myUID
+        ) { [weak self] inviteID, dropID, dropEmoji, dropActivity,
+              lat, lng, hostUID, hostName, hostEmoji, createdAt in
+            guard let self = self else { return }
+            print("[invite] received: from=\(hostName) (\(hostUID)) drop=\(dropEmoji) \(dropActivity) inviteID=\(inviteID)")
+            // Wenn der Empfänger gerade selbst hostet oder bereits in einem
+            // Drop drin ist, ignorieren — sonst wäre die Einladung verwirrend.
+            // Wir löschen sie aber damit sie nicht ewig im DB bleibt.
+            if !self.activeDrops.isEmpty || self.activeJoinedDropID != nil {
+                print("[invite] DROPPED — recipient is already hosting or in a drop")
+                RealtimeDBManager.shared.dismissDropInvitation(myUID: myUID, inviteID: inviteID)
+                return
+            }
+            // Nur die NEUSTE Einladung anzeigen — überschreibt vorherige.
+            self.incomingDropInvitation = IncomingDropInvitation(
+                id: inviteID, dropID: dropID,
+                dropEmoji: dropEmoji, dropActivity: dropActivity,
+                dropLat: lat, dropLng: lng,
+                hostUID: hostUID, hostName: hostName,
+                hostEmoji: hostEmoji, createdAt: createdAt
+            )
+            // Lokale Push-Notification falls App im Hintergrund — sonst
+            // sieht der User die Einladung erst beim nächsten Foreground.
+            if !self.isAppActive {
+                PushNotificationManager.shared.notifyIncomingDropInvitation(
+                    hostName: hostName, hostEmoji: hostEmoji,
+                    activityName: dropActivity, dropEmoji: dropEmoji
+                )
+            }
+        }
+    }
+
+    /// Empfänger lehnt ab oder schließt — Einladung aus DB löschen damit
+    /// sie nicht beim nächsten App-Start nochmal aufpoppt.
+    func dismissIncomingDropInvitation() {
+        guard let inv = incomingDropInvitation,
+              let myUID = FirebaseAuth.Auth.auth().currentUser?.uid else {
+            incomingDropInvitation = nil
+            return
+        }
+        RealtimeDBManager.shared.dismissDropInvitation(myUID: myUID, inviteID: inv.id)
+        incomingDropInvitation = nil
+    }
+
+    /// Empfänger nimmt Einladung an: Drop wird zentral auf der Karte
+    /// angesteuert. UI verzweigt dann auf den normalen Join-Flow.
+    func acceptIncomingDropInvitation() {
+        guard let inv = incomingDropInvitation else { return }
+        // Damit MainTabView/LiveMapView reagieren können: pendingDropID
+        // wird gesetzt — bestehender Universal-Link-Handler routet das
+        // bereits auf "Map zeigen + Drop fokussieren".
+        if let uuid = UUID(uuidString: inv.dropID) {
+            pendingDropID = uuid
+        }
+        selectedTab = .map
+        dismissIncomingDropInvitation()
     }
 
     private var hasRepositionedFriends = false
     /// Ob der User beim letzten Location-Update in der Heimzone war (für Edge-Detection).
     private var wasInHomeZone: Bool = false
+    /// Throttle für Joiner-Live-Location-Push: Zeit + Coord des letzten Push.
+    /// updateUserLocation pusht nur wenn ≥60s vergangen oder >50m bewegt.
+    private var lastJoinerLocPushAt: Date? = nil
+    private var lastJoinerLocPushCoord: CLLocationCoordinate2D? = nil
 
     func updateUserLocation(_ coord: CLLocationCoordinate2D) {
         currentUser.coordinate = coord
@@ -3475,14 +4517,30 @@ class AppStore: ObservableObject {
 
         // Wenn wir gerade einem fremden Drop beigetreten sind → Live-Position
         // nach Firebase pushen, damit der Host unseren Pin auf der Karte sieht.
+        // Throttle: max. 1× pro 60 Sekunden — iOS feuert Location-Updates
+        // sonst alle paar Sekunden, was unnötigen Firebase-Traffic + Battery-
+        // Verbrauch verursacht. Bei großen Distanz-Sprüngen (>50m) wird
+        // sofort gepusht, sonst auf 60s gewartet.
         if let joinedDropID = activeJoinedDropID,
            let uid = FirebaseAuth.Auth.auth().currentUser?.uid {
-            RealtimeDBManager.shared.updateJoinerLiveLocation(
-                dropID: joinedDropID.uuidString,
-                joinerID: uid,
-                lat: coord.latitude,
-                lng: coord.longitude
-            )
+            let now = Date()
+            let elapsed = now.timeIntervalSince(lastJoinerLocPushAt ?? .distantPast)
+            let movedFar: Bool = {
+                guard let last = lastJoinerLocPushCoord else { return true }
+                let prev = CLLocation(latitude: last.latitude, longitude: last.longitude)
+                let curr = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+                return curr.distance(from: prev) > 50
+            }()
+            if elapsed >= 60 || movedFar {
+                RealtimeDBManager.shared.updateJoinerLiveLocation(
+                    dropID: joinedDropID.uuidString,
+                    joinerID: uid,
+                    lat: coord.latitude,
+                    lng: coord.longitude
+                )
+                lastJoinerLocPushAt = now
+                lastJoinerLocPushCoord = coord
+            }
         }
 
         // Last-Known-Location für „Drop in der Nähe"-Pushes (Cloud Function).
@@ -3699,6 +4757,54 @@ class AppStore: ObservableObject {
                 onTheWayEmojis: [], onTheWayNames: [], onTheWayETAs: []
             )
         }
+    }
+
+    // MARK: - Admin-Notice Sheet
+    //
+    // Wenn ein Admin den Drop des Users entfernt (Live-Drops-Monitor mit
+    // Grund-Auswahl), feuert RealtimeDBManager.observeAdminNotices und
+    // wir setzen `pendingAdminNotice` — die UI bindet ein Sheet darauf
+    // (sheet(item:) auf MainTabView). Der User MUSS „Verstanden" tippen,
+    // dann wird der Notice in Firebase gelöscht und das Sheet
+    // verschwindet. Drag-to-dismiss ist deaktiviert, damit der User die
+    // Nachricht wirklich liest.
+
+    @Published var pendingAdminNotice: RealtimeDBManager.AdminNotice? = nil
+    private var adminNoticeObserverHandle: DatabaseHandle? = nil
+
+    /// Startet den Listener auf `users/{uid}/adminNotices`. Wird beim
+    /// erfolgreichen Login / App-Start aufgerufen — siehe wireAfterAuth.
+    func startObservingAdminNotices() {
+        // Bestehenden Observer abmelden, sonst kann der gleiche Notice
+        // zweimal feuern beim Reconnect.
+        if let h = adminNoticeObserverHandle {
+            RealtimeDBManager.shared.removeAdminNoticesObserver(h)
+            adminNoticeObserverHandle = nil
+        }
+        adminNoticeObserverHandle = RealtimeDBManager.shared.observeAdminNotices { [weak self] notice in
+            // Nur den nächsten unbehandelten Notice präsentieren — wenn
+            // schon einer im Sheet hängt, queued der neue durch das
+            // childAdded-Event sowieso, sobald der User „Verstanden"
+            // tippt und der vorherige aus Firebase gelöscht wird.
+            guard let self = self, self.pendingAdminNotice == nil else { return }
+            self.pendingAdminNotice = notice
+        }
+    }
+
+    func stopObservingAdminNotices() {
+        if let h = adminNoticeObserverHandle {
+            RealtimeDBManager.shared.removeAdminNoticesObserver(h)
+            adminNoticeObserverHandle = nil
+        }
+    }
+
+    /// Wird vom Sheet-„Verstanden"-Button gerufen — löscht den Notice
+    /// in Firebase und gibt das Sheet frei (UI bindet `item:` auf
+    /// `pendingAdminNotice`).
+    func acknowledgeAdminNotice() {
+        guard let notice = pendingAdminNotice else { return }
+        RealtimeDBManager.shared.acknowledgeAdminNotice(noticeID: notice.id)
+        pendingAdminNotice = nil
     }
 
     // MARK: - Live Activity permission hint
@@ -3924,6 +5030,13 @@ class AppStore: ObservableObject {
             durationMinutes: durationMinutes
         )
         activeDrops.append(drop)
+        // Defensives Cleanup gegen Auto-Join-Bug: falls aus irgendeinem
+        // Grund Stale-Data unter joinRequests/{newID} oder dropins/{newID}
+        // existiert (sehr unwahrscheinlich mit fresh UUID, aber kostet nix
+        // und verhindert Phantom-Joiner), aufräumen vor dem Observer-Setup.
+        RealtimeDBManager.shared.cleanupJoinRequests(dropID: drop.id.uuidString)
+        RealtimeDBManager.shared.cleanupDropIns(dropID: drop.id.uuidString)
+        print("[createDrop] new dropID=\(drop.id.uuidString) — cleared any stale join/dropin data")
         RealtimeDBManager.shared.publishDrop(
             dropID: drop.id.uuidString, userID: FirebaseAuth.Auth.auth().currentUser?.uid ?? currentUser.id.uuidString,
             displayName: currentUser.name, emoji: activity.emoji,
@@ -3954,11 +5067,21 @@ class AppStore: ObservableObject {
         startObservingJoinRequests(forDropID: drop.id.uuidString)
         startObservingDropViews(forDropID: drop.id.uuidString)
 
-        // BLE: Host scannt nach Teilnehmer-Tokens desselben Drops
-        let hostToken = String(currentUser.id.uuidString.replacingOccurrences(of: "-", with: "").prefix(8))
-        bluetoothMeetup.start(userToken: hostToken, dropID: drop.id, joinedAt: Date())
+        // BLE: Host scannt nach Teilnehmer-Tokens desselben Drops.
+        // Token aus firebaseUID — matched mit dem was acceptJoinRequest
+        // für Joiner-Participant.token setzt, sodass die UI-Filter
+        // (`participants.filter { confirmedTokens.contains($0.token) }`)
+        // korrekt greifen können.
+        bluetoothMeetup.start(userToken: myBLEToken, dropID: drop.id, joinedAt: Date())
         bluetoothMeetup.onParticipantNearby = { [weak self] token in
             self?.handleBLEParticipantArrived(token: token)
+        }
+        // WICHTIG: Auch Host-Seite muss `onMeetupConfirmed` setzen — sonst
+        // wird die Encounter (in `acceptJoinRequest` pre-erstellt) niemals
+        // auf confirmed=true geflippt obwohl BLE den Joiner ≥20s gesehen
+        // hat. Genau das war der „BLE bestätigt nicht nach 15 min"-Bug.
+        bluetoothMeetup.onMeetupConfirmed = { [weak self] partnerToken in
+            self?.autoConfirmBLEMeetup(partnerToken: partnerToken)
         }
 
         saveAll()
@@ -3998,14 +5121,107 @@ class AppStore: ObservableObject {
             }
 
             if drop.participants.count >= 2 {
-                // (1) Erfolg
+                // (1) Erfolg — Drop hatte mindestens einen Joiner.
                 let others = Array(drop.participants.dropFirst())
                 let asDropParts = others.map { user in
-                    DropParticipant(name: user.name, emoji: user.emoji,
-                                    reliabilityScore: 100,  // Tatsächliche Punkte unbekannt — neutral
-                                    reliabilityCommits: 0)
+                    // firebaseUID durchreichen — recordHostSuccess braucht
+                    // sie für den Pair-Cooldown-Filter. Vorher wurde die UID
+                    // hier verschluckt → kein Cooldown möglich.
+                    var dp = DropParticipant(
+                        name: user.name, emoji: user.emoji,
+                        reliabilityScore: user.reliabilityPoints,
+                        reliabilityCommits: 0
+                    )
+                    dp.firebaseUID = user.firebaseUID
+                    dp.profileImageURL = user.profileImageURL
+                    return dp
                 }
-                recordHostSuccess(arrivedParticipants: asDropParts)
+
+                // Anti-Farm Layer 1: Drop muss ≥ 15 min aktiv gewesen sein.
+                // Anti-Farm Layer 2: mindestens EIN Joiner muss wirklich
+                // vor Ort gewesen sein — entweder BLE-bestätigt oder per
+                // GPS-Fallback (innerhalb 20 m vom Drop-Standort UND
+                // mindestens 60 s zusammenhängende Verweildauer dort).
+                // Sonst gibt's keine Punkte, auch wenn jemand bloß den
+                // Beitritt-Button gedrückt hat oder kurz vorbeigefahren
+                // ist (= Punkte-Farming via Anfrage ohne echtes Treffen).
+                let dropDuration = Date().timeIntervalSince(drop.createdAt)
+                let dropLoc = CLLocation(
+                    latitude: drop.location.coordinate.latitude,
+                    longitude: drop.location.coordinate.longitude
+                )
+                let bleConfirmed = !bluetoothMeetup.confirmedTokens.isEmpty
+                let now = Date()
+                let anyGPSNear = drop.participants.contains { user in
+                    guard let uid = user.firebaseUID,
+                          let info = joinerLiveInfos[uid] else { return false }
+                    let userLoc = CLLocation(latitude: info.lat, longitude: info.lng)
+                    let inRadius = userLoc.distance(from: dropLoc) <= Self.gpsArrivalThresholdMeters
+                    guard inRadius, let since = joinerNearSinceUTC[uid] else { return false }
+                    return now.timeIntervalSince(since) >= Self.gpsArrivalDwellSeconds
+                }
+
+                if dropDuration >= Self.minPaidDropDuration && (bleConfirmed || anyGPSNear) {
+                    recordHostSuccess(arrivedParticipants: asDropParts)
+                } else if dropDuration < Self.minPaidDropDuration {
+                    let neededMins = Int(Self.minPaidDropDuration / 60)
+                    showInfoToast("Drop zu kurz für Punkte (mind. \(neededMins) min)",
+                                  icon: "hourglass")
+                } else {
+                    // Drop war lang genug, aber keiner war wirklich da
+                    showInfoToast("Keine Anwesenheit bestätigt — keine Punkte",
+                                  icon: "person.fill.questionmark")
+                }
+
+                // Nur ECHTE Drops landen im Verlauf — Drops ohne Joiner
+                // (Clean Cancel oder No-Show) sind nur "Versuche" und
+                // sollen weder die Statistik aufblähen noch den Drop-
+                // Verlauf füllen. Sonst Punkte-/Aktivitäts-Inflation.
+                //
+                // Filter: Host bleibt immer drin. Joiner nur wenn beim Cancel
+                // noch in dropins/ — sprich seine UID ist im joinerLiveInfos-
+                // Dict. Hat er verlassen, hat .childRemoved den Eintrag schon
+                // rausgekickt → wird hier ausgeschlossen, taucht nicht im
+                // Verlauf auf. Konservativ: ohne firebaseUID → ausgeschlossen,
+                // sonst könnten alte/buggy Einträge ins pastDrops rutschen.
+                let pastParticipants: [PastDropParticipant] = drop.participants.compactMap { p in
+                    let isHost = p.name == currentUser.name
+                    if !isHost {
+                        guard let uid = p.firebaseUID,
+                              joinerLiveInfos[uid] != nil else { return nil }
+                    }
+                    let url = isHost ? profileImageURL : p.profileImageURL
+                    return PastDropParticipant(
+                        name: p.name,
+                        emoji: p.emoji,
+                        reliabilityScore: p.reliabilityPoints,
+                        wasHost: isHost,
+                        didShowUp: true,
+                        profileImageURL: url
+                    )
+                }
+                // Nur dann in den Verlauf, wenn nach Filterung mindestens
+                // ein Joiner übrig ist (d.h. Host war nicht alleine). Sonst
+                // war der Drop effektiv ein Cancel ohne Treffen.
+                if pastParticipants.contains(where: { !$0.wasHost }) {
+                    let past = PastDrop(
+                        activityEmoji: drop.activity.emoji,
+                        activityName: drop.activity.name,
+                        locationName: drop.location.title,
+                        date: drop.createdAt,
+                        wasHost: true,
+                        participants: pastParticipants
+                    )
+                    pastDrops.insert(past, at: 0)
+                    // Host-Feedback-Prompt: nur Joiner mit firebaseUID, die
+                    // beim Cancel noch in dropins/ waren (= echte Anwesende).
+                    let stillThere = drop.participants.filter { user in
+                        guard user.name != currentUser.name else { return false }
+                        guard let uid = user.firebaseUID else { return false }
+                        return joinerLiveInfos[uid] != nil
+                    }
+                    presentHostFeedbackPrompt(drop: drop, participants: stillThere)
+                }
             } else if hasOldPending {
                 // (2) Host-No-Show: jemand wartet schon ≥12 min, Host bricht ab
                 reliabilityScore.totalCommits += 1
@@ -4015,28 +5231,6 @@ class AppStore: ObservableObject {
                 pushReliabilityScoreToFirestore()
             }
             // (3) Sonst: clean cancel, keine Buchung — egal wie lange der Drop offen war.
-
-            // Drop in den persistierten Drop-Verlauf übernehmen — egal ob
-            // Erfolg, No-Show oder Clean Cancel. Sonst sind beendete Drops
-            // weder in der Statistik noch im Verlauf sichtbar.
-            let pastParticipants: [PastDropParticipant] = drop.participants.map { p in
-                PastDropParticipant(
-                    name: p.name,
-                    emoji: p.emoji,
-                    reliabilityScore: p.reliabilityPoints,
-                    wasHost: p.name == currentUser.name,
-                    didShowUp: true
-                )
-            }
-            let past = PastDrop(
-                activityEmoji: drop.activity.emoji,
-                activityName: drop.activity.name,
-                locationName: drop.location.title,
-                date: drop.createdAt,
-                wasHost: true,
-                participants: pastParticipants
-            )
-            pastDrops.insert(past, at: 0)
         }
         activeDrops.removeAll { $0.id == id }
         currentUser.isAvailable = false

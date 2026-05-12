@@ -132,17 +132,24 @@ final class PushNotificationManager {
     // Prüft ob Drops in der Nähe sind und benachrichtigt ggf. — max. 1x pro 30 Min.
 
     func checkNearbyDrops(_ drops: [MapAnnotationItem], userLocation: CLLocationCoordinate2D) {
-        // Nur wenn kein eigener aktiver Drop läuft
-        let nearbyRadius: Double = 600  // Meter
+        // 500m = ~5-7 min Fußweg → "literal nearby", User kann praktisch
+        // sofort hingehen. Ziel: Notification nur für Drops die wirklich
+        // unmittelbar relevant sind, nicht „theoretisch erreichbar".
+        let nearbyRadius: Double = 500
 
         let nearby = drops.filter { $0.isNearby(from: userLocation, maxMeters: nearbyRadius) }
+        print("[nearby] checkNearbyDrops: total=\(drops.count) inRadius=\(nearby.count)")
         guard !nearby.isEmpty else { return }
 
-        // Throttle: max 1x alle 30 Min
+        // Throttle: max 1x alle 20 Min (vorher 30 — etwas reaktiver,
+        // ohne in Spam zu kippen).
         let lastSent = UserDefaults.standard.double(forKey: UDKey.lastNearbyNotif)
         if lastSent > 0 {
             let elapsed = Date().timeIntervalSince1970 - lastSent
-            guard elapsed > 30 * 60 else { return }
+            if elapsed <= 20 * 60 {
+                print("[nearby] SKIPPED — throttle (\(Int(elapsed))s ago)")
+                return
+            }
         }
 
         let content = UNMutableNotificationContent()
@@ -300,6 +307,86 @@ final class PushNotificationManager {
         try await center.add(req)
     }
 
+    // MARK: - Daily Evening Re-Engagement
+    //
+    // Recurring 19:00-Push an Wochentagen ohne Power-Hour-Window (Mo, Di,
+    // Do — falls Power-Hour Mi/Fr/Sa läuft). Ziel: passive User morgens
+    // anstoßen wenn primary Use-Case (Feierabend-Drop) am wahrscheinlichsten
+    // ist. Throttle auf weekday-Basis vermeidet Doppel-Push wenn User
+    // ohnehin Power-Hour-Push bekommt.
+    //
+    // Wird genauso wie Power-Hour beim App-Start frisch geplant — alte
+    // Requests werden via Prefix-Match gelöscht.
+    func scheduleDailyEveningPrompts() {
+        let center = UNUserNotificationCenter.current()
+        let prefix = "drops_evening_"
+
+        Task { @MainActor in
+            // Alte Requests aufräumen
+            let pending = await center.pendingNotificationRequests()
+            let staleIDs = pending.map(\.identifier).filter { $0.hasPrefix(prefix) }
+            if !staleIDs.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: staleIDs)
+            }
+
+            // Power-Hour-Weekdays bestimmen — auf diesen Tagen NICHT zusätzlich
+            // pushen, sonst Doppelung mit den `powerhour_pre`-Notifications.
+            let phWeekdays = Set(AppStore.powerHourWindows.flatMap { $0.weekdays })
+
+            // Nachrichten-Pool — Marketing-Copy, casual + curiosity
+            let messages: [(title: String, body: String)] = [
+                ("Lust auf was heute Abend? 🌅",
+                 "Drop einen Vorschlag — wer in der Nähe Bock hat, kommt vorbei."),
+                ("Feierabend-Plan? 🍻",
+                 "Bier, Park, Spaziergang — 30 Sekunden, dann ist dein Drop live."),
+                ("Wer trifft sich gerade? 👀",
+                 "Karte auf, sieh wer in deiner Nähe was startet — oder droppe selbst."),
+                ("Spontan ist heute drin ⚡",
+                 "Kein Plan? Drop reicht. Andere sehen's sofort."),
+                ("Dein Drops-Reminder 📍",
+                 "5 Min mehr und du bist draußen — drop einfach was, der Rest kommt."),
+            ]
+
+            // Mo (2), Di (3), Do (5) — Wochentage ohne Power-Hour bevorzugt.
+            // Sonntag ist eher ruhig, Sa/Fr läuft Power-Hour. Wenn Power-Hour-
+            // Schema sich ändert, schließt phWeekdays-Filter automatisch aus.
+            let candidateWeekdays = [2, 3, 5]
+            let activeWeekdays = candidateWeekdays.filter { !phWeekdays.contains($0) }
+
+            for weekday in activeWeekdays {
+                var comps = DateComponents()
+                comps.weekday = weekday
+                comps.hour = 19
+                comps.minute = 0
+
+                let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: true)
+                let pick = messages[Int.random(in: 0..<messages.count)]
+                let content = UNMutableNotificationContent()
+                content.title = pick.title
+                content.body  = pick.body
+                content.sound = .default
+                content.userInfo = ["type": "evening_reengagement"]
+
+                let req = UNNotificationRequest(
+                    identifier: "\(prefix)\(weekday)_19",
+                    content: content,
+                    trigger: trigger
+                )
+                try? await center.add(req)
+            }
+        }
+    }
+
+    /// Entfernt alle geplanten Daily-Evening-Pushs. Beim Logout/Push-Off.
+    func cancelAllEveningPrompts() {
+        let center = UNUserNotificationCenter.current()
+        Task { @MainActor in
+            let pending = await center.pendingNotificationRequests()
+            let ids = pending.map(\.identifier).filter { $0.hasPrefix("drops_evening_") }
+            center.removePendingNotificationRequests(withIdentifiers: ids)
+        }
+    }
+
     /// Entfernt alle geplanten Power-Hour-Pushs. Praktisch beim Logout
     /// oder wenn der User Push-Benachrichtigungen abschaltet.
     func cancelAllPowerHourNotifications() {
@@ -377,6 +464,60 @@ final class PushNotificationManager {
         schedule(content, id: "auto_accept_\(Date().timeIntervalSince1970)")
     }
 
+    /// Lokale Push an JOINER wenn Host die Anfrage angenommen hat (manuell
+    /// oder per 5-Min-Auto-Accept). Joiner hat sonst keinen Trigger der
+    /// ihm die Bestätigung zeigt — `myJoinRequestStatus` flippt zwar, aber
+    /// wenn die App im Background ist sieht der User nichts.
+    func notifyMyJoinAccepted(hostName: String, activityName: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "✅ Anfrage bestätigt"
+        content.body  = "\(hostName) hat dich zu \"\(activityName)\" eingeladen. Auf gehts!"
+        content.sound = .default
+        content.userInfo = ["type": "join_accepted"]
+        schedule(content, id: "join_accepted_\(Date().timeIntervalSince1970)")
+    }
+
+    /// Lokale Push an JOINER wenn Host nach 5 min nicht reagiert hat. Wir
+    /// haben dann auf Host-Seite Auto-Accept ausgelöst — der Push erinnert
+    /// den Joiner daran, dass es jetzt los geht (oder er noch verlassen kann).
+    func notifyHostDidntRespond(hostName: String, activityName: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "⏰ Host hat nicht geantwortet"
+        content.body  = "Du wurdest automatisch zu \(hostName)s \"\(activityName)\" hinzugefügt."
+        content.sound = .default
+        content.userInfo = ["type": "join_auto_accepted"]
+        schedule(content, id: "host_no_response_\(Date().timeIntervalSince1970)")
+    }
+
+    /// Lokale Push an EMPFÄNGER wenn ein Freund ihn zu seinem Drop einlädt
+    /// (über das MiniProfileSheet → "Zu meinem Drop einladen"). Ohne diesen
+    /// Push merkt der Empfänger nichts wenn die App im Hintergrund ist —
+    /// der In-App-Alert poppt erst beim nächsten Foreground.
+    func notifyIncomingDropInvitation(hostName: String, hostEmoji: String,
+                                      activityName: String, dropEmoji: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "\(hostEmoji) Einladung von \(hostName)"
+        content.body  = "\(hostName) lädt dich zu \"\(dropEmoji) \(activityName)\" ein. Tippen zum Öffnen."
+        content.sound = .default
+        content.userInfo = ["type": "drop_invitation"]
+        schedule(content, id: "drop_invitation_\(Date().timeIntervalSince1970)")
+    }
+
+    /// Lokale Push an JOINER wenn der Host den Drop beendet hat. Sonst
+    /// merkt der Joiner es erst wenn er die App öffnet — ist aber wichtig
+    /// dass er Bescheid weiß damit er nicht umsonst hingeht.
+    /// Begrenzung: läuft nur solange die Joiner-App live observed (im
+    /// Hintergrund OK, vollständig gekillt → keine Erkennung möglich,
+    /// ohne Cloud Function nicht änderbar).
+    func notifyHostCancelledDrop(dropEmoji: String, activityName: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "\(dropEmoji) Drop beendet"
+        content.body  = "Der Host hat \"\(activityName)\" beendet. Du bist nicht mehr dabei."
+        content.sound = .default
+        content.userInfo = ["type": "host_cancelled"]
+        schedule(content, id: "host_cancelled_\(Date().timeIntervalSince1970)")
+    }
+
     // MARK: - Drop-In Notification (jemand tritt eigenem Drop bei)
 
     func notifyDropIn(joinerName: String, activityName: String) {
@@ -385,7 +526,10 @@ final class PushNotificationManager {
         content.body  = "\(joinerName) ist deinem Drop \"\(activityName)\" beigetreten."
         content.sound = .default
         content.userInfo = ["type": "dropin"]
-        content.badge = 1
+        // Kein hartkodiertes badge=1 mehr — sonst klebt eine "1" am Icon
+        // bis der User die App öffnet, und es addiert sich auch nicht
+        // sinnvoll auf. Badge-Clear läuft jetzt in AppDelegate beim
+        // Foreground-Wechsel, das reicht.
         schedule(content, id: "\(ID.dropin)_\(Date().timeIntervalSince1970)")
     }
 

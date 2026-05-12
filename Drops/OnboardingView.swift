@@ -3147,10 +3147,3 @@ struct AppIntroStep: View {
     }
 }
 
-// MARK: - ID-Verifizierungsflow (disabled — verification removed)
-
-#if false
-
-
-
-#endif // ID verification removed

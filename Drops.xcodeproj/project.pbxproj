@@ -12,7 +12,6 @@
 		89042F9CF58F49A7AAC76CBA /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 327F542C69C2450EB363BF7F /* Preview Assets.xcassets */; };
 		945C33D97EC74398844A2F5C /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A070BC7CF7824527992379F9 /* MainTabView.swift */; };
 		951A8B132FAE762E0003DFC3 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 951A8B122FAE762E0003DFC3 /* AppIcon.icon */; };
-		951A8B152FAE77550003DFC3 /* Assets 2.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 951A8B142FAE77550003DFC3 /* Assets 2.xcassets */; };
 		98D1213810614C4BA718BC7A /* ProfileAndAlertsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C6AE0EAF293496FAAB1180D /* ProfileAndAlertsView.swift */; };
 		AB5D31427FAF496F81E12038 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 872B2889154249B48B39C338 /* DesignSystem.swift */; };
 		B3BB3982DE3946A7B973E3C5 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ABB1429B0CC45F69697DFFE /* Models.swift */; };
@@ -27,7 +26,6 @@
 		E4315F842F814CE100E60F54 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = E4315F832F814CE100E60F54 /* FirebaseAuth */; };
 		E4315F862F814CE100E60F54 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = E4315F852F814CE100E60F54 /* FirebaseCore */; };
 		E4315F882F814CEA00E60F54 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = E4315F872F814CEA00E60F54 /* GoogleService-Info.plist */; };
-		E4FFB32A2F94EDAD004E687A /* SessionLockView 2.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4FFB3292F94EDAD004E687A /* SessionLockView 2.swift */; };
 		E4FFB3302F95298B004E687A /* DropsStoreManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4FFB32F2F95298B004E687A /* DropsStoreManager.swift */; };
 		E4FFB3322F952A3E004E687A /* DropsPlusView 2.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4FFB3312F952A3E004E687A /* DropsPlusView 2.swift */; };
 		E4FFB3352F9749B4004E687A /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = E4FFB3342F9749B4004E687A /* FirebaseCrashlytics */; };
@@ -84,7 +82,6 @@
 		60F2B6D895C04241A50D2A18 /* LiveMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveMapView.swift; sourceTree = "<group>"; };
 		872B2889154249B48B39C338 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
 		951A8B122FAE762E0003DFC3 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
-		951A8B142FAE77550003DFC3 /* Assets 2.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Assets 2.xcassets"; sourceTree = "<group>"; };
 		9C6AE0EAF293496FAAB1180D /* ProfileAndAlertsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileAndAlertsView.swift; sourceTree = "<group>"; };
 		A070BC7CF7824527992379F9 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
 		AA000008000000000000008 /* Drops.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Drops.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -96,7 +93,6 @@
 		E4155E9D2F810EC3006A5368 /* CreateDropView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateDropView.swift; sourceTree = "<group>"; };
 		E4315F872F814CEA00E60F54 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		E44368892F917632009530A5 /* DropLiveActivity.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DropLiveActivity.entitlements; sourceTree = "<group>"; };
-		E4FFB3292F94EDAD004E687A /* SessionLockView 2.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SessionLockView 2.swift"; sourceTree = "<group>"; };
 		E4FFB32F2F95298B004E687A /* DropsStoreManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropsStoreManager.swift; sourceTree = "<group>"; };
 		E4FFB3312F952A3E004E687A /* DropsPlusView 2.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DropsPlusView 2.swift"; sourceTree = "<group>"; };
 		FA001AA02F900000001AA120 /* FirebaseAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirebaseAuthManager.swift; sourceTree = "<group>"; };
@@ -164,7 +160,6 @@
 		AA000015000000000000015 /* Drops */ = {
 			isa = PBXGroup;
 			children = (
-				E4FFB3292F94EDAD004E687A /* SessionLockView 2.swift */,
 				E4FFB32F2F95298B004E687A /* DropsStoreManager.swift */,
 				157A9023A3B644239FDAF68F /* LinkUpApp.swift */,
 				5ABB1429B0CC45F69697DFFE /* Models.swift */,
@@ -193,7 +188,6 @@
 				FA013MM02F90000000DMM120 /* Localization.swift */,
 				FA014NN02F90000000ENN120 /* AdminPanelView.swift */,
 				FA016CF02F90000000FCF120 /* ContentFilter.swift */,
-				951A8B142FAE77550003DFC3 /* Assets 2.xcassets */,
 				AA000016000000000000016 /* Preview Content */,
 				E4FFB3312F952A3E004E687A /* DropsPlusView 2.swift */,
 			);
@@ -330,7 +324,6 @@
 			files = (
 				89042F9CF58F49A7AAC76CBA /* Preview Assets.xcassets in Resources */,
 				951A8B132FAE762E0003DFC3 /* AppIcon.icon in Resources */,
-				951A8B152FAE77550003DFC3 /* Assets 2.xcassets in Resources */,
 				E4315F882F814CEA00E60F54 /* GoogleService-Info.plist in Resources */,
 				FAPRIVACY1000000010000001 /* PrivacyInfo.xcprivacy in Resources */,
 			);
@@ -413,7 +406,6 @@
 				13B2973FA52749D888CC45A1 /* FeedView.swift in Sources */,
 				98D1213810614C4BA718BC7A /* ProfileAndAlertsView.swift in Sources */,
 				E4155E9E2F810ED9006A5368 /* CreateDropView.swift in Sources */,
-				E4FFB32A2F94EDAD004E687A /* SessionLockView 2.swift in Sources */,
 				FA013MM12F90000000DMM121 /* Localization.swift in Sources */,
 				FA014NN12F90000000ENN121 /* AdminPanelView.swift in Sources */,
 				FA015OO12F90000000FOO121 /* ImagePickerView.swift in Sources */,

@@ -31,16 +31,25 @@ extension Color {
 
 // MARK: - iOS 26 Glass Helpers
 
-extension View {
-    /// Applies Liquid Glass background — uses native .glassEffect() on iOS 26,
-    /// falls back to ultraThinMaterial on earlier OS versions.
+/// ViewModifier für `liquidGlass`. Wrapped als Modifier mit
+/// @Environment(\.colorScheme), damit der iOS-26-`.glassEffect()`
+/// zwingend neu gerendert wird, wenn der User die App-Darstellung
+/// umschaltet. Vorher behielt der Glass-Block sein Hell-Material-
+/// Rendering nach Wechsel auf Dunkel — `.id(colorScheme)` erzwingt
+/// ein clean re-mount der Material-View.
+private struct LiquidGlassModifier: ViewModifier {
+    let cornerRadius: CGFloat
+    let shadowRadius: CGFloat
+    @Environment(\.colorScheme) private var scheme
+
     @ViewBuilder
-    func liquidGlass(cornerRadius: CGFloat = 18, shadowRadius: CGFloat = 16) -> some View {
+    func body(content: Content) -> some View {
         if #available(iOS 26, *) {
-            self
+            content
                 .glassEffect(in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .id(scheme)
         } else {
-            self
+            content
                 .background(
                     ZStack {
                         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -61,7 +70,16 @@ extension View {
                             lineWidth: 1
                         )
                 )
+                .id(scheme)
         }
+    }
+}
+
+extension View {
+    /// Applies Liquid Glass background — uses native .glassEffect() on iOS 26,
+    /// falls back to ultraThinMaterial on earlier OS versions.
+    func liquidGlass(cornerRadius: CGFloat = 18, shadowRadius: CGFloat = 16) -> some View {
+        modifier(LiquidGlassModifier(cornerRadius: cornerRadius, shadowRadius: shadowRadius))
     }
 
     /// Capsule Liquid Glass — for pill-shaped buttons/chips.
@@ -156,11 +174,14 @@ struct AuroraCardBorder: View {
 
     @State private var hue: Double = 0
 
+    // Animierter Border — Palette aufs App-Icon abgestimmt: warmes Orange,
+    // Coral-Übergang, frisches Grün, zusätzlicher Amber-Akzent. Loop endet
+    // mit Orange (Start-Farbe), damit der Hue-Rotation-Cycle nahtlos läuft.
     private let gradient: AngularGradient = .init(
         colors: [
-            Color(hex: "22c55e"), Color(hex: "06b6d4"),
-            Color(hex: "8b5cf6"), Color(hex: "ec4899"),
-            Color(hex: "f59e0b"), Color(hex: "22c55e"),
+            Color(hex: "E48C3A"), Color(hex: "F4956A"),
+            Color(hex: "5FA937"), Color(hex: "8FCC4F"),
+            Color(hex: "F6BD4D"), Color(hex: "E48C3A"),
         ],
         center: .center
     )
@@ -200,15 +221,17 @@ struct AuroraDropButton: View {
     var body: some View {
         Button(action: { guard isEnabled && !isLoading else { return }; action() }) {
             ZStack {
-                // Subtiler Aurora-Gradient — gedämpfte Sättigung, langsamerer Loop
+                // Subtiler Aurora-Gradient aufs App-Icon abgestimmt:
+                // Orange → Coral → Grün → Orange (loop nahtlos). Vorher
+                // grün/cyan/violet — neu warmer Sunset-Verlauf.
                 Capsule()
                     .fill(
                         LinearGradient(
                             colors: [
-                                Color(hex: "22c55e").opacity(0.85),
-                                Color(hex: "06b6d4").opacity(0.85),
-                                Color(hex: "8b5cf6").opacity(0.85),
-                                Color(hex: "22c55e").opacity(0.85),
+                                Color(hex: "E48C3A").opacity(0.85),
+                                Color(hex: "F4956A").opacity(0.85),
+                                Color(hex: "5FA937").opacity(0.85),
+                                Color(hex: "E48C3A").opacity(0.85),
                             ],
                             startPoint: .leading,
                             endPoint: .trailing
@@ -217,8 +240,8 @@ struct AuroraDropButton: View {
                     .hueRotation(.degrees(hue))
                     // Glas-Schimmer für Tiefe ohne zu viel Knall
                     .overlay(Capsule().fill(Color.white.opacity(0.08)))
-                    // Glow: fester, kein Pulsieren
-                    .shadow(color: Color(hex: "06b6d4").opacity(0.22), radius: 12, x: 0, y: 4)
+                    // Glow auf Orange angepasst — passt zur Hauptfarbe
+                    .shadow(color: Color(hex: "E48C3A").opacity(0.30), radius: 12, x: 0, y: 4)
 
                 if isLoading {
                     ProgressView().tint(.white)

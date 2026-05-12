@@ -13,6 +13,10 @@ struct MainTabView: View {
         TabView(selection: $store.selectedTab) {
             LiveMapView()
                 .tabItem { Label(tr("tab.map"), systemImage: "map.fill") }
+                // Badge wenn unbestätigte Beitrittsanfragen für meinen
+                // Drop offen sind — User sieht die Zahl auch wenn das
+                // Sheet vorher dismissed wurde (oder Push verpasst).
+                .badge(store.pendingJoinRequests.count)
                 .tag(AppStore.Tab.map)
 
             FeedView()
@@ -38,6 +42,10 @@ struct MainTabView: View {
 
             FreundeView()
                 .tabItem { Label(tr("tab.friends"), systemImage: "person.fill") }
+                // Badge zeigt Summe aus eingehenden Freundschaftsanfragen
+                // + unbestätigten Encounters (BLE-Begegnungen die manuell
+                // bestätigt werden müssen). Beide brauchen User-Aktion.
+                .badge(store.incomingFriendRequests.count + store.pendingEncounters.count)
                 .tag(AppStore.Tab.alerts)
 
             ProfileView()
@@ -107,6 +115,21 @@ struct MainTabView: View {
         }
         .animation(.spring(response: 0.45, dampingFraction: 0.8),
                    value: store.pointsToast?.id)
+        // ── Info-Toast (Anti-Farm-Feedback) ───────────────────────────────
+        // Eigene Pille für Negativ-Feedback wenn KEINE Punkte vergeben werden
+        // (Drop zu kurz, Pair-Cooldown). Ohne diesen Toast würde der User
+        // denken es wäre ein Bug — er bekommt sonst gar keine Rückmeldung.
+        .overlay(alignment: .top) {
+            if let info = store.infoToast {
+                InfoToastView(toast: info)
+                    .id(info.id)
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .allowsHitTesting(false)
+            }
+        }
+        .animation(.spring(response: 0.45, dampingFraction: 0.8),
+                   value: store.infoToast?.id)
         .safeAreaInset(edge: .top, spacing: 0) {
             OfflineBanner()
         }
@@ -137,6 +160,68 @@ struct MainTabView: View {
             PushReaskSheet()
                 .presentationDetents([.fraction(0.55)])
                 .presentationDragIndicator(.visible)
+        }
+        // ── Host: eingehende Beitrittsanfrage ─────────────────────────────
+        // Auf MainTabView-Ebene angehängt damit das Pop-up egal in welchem
+        // Tab der Host gerade ist erscheint. Vorher war's nur an LiveMapView
+        // → keine Pop-up wenn Host im Umgebungstab oder Profil war.
+        .sheet(item: $store.activeIncomingRequest) { req in
+            IncomingJoinRequestSheet(request: req)
+                .environmentObject(store)
+                .presentationDetents([.fraction(0.52)])
+                .presentationDragIndicator(.visible)
+                .sheetBackground()
+        }
+        // ── Admin-Notice: Drop wurde von einem Admin entfernt ─────────────
+        // User MUSS „Verstanden" tippen, damit der Notice in Firebase
+        // gelöscht wird — sonst taucht er beim nächsten App-Start wieder
+        // auf. Drag-to-dismiss ist deaktiviert.
+        .sheet(item: $store.pendingAdminNotice) { notice in
+            AdminNoticeSheet(notice: notice) {
+                store.acknowledgeAdminNotice()
+            }
+            .presentationDetents([.fraction(0.55), .large])
+            .presentationDragIndicator(.hidden)
+            .interactiveDismissDisabled()
+            .sheetBackground()
+        }
+        // ── Joiner: Drop wurde vom Host beendet ───────────────────────────
+        // Sonst verschwindet der Drop einfach aus der UI und der User merkt
+        // nicht warum er nicht mehr "dabei" ist. Alert ist global an der
+        // MainTabView, sodass es egal ist in welchem Tab er gerade ist.
+        .alert(item: $store.hostCancelledDropAlert) { alert in
+            Alert(
+                title: Text("\(alert.dropEmoji) Drop beendet"),
+                message: Text("Der Host hat \"\(alert.activityName)\" beendet. Du bist nicht mehr dabei."),
+                dismissButton: .default(Text("Verstanden"))
+            )
+        }
+        // ── Eingehende Drop-Einladung von einem Freund ────────────────────
+        // Freund hat im MiniProfileSheet auf "Zu meinem Drop einladen" getappt
+        // → wir bekommen via Firebase-Observer ein Pop-up. Annehmen routet auf
+        // die Karte und fokussiert den Drop (nutzt pendingDropID-Mechanismus).
+        .alert(item: $store.incomingDropInvitation) { invite in
+            Alert(
+                title: Text("\(invite.hostEmoji) Einladung von \(invite.hostName)"),
+                message: Text("\(invite.hostName) lädt dich zu seinem Drop \"\(invite.dropEmoji) \(invite.dropActivity)\" ein."),
+                primaryButton: .default(Text("Drop ansehen")) {
+                    store.acceptIncomingDropInvitation()
+                },
+                secondaryButton: .cancel(Text("Später")) {
+                    store.dismissIncomingDropInvitation()
+                }
+            )
+        }
+        // ── Drop-Feedback Sheet ───────────────────────────────────────────
+        // Erscheint nach Drop-Ende (Host: nach cancelDrop mit Joinern;
+        // Joiner: nach leaveActiveJoin wenn Session ≥ 5 min). Bewerten
+        // ist optional — User kann jederzeit Skip drücken.
+        .sheet(item: $store.pendingFeedbackPrompt) { prompt in
+            DropFeedbackSheet(prompt: prompt)
+                .environmentObject(store)
+                .presentationDetents([.fraction(0.55)])
+                .presentationDragIndicator(.visible)
+                .sheetBackground()
         }
         .fullScreenCover(item: $store.firstDropCelebrationKind) { kind in
             FirstDropCelebrationSheet(kind: kind)
@@ -465,9 +550,12 @@ struct WelcomeSheet: View {
     let onDismiss: () -> Void
     @AppStorage("appLanguage") private var appLanguage = "de"
 
+    // Feature-Farben — erste zwei aus der App-Icon-Palette (Orange-Top
+    // + Grün-Bottom), letzte zwei behalten Diversität (Amber für
+    // "Menschen", Violet für "Privatsphäre" — semantisch etabliert).
     private var features: [(icon: String, color: Color, titleKey: String, subtitleKey: String)] {[
-        ("dot.radiowaves.left.and.right", Color(hex: "22c55e"),  "welcome.feature1_title", "welcome.feature1_sub"),
-        ("map.fill",                      Color(hex: "06b6d4"),  "welcome.feature2_title", "welcome.feature2_sub"),
+        ("dot.radiowaves.left.and.right", Color(hex: "E48C3A"),  "welcome.feature1_title", "welcome.feature1_sub"),
+        ("map.fill",                      Color(hex: "5FA937"),  "welcome.feature2_title", "welcome.feature2_sub"),
         ("person.2.fill",                 Color(hex: "f59e0b"),  "welcome.feature3_title", "welcome.feature3_sub"),
         ("lock.shield.fill",              Color(hex: "8b5cf6"),  "welcome.feature4_title", "welcome.feature4_sub"),
     ]}
