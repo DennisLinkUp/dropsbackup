@@ -7,14 +7,11 @@
   <meta name="description" content="Drops zeigt dir in Echtzeit, wer in deiner Nähe gerade spontan loszieht — Kaffee, Laufen, Feierabendbier. Kein Swipen, kein Gruppenchat. Live in München, Berlin, Hamburg, Köln, Frankfurt.">
   <meta name="theme-color" content="#E48C3A" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)">
-
-  <!-- Smart App Banner — iOS Safari zeigt automatisch einen Open/Install-Button -->
   <meta name="apple-itunes-app" content="app-id=6762097493">
 
   <link rel="icon" href="/app-icon.png">
   <link rel="apple-touch-icon" href="/app-icon.png">
 
-  <!-- Open Graph -->
   <meta property="og:type" content="website">
   <meta property="og:locale" content="de_DE">
   <meta property="og:title" content="Drops — Sei dabei, wenn's passiert">
@@ -25,7 +22,6 @@
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
 
-  <!-- Twitter / X -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Drops — Sei dabei, wenn's passiert">
   <meta name="twitter:description" content="Echtzeit-App für spontane Treffen. Kein Swipen, kein Gruppenchat.">
@@ -35,7 +31,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 
-  <!-- ── SVG-Icon-Sprite (Lucide-Stil, stroke-based, currentColor) ─── -->
+  <!-- SVG-Icon-Sprite (Lucide-Stil) -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
       <symbol id="i-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -66,21 +62,36 @@
         <rect x="3" y="11" width="18" height="11" rx="2"/>
         <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
       </symbol>
-      <symbol id="i-dot" viewBox="0 0 24 24" fill="currentColor">
-        <circle cx="12" cy="12" r="6"/>
-      </symbol>
+      <symbol id="i-dot" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></symbol>
       <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
         <polyline points="7 10 12 15 17 10"/>
         <line x1="12" y1="15" x2="12" y2="3"/>
+      </symbol>
+      <symbol id="i-coffee" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17 8h1a4 4 0 1 1 0 8h-1"/>
+        <path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4z"/>
+        <line x1="6" y1="2" x2="6" y2="4"/><line x1="10" y1="2" x2="10" y2="4"/><line x1="14" y1="2" x2="14" y2="4"/>
+      </symbol>
+      <symbol id="i-run" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="13" cy="4" r="2"/><path d="m5 22 4-8 4 3 5-9"/><path d="m9 14 3 3"/>
+      </symbol>
+      <symbol id="i-beer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17 11h1a3 3 0 0 1 0 6h-1"/>
+        <path d="M9 12v6"/><path d="M13 12v6"/>
+        <path d="M14 7.5c-1 0-1.4.5-2 1.5-.5-.5-1-1-2-1-1.5 0-2 1-2 2v8a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-7c0-2-1-2.5-2-2.5"/>
+        <path d="M5 8v10a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V8"/>
+      </symbol>
+      <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
       </symbol>
     </defs>
   </svg>
 
   <style>
     /* ──────────────────────────────────────────────────────────
-       Drops Web — Sunset Aurora Design (matched to iOS app)
-       Palette: #E48C3A (Orange) → #5FA937 (Green) Gradient
+       Drops Web — Sunset Aurora High-End Edition
+       Palette: #E48C3A (Orange) → #5FA937 (Green)
        ────────────────────────────────────────────────────────── */
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -93,29 +104,33 @@
       --lavender:      #B49BE0;
 
       --bg:            #FAFAFC;
-      --bg-card:       rgba(255,255,255,0.72);
+      --bg-card:       rgba(255,255,255,0.62);
       --bg-card-solid: #FFFFFF;
-      --border:        rgba(0,0,0,0.08);
-      --border-strong: rgba(0,0,0,0.14);
+      --border:        rgba(0,0,0,0.07);
+      --border-strong: rgba(0,0,0,0.13);
 
-      --text:          #111418;
-      --text-2:        rgba(17,20,24,0.66);
-      --text-3:        rgba(17,20,24,0.42);
+      --text:          #0E1116;
+      --text-2:        rgba(14,17,22,0.66);
+      --text-3:        rgba(14,17,22,0.42);
 
       --gradient:      linear-gradient(135deg, var(--orange) 0%, var(--green) 100%);
       --gradient-soft: linear-gradient(135deg, var(--orange-soft), var(--green-soft));
+
+      --ease-out:      cubic-bezier(0.22, 0.61, 0.36, 1);
+      --ease-in-out:   cubic-bezier(0.65, 0, 0.35, 1);
+      --ease-spring:   cubic-bezier(0.34, 1.56, 0.64, 1);
     }
 
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg:            #0D0F14;
-        --bg-card:       rgba(28,31,40,0.72);
+        --bg:            #0A0C12;
+        --bg-card:       rgba(28,31,40,0.55);
         --bg-card-solid: #1c1f28;
-        --border:        rgba(255,255,255,0.09);
+        --border:        rgba(255,255,255,0.08);
         --border-strong: rgba(255,255,255,0.16);
 
         --text:          #F5F5F7;
-        --text-2:        rgba(245,245,247,0.65);
+        --text-2:        rgba(245,245,247,0.66);
         --text-3:        rgba(245,245,247,0.42);
       }
     }
@@ -131,57 +146,69 @@
       overflow-x: hidden;
     }
 
-    /* ── Aurora-Background — matches AppAuroraBackground in iOS ── */
+    /* ── Scroll-Progress-Bar ─────────────────────────────────── */
+    .scroll-progress {
+      position: fixed; top: 0; left: 0;
+      height: 3px;
+      width: var(--progress, 0%);
+      background: var(--gradient);
+      box-shadow: 0 0 12px rgba(228,140,58,0.5);
+      z-index: 200;
+      transition: width 80ms linear;
+    }
+
+    /* ── Aurora-Background mit Mouse-Parallax ────────────────── */
     .aurora {
       position: fixed; inset: 0; z-index: -1;
       pointer-events: none;
       overflow: hidden;
+      transition: transform 800ms var(--ease-out);
     }
-    .aurora::before, .aurora::after,
-    .aurora-orb {
-      content: ""; position: absolute;
+    .aurora > div {
+      position: absolute;
       border-radius: 50%;
       filter: blur(80px);
       will-change: transform;
+      transition: transform 1200ms var(--ease-out);
     }
-    .aurora::before {
-      width: 580px; height: 580px;
+    .orb-1 {
+      width: 620px; height: 620px;
       background: var(--orange);
       opacity: 0.22;
-      top: -120px; left: -80px;
-      animation: orb1 18s ease-in-out infinite alternate;
+      top: -140px; left: -100px;
+      animation: drift1 22s ease-in-out infinite alternate;
     }
-    .aurora::after {
-      width: 460px; height: 460px;
+    .orb-2 {
+      width: 500px; height: 500px;
       background: var(--green);
       opacity: 0.18;
-      top: 280px; right: -100px;
-      animation: orb2 22s ease-in-out infinite alternate;
+      top: 280px; right: -120px;
+      animation: drift2 28s ease-in-out infinite alternate;
     }
-    .aurora-orb {
-      width: 380px; height: 380px;
+    .orb-3 {
+      width: 420px; height: 420px;
       background: var(--rose);
       opacity: 0.14;
-      top: 65vh; left: 35vw;
-      animation: orb3 26s ease-in-out infinite alternate;
+      top: 75vh; left: 30vw;
+      animation: drift3 32s ease-in-out infinite alternate;
     }
     @media (prefers-color-scheme: dark) {
-      .aurora::before { opacity: 0.28; }
-      .aurora::after  { opacity: 0.22; }
-      .aurora-orb     { opacity: 0.18; }
+      .orb-1 { opacity: 0.30; }
+      .orb-2 { opacity: 0.24; }
+      .orb-3 { opacity: 0.18; }
     }
-    @keyframes orb1 { from { transform: translate(0,0) scale(1); } to { transform: translate(50px,40px) scale(1.05); } }
-    @keyframes orb2 { from { transform: translate(0,0) scale(1); } to { transform: translate(-40px,30px) scale(1.08); } }
-    @keyframes orb3 { from { transform: translate(0,0) scale(1); } to { transform: translate(60px,-30px) scale(1.04); } }
+    @keyframes drift1 { from { transform: translate(0,0); } to { transform: translate(60px,50px); } }
+    @keyframes drift2 { from { transform: translate(0,0); } to { transform: translate(-50px,40px); } }
+    @keyframes drift3 { from { transform: translate(0,0); } to { transform: translate(70px,-40px); } }
 
     /* ── Navigation ──────────────────────────────────────────── */
     nav.topbar {
       position: sticky; top: 0; z-index: 100;
       display: flex; align-items: center; justify-content: space-between;
       padding: 16px 28px;
-      background: color-mix(in oklab, var(--bg) 80%, transparent);
-      backdrop-filter: blur(20px) saturate(150%);
-      -webkit-backdrop-filter: blur(20px) saturate(150%);
+      background: color-mix(in oklab, var(--bg) 78%, transparent);
+      backdrop-filter: blur(20px) saturate(170%);
+      -webkit-backdrop-filter: blur(20px) saturate(170%);
       border-bottom: 1px solid var(--border);
     }
     .wordmark {
@@ -190,7 +217,9 @@
       letter-spacing: -0.02em;
       color: var(--text);
       text-decoration: none;
+      transition: transform 280ms var(--ease-spring);
     }
+    .wordmark:hover { transform: scale(1.03); }
     .wordmark .logo {
       width: 32px; height: 32px;
       border-radius: 9px;
@@ -198,8 +227,6 @@
       display: block;
       object-fit: cover;
     }
-    /* Etwas größeres Footer-Logo für Lesbarkeit */
-    footer .wordmark .logo { width: 36px; height: 36px; border-radius: 10px; }
     .nav-links {
       display: flex; gap: 22px; align-items: center;
       font-size: 14px; font-weight: 500;
@@ -208,8 +235,20 @@
       color: var(--text-2);
       text-decoration: none;
       transition: color .15s;
+      position: relative;
     }
-    .nav-links a:hover { color: var(--text); }
+    .nav-links a:not(.cta)::after {
+      content: ""; position: absolute;
+      left: 0; right: 0; bottom: -4px;
+      height: 2px;
+      background: var(--gradient);
+      border-radius: 2px;
+      transform: scaleX(0);
+      transform-origin: left;
+      transition: transform 280ms var(--ease-out);
+    }
+    .nav-links a:not(.cta):hover { color: var(--text); }
+    .nav-links a:not(.cta):hover::after { transform: scaleX(1); }
     .nav-links .cta {
       padding: 8px 16px;
       background: var(--gradient);
@@ -217,24 +256,34 @@
       border-radius: 100px;
       font-weight: 600;
       box-shadow: 0 6px 16px rgba(228,140,58,0.30);
+      transition: transform 200ms var(--ease-spring), box-shadow 200ms;
     }
-    @media (max-width: 640px) {
-      .nav-links a:not(.cta) { display: none; }
-    }
+    .nav-links .cta:hover { transform: translateY(-1px); box-shadow: 0 10px 22px rgba(228,140,58,0.42); }
+    @media (max-width: 720px) { .nav-links a:not(.cta) { display: none; } }
 
-    /* ── Layout helpers ──────────────────────────────────────── */
-    .container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
-    section { padding: 80px 0; }
-    @media (max-width: 640px) { section { padding: 56px 0; } }
+    /* ── Container ───────────────────────────────────────────── */
+    .container { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+    section { padding: 110px 0; }
+    @media (max-width: 768px) { section { padding: 72px 0; } }
 
     /* ── Hero ────────────────────────────────────────────────── */
     .hero {
-      padding: 88px 0 96px;
-      text-align: center;
+      padding: 80px 0 100px;
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 60px;
+      align-items: center;
     }
-    @media (max-width: 640px) { .hero { padding: 56px 0 72px; } }
+    @media (max-width: 980px) {
+      .hero { grid-template-columns: 1fr; text-align: center; }
+      .hero-visual { order: -1; max-width: 340px; margin: 0 auto; }
+    }
+    @media (max-width: 640px) { .hero { padding: 40px 0 64px; gap: 40px; } }
 
-    .hero .badge {
+    .hero-text { max-width: 620px; }
+    @media (max-width: 980px) { .hero-text { margin: 0 auto; } }
+
+    .badge {
       display: inline-flex; align-items: center; gap: 8px;
       padding: 6px 12px 6px 8px;
       background: var(--bg-card);
@@ -244,86 +293,270 @@
       margin-bottom: 28px;
       backdrop-filter: blur(8px);
     }
-    .hero .badge .dot {
+    .badge .live-dot {
       width: 8px; height: 8px; border-radius: 50%;
       background: var(--green);
-      box-shadow: 0 0 0 4px rgba(95,169,55,0.18);
-      animation: pulse 2s ease-in-out infinite;
+      box-shadow: 0 0 0 4px rgba(95,169,55,0.20);
+      animation: livepulse 2.4s ease-in-out infinite;
     }
-    @keyframes pulse {
-      0%,100% { box-shadow: 0 0 0 4px rgba(95,169,55,0.18); }
-      50%     { box-shadow: 0 0 0 7px rgba(95,169,55,0.0);  }
+    @keyframes livepulse {
+      0%,100% { box-shadow: 0 0 0 4px rgba(95,169,55,0.20); }
+      50%     { box-shadow: 0 0 0 8px rgba(95,169,55,0.00);  }
     }
 
     .hero h1 {
-      font-size: clamp(40px, 7vw, 76px);
+      font-size: clamp(40px, 6.8vw, 78px);
       font-weight: 900;
       line-height: 1.04;
       letter-spacing: -0.035em;
-      margin-bottom: 22px;
+      margin-bottom: 24px;
     }
     .hero h1 .grad {
-      background: var(--gradient);
+      background: linear-gradient(135deg, var(--orange) 20%, var(--green) 80%);
+      background-size: 200% 200%;
       -webkit-background-clip: text;
       background-clip: text;
       -webkit-text-fill-color: transparent;
       color: transparent;
+      animation: gradientShift 8s ease-in-out infinite;
     }
-    .hero p.lead {
-      font-size: clamp(16px, 2.4vw, 19px);
-      color: var(--text-2);
-      max-width: 620px;
-      margin: 0 auto 36px;
-      line-height: 1.55;
+    @keyframes gradientShift {
+      0%,100% { background-position: 0% 50%; }
+      50%     { background-position: 100% 50%; }
     }
 
-    .hero-cta {
-      display: inline-flex; flex-wrap: wrap; gap: 12px;
-      justify-content: center; align-items: center;
+    .hero p.lead {
+      font-size: clamp(16px, 2.2vw, 19px);
+      color: var(--text-2);
+      max-width: 540px;
+      margin: 0 0 36px;
+      line-height: 1.55;
     }
+    @media (max-width: 980px) { .hero p.lead { margin: 0 auto 36px; } }
+
+    .hero-cta {
+      display: flex; flex-wrap: wrap; gap: 12px;
+    }
+    @media (max-width: 980px) { .hero-cta { justify-content: center; } }
+
     .btn {
       display: inline-flex; align-items: center; gap: 8px;
       padding: 14px 22px;
       border-radius: 100px;
       font-size: 15px; font-weight: 700;
       text-decoration: none;
-      transition: transform .15s, box-shadow .15s;
+      transition: transform 220ms var(--ease-spring), box-shadow 220ms;
       border: 1px solid transparent;
+      cursor: pointer;
     }
     .btn-primary {
       background: var(--gradient);
       color: white;
       box-shadow: 0 10px 28px rgba(228,140,58,0.35);
     }
-    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 14px 32px rgba(228,140,58,0.42); }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 16px 36px rgba(228,140,58,0.45); }
+    .btn-primary:active { transform: translateY(0); }
     .btn-ghost {
       color: var(--text);
       background: var(--bg-card);
       border-color: var(--border);
       backdrop-filter: blur(8px);
     }
-    .btn-ghost:hover { border-color: var(--border-strong); }
+    .btn-ghost:hover { border-color: var(--border-strong); transform: translateY(-1px); }
 
     .hero-meta {
-      margin-top: 28px;
-      display: flex; flex-wrap: wrap; justify-content: center;
-      gap: 24px;
+      margin-top: 32px;
+      display: flex; flex-wrap: wrap; gap: 24px;
       font-size: 13px; color: var(--text-3); font-weight: 500;
     }
+    @media (max-width: 980px) { .hero-meta { justify-content: center; } }
     .hero-meta span { display: inline-flex; align-items: center; gap: 7px; }
     .hero-meta svg { width: 14px; height: 14px; flex-shrink: 0; }
 
-    /* Generic icon utilities */
-    .icon-14 { width: 14px; height: 14px; flex-shrink: 0; }
-    .icon-16 { width: 16px; height: 16px; flex-shrink: 0; }
-    .icon-22 { width: 22px; height: 22px; flex-shrink: 0; }
+    /* ── Hero Visual — iPhone-Mockup mit Live-Karte ──────────── */
+    .hero-visual {
+      position: relative;
+      perspective: 1200px;
+    }
+    .phone {
+      position: relative;
+      width: 100%; max-width: 400px;
+      aspect-ratio: 9 / 19.5;
+      margin: 0 auto;
+      border-radius: 44px;
+      background: linear-gradient(160deg, #1a1d24 0%, #2a2e38 100%);
+      padding: 14px;
+      box-shadow:
+        0 30px 80px rgba(228,140,58,0.25),
+        0 60px 120px rgba(95,169,55,0.20),
+        0 0 0 1.5px rgba(255,255,255,0.10) inset,
+        0 1px 0 rgba(255,255,255,0.18) inset;
+      transform: rotate3d(0.6, 1, 0, var(--phone-rx, 0deg)) rotate3d(0, 0, 1, 0deg) translateZ(0);
+      transform-style: preserve-3d;
+      transition: transform 400ms var(--ease-out);
+    }
+    .phone::before {
+      content: ""; position: absolute;
+      top: 14px; left: 50%; transform: translateX(-50%);
+      width: 95px; height: 30px;
+      background: #0a0c12;
+      border-radius: 18px;
+      z-index: 5;
+    }
+    .phone-screen {
+      width: 100%; height: 100%;
+      border-radius: 32px;
+      overflow: hidden;
+      position: relative;
+      background: linear-gradient(160deg, #F4F1EC 0%, #E8E4DC 100%);
+    }
 
-    /* ── Sections ────────────────────────────────────────────── */
+    /* Status-Bar */
+    .status-bar {
+      position: absolute; top: 0; left: 0; right: 0;
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 14px 28px 0;
+      font-size: 11px; font-weight: 700; color: #1a1a1a;
+      z-index: 4;
+    }
+    .status-bar .status-icons {
+      display: flex; gap: 4px; align-items: center;
+    }
+
+    /* Fake-Karte */
+    .fake-map {
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(circle at 30% 25%, rgba(228,140,58,0.18), transparent 60%),
+        radial-gradient(circle at 70% 75%, rgba(95,169,55,0.15), transparent 55%),
+        linear-gradient(160deg, #f4f1ec 0%, #ede9e0 100%);
+      overflow: hidden;
+    }
+    /* Straßen-Linien */
+    .fake-map::before {
+      content: ""; position: absolute; inset: 0;
+      background-image:
+        linear-gradient(45deg, transparent 49.6%, rgba(0,0,0,0.06) 49.6%, rgba(0,0,0,0.06) 50.4%, transparent 50.4%),
+        linear-gradient(-45deg, transparent 49.6%, rgba(0,0,0,0.05) 49.6%, rgba(0,0,0,0.05) 50.4%, transparent 50.4%),
+        linear-gradient(0deg, transparent 49.6%, rgba(0,0,0,0.04) 49.6%, rgba(0,0,0,0.04) 50.4%, transparent 50.4%);
+      background-size: 60px 60px, 80px 80px, 40px 40px;
+      opacity: 0.7;
+    }
+    .fake-map::after {
+      content: ""; position: absolute; inset: 0;
+      background:
+        radial-gradient(ellipse at center, transparent 30%, rgba(244,241,236,0.5) 80%);
+    }
+
+    /* Drop-Pins auf der Karte */
+    .drop-pin {
+      position: absolute;
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: var(--gradient);
+      border: 2px solid white;
+      box-shadow: 0 4px 12px rgba(228,140,58,0.45);
+      display: grid; place-items: center;
+      color: white;
+      font-size: 13px;
+      z-index: 3;
+      animation: pinDrop 600ms var(--ease-spring) backwards;
+    }
+    .drop-pin::after {
+      content: ""; position: absolute;
+      inset: -8px;
+      border-radius: 50%;
+      border: 2px solid var(--green);
+      opacity: 0;
+      animation: pinPulse 2.6s ease-out infinite;
+    }
+    .drop-pin.p1 { top: 28%; left: 24%; animation-delay: .15s; }
+    .drop-pin.p1::after { animation-delay: .15s; }
+    .drop-pin.p2 { top: 48%; left: 60%; animation-delay: .35s; }
+    .drop-pin.p2::after { animation-delay: .9s; }
+    .drop-pin.p3 { top: 67%; left: 32%; animation-delay: .55s; }
+    .drop-pin.p3::after { animation-delay: 1.6s; }
+    @keyframes pinDrop {
+      0%   { transform: translateY(-30px) scale(0.6); opacity: 0; }
+      60%  { transform: translateY(5px) scale(1.08); opacity: 1; }
+      100% { transform: translateY(0) scale(1); opacity: 1; }
+    }
+    @keyframes pinPulse {
+      0%   { transform: scale(0.6); opacity: 0.85; }
+      80%  { transform: scale(2.2); opacity: 0; }
+      100% { transform: scale(2.4); opacity: 0; }
+    }
+
+    /* Userpin (in Mitte) */
+    .user-pin {
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      background: #3b82f6;
+      border: 3px solid white;
+      box-shadow: 0 4px 10px rgba(59,130,246,0.40);
+      transform: translate(-50%, -50%);
+      z-index: 4;
+    }
+    .user-pin::before {
+      content: ""; position: absolute;
+      inset: -16px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(59,130,246,0.22), transparent 70%);
+      animation: userPulse 3s ease-out infinite;
+    }
+    @keyframes userPulse {
+      0%   { transform: scale(0.6); opacity: 0.7; }
+      100% { transform: scale(1.8); opacity: 0; }
+    }
+
+    /* Floating Drop-Card im Phone */
+    .floating-card {
+      position: absolute;
+      bottom: 24px; left: 16px; right: 16px;
+      padding: 14px 16px;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(20px) saturate(180%);
+      border-radius: 18px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.10);
+      display: flex; align-items: center; gap: 12px;
+      z-index: 6;
+      animation: cardFadeUp 800ms var(--ease-out) 0.8s backwards;
+    }
+    @keyframes cardFadeUp {
+      from { transform: translateY(20px); opacity: 0; }
+      to   { transform: translateY(0); opacity: 1; }
+    }
+    .floating-card .emoji-tile {
+      width: 36px; height: 36px;
+      border-radius: 10px;
+      background: var(--gradient-soft);
+      display: grid; place-items: center;
+      color: var(--orange);
+      flex-shrink: 0;
+    }
+    .floating-card .emoji-tile svg { width: 18px; height: 18px; }
+    .floating-card .text { flex: 1; min-width: 0; }
+    .floating-card .title { font-size: 13px; font-weight: 800; color: #1a1a1a; }
+    .floating-card .sub { font-size: 11px; color: rgba(0,0,0,0.55); margin-top: 1px; }
+    .floating-card .meta {
+      font-size: 11px; font-weight: 700; color: var(--green);
+      display: inline-flex; align-items: center; gap: 4px;
+      flex-shrink: 0;
+    }
+    .floating-card .meta::before {
+      content: ""; width: 6px; height: 6px; border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 3px rgba(95,169,55,0.20);
+    }
+
+    /* ── Section Title ───────────────────────────────────────── */
     h2.section-title {
-      font-size: clamp(28px, 4vw, 40px);
+      font-size: clamp(30px, 4.2vw, 46px);
       font-weight: 900;
       letter-spacing: -0.028em;
-      line-height: 1.1;
+      line-height: 1.08;
       margin-bottom: 14px;
       text-align: center;
     }
@@ -331,76 +564,139 @@
       font-size: 16px;
       color: var(--text-2);
       max-width: 580px;
-      margin: 0 auto 48px;
+      margin: 0 auto 60px;
       text-align: center;
       line-height: 1.55;
     }
 
-    /* ── Feature Grid (Liquid-Glass cards matching app) ──────── */
+    /* ── Reveal-On-Scroll ────────────────────────────────────── */
+    .reveal {
+      opacity: 0;
+      transform: translateY(28px);
+      transition: opacity 700ms var(--ease-out), transform 700ms var(--ease-out);
+    }
+    .reveal.is-visible {
+      opacity: 1;
+      transform: none;
+    }
+    .reveal-stagger > * {
+      opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 600ms var(--ease-out), transform 600ms var(--ease-out);
+    }
+    .reveal-stagger.is-visible > * { opacity: 1; transform: none; }
+    .reveal-stagger.is-visible > *:nth-child(1) { transition-delay: 0ms; }
+    .reveal-stagger.is-visible > *:nth-child(2) { transition-delay: 80ms; }
+    .reveal-stagger.is-visible > *:nth-child(3) { transition-delay: 160ms; }
+    .reveal-stagger.is-visible > *:nth-child(4) { transition-delay: 240ms; }
+    .reveal-stagger.is-visible > *:nth-child(5) { transition-delay: 320ms; }
+    .reveal-stagger.is-visible > *:nth-child(6) { transition-delay: 400ms; }
+
+    /* ── Feature Grid (3D-Tilt) ──────────────────────────────── */
     .feature-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 18px;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
     }
     .feature-card {
-      padding: 26px 24px;
+      position: relative;
+      padding: 28px 26px;
       background: var(--bg-card);
       border: 1px solid var(--border);
-      border-radius: 20px;
-      backdrop-filter: blur(16px) saturate(140%);
-      -webkit-backdrop-filter: blur(16px) saturate(140%);
-      transition: border-color .2s, transform .2s;
+      border-radius: 22px;
+      backdrop-filter: blur(18px) saturate(160%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+      transition: border-color 280ms, transform 350ms var(--ease-out), box-shadow 350ms;
+      transform-style: preserve-3d;
+      will-change: transform;
+      cursor: default;
+      overflow: hidden;
+    }
+    .feature-card::before {
+      content: ""; position: absolute;
+      inset: 0;
+      background: var(--gradient);
+      opacity: 0;
+      transition: opacity 350ms;
+      mix-blend-mode: overlay;
+      pointer-events: none;
     }
     .feature-card:hover {
       border-color: var(--border-strong);
-      transform: translateY(-2px);
+      box-shadow: 0 20px 50px rgba(228,140,58,0.15), 0 8px 24px rgba(0,0,0,0.06);
     }
+    .feature-card:hover::before { opacity: 0.05; }
+
     .feature-icon {
-      width: 44px; height: 44px;
-      border-radius: 12px;
+      width: 48px; height: 48px;
+      border-radius: 13px;
       background: var(--gradient-soft);
       display: grid; place-items: center;
-      margin-bottom: 18px;
+      margin-bottom: 20px;
       color: var(--orange);
+      transition: transform 360ms var(--ease-spring), background 280ms;
     }
-    .feature-icon svg { width: 22px; height: 22px; }
+    .feature-icon svg { width: 24px; height: 24px; }
+    .feature-card:hover .feature-icon {
+      transform: rotate3d(0,0,1,-6deg) scale(1.08);
+      background: var(--gradient);
+      color: white;
+    }
     .feature-card h3 {
-      font-size: 17px; font-weight: 800;
+      font-size: 18px; font-weight: 800;
       letter-spacing: -0.015em;
       margin-bottom: 8px;
     }
     .feature-card p {
       font-size: 14px;
       color: var(--text-2);
-      line-height: 1.55;
+      line-height: 1.6;
     }
 
-    /* ── How-It-Works (3 Steps) ──────────────────────────────── */
+    /* ── How-It-Works (3 Steps mit Connecting Line) ──────────── */
     .steps {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 24px;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 28px;
+      position: relative;
       counter-reset: step;
     }
-    .step { text-align: left; padding: 24px 4px; }
+    @media (max-width: 800px) { .steps { grid-template-columns: 1fr; } }
+    .steps::before {
+      content: "";
+      position: absolute;
+      top: 28px; left: 8%; right: 8%;
+      height: 2px;
+      background: linear-gradient(90deg, var(--orange-soft), var(--green-soft));
+      z-index: 0;
+    }
+    @media (max-width: 800px) { .steps::before { display: none; } }
+    .step {
+      text-align: left;
+      padding: 0;
+      position: relative;
+      z-index: 1;
+    }
     .step::before {
       counter-increment: step;
       content: counter(step);
       display: inline-grid; place-items: center;
-      width: 36px; height: 36px;
+      width: 56px; height: 56px;
       border-radius: 50%;
       background: var(--gradient);
       color: white;
-      font-weight: 900; font-size: 15px;
-      box-shadow: 0 4px 14px rgba(228,140,58,0.30);
-      margin-bottom: 16px;
+      font-weight: 900; font-size: 22px;
+      box-shadow: 0 8px 22px rgba(228,140,58,0.32);
+      margin-bottom: 18px;
+      transition: transform 360ms var(--ease-spring);
     }
+    .step:hover::before { transform: scale(1.08) rotate(-6deg); }
     .step h3 {
-      font-size: 18px; font-weight: 800;
+      font-size: 19px; font-weight: 800;
       letter-spacing: -0.015em;
-      margin-bottom: 6px;
+      margin-bottom: 8px;
     }
-    .step p { font-size: 14px; color: var(--text-2); line-height: 1.55; }
+    .step p { font-size: 14px; color: var(--text-2); line-height: 1.6; }
 
     /* ── Cities ──────────────────────────────────────────────── */
     .cities {
@@ -408,32 +704,37 @@
       justify-content: center;
     }
     .city-chip {
-      padding: 10px 18px;
+      padding: 11px 20px;
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: 100px;
       font-size: 14px; font-weight: 600;
       color: var(--text);
-      display: inline-flex; align-items: center; gap: 7px;
+      display: inline-flex; align-items: center; gap: 8px;
       backdrop-filter: blur(8px);
+      transition: transform 240ms var(--ease-spring), border-color 240ms;
     }
+    .city-chip:hover { transform: translateY(-2px); border-color: var(--border-strong); }
     .city-chip::before {
       content: "";
-      width: 6px; height: 6px; border-radius: 50%;
+      width: 7px; height: 7px; border-radius: 50%;
       background: var(--green);
       box-shadow: 0 0 0 3px rgba(95,169,55,0.18);
+      animation: livepulse 2.4s ease-in-out infinite;
     }
 
     /* ── FAQ ─────────────────────────────────────────────────── */
-    .faq { max-width: 720px; margin: 0 auto; }
+    .faq { max-width: 760px; margin: 0 auto; }
     .faq-item {
       border: 1px solid var(--border);
       background: var(--bg-card);
-      border-radius: 14px;
-      padding: 20px 22px;
+      border-radius: 16px;
+      padding: 20px 24px;
       margin-bottom: 10px;
       backdrop-filter: blur(8px);
+      transition: border-color 240ms, background 240ms;
     }
+    .faq-item:hover { border-color: var(--border-strong); }
     .faq-item summary {
       list-style: none;
       cursor: pointer;
@@ -444,45 +745,70 @@
     }
     .faq-item summary::-webkit-details-marker { display: none; }
     .faq-item summary::after {
-      content: "+";
-      font-size: 22px; font-weight: 400;
+      content: ""; width: 18px; height: 18px;
+      background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5' stroke-linecap='round'><line x1='12' y1='5' x2='12' y2='19'/><line x1='5' y1='12' x2='19' y2='12'/></svg>") center / contain no-repeat;
       color: var(--text-3);
-      transition: transform .2s;
+      transition: transform 320ms var(--ease-spring), color 240ms;
     }
-    .faq-item[open] summary::after { transform: rotate(45deg); }
+    .faq-item[open] summary::after { transform: rotate(135deg); color: var(--orange); }
     .faq-item p {
-      margin-top: 12px;
+      margin-top: 14px;
       font-size: 14px; color: var(--text-2);
-      line-height: 1.6;
+      line-height: 1.7;
+      animation: faqOpen 320ms var(--ease-out);
+    }
+    @keyframes faqOpen {
+      from { opacity: 0; transform: translateY(-6px); }
+      to   { opacity: 1; transform: none; }
     }
 
     /* ── CTA-Block ───────────────────────────────────────────── */
     .cta-block {
       text-align: center;
-      padding: 56px 32px;
-      background: var(--gradient-soft);
+      padding: 64px 36px;
+      background:
+        linear-gradient(135deg, rgba(228,140,58,0.10), rgba(95,169,55,0.10)),
+        var(--bg-card);
       border: 1px solid var(--border);
-      border-radius: 28px;
+      border-radius: 32px;
+      position: relative;
+      overflow: hidden;
+      backdrop-filter: blur(20px);
+    }
+    .cta-block::before {
+      content: ""; position: absolute;
+      top: -30%; left: -10%; right: -10%; bottom: -30%;
+      background:
+        radial-gradient(circle at 20% 30%, rgba(228,140,58,0.30), transparent 50%),
+        radial-gradient(circle at 80% 70%, rgba(95,169,55,0.25), transparent 50%);
+      animation: ctaGlow 12s ease-in-out infinite alternate;
+      z-index: -1;
+    }
+    @keyframes ctaGlow {
+      from { transform: translate(0, 0); }
+      to   { transform: translate(20px, -10px); }
     }
     .cta-block h2 {
-      font-size: clamp(26px, 4vw, 36px);
+      font-size: clamp(28px, 4vw, 42px);
       font-weight: 900;
       letter-spacing: -0.028em;
-      margin-bottom: 10px;
+      margin-bottom: 12px;
     }
     .cta-block p {
-      font-size: 15px; color: var(--text-2);
-      margin-bottom: 24px;
+      font-size: 16px; color: var(--text-2);
+      margin-bottom: 28px;
+      max-width: 480px; margin-left: auto; margin-right: auto;
     }
 
     /* ── Footer ──────────────────────────────────────────────── */
     footer {
-      padding: 40px 24px 60px;
+      padding: 48px 24px 64px;
       text-align: center;
       border-top: 1px solid var(--border);
-      margin-top: 60px;
+      margin-top: 80px;
     }
     footer .wordmark { justify-content: center; margin: 0 auto 18px; display: inline-flex; }
+    footer .wordmark .logo { width: 36px; height: 36px; border-radius: 10px; }
     footer .footer-links {
       display: flex; flex-wrap: wrap; gap: 22px;
       justify-content: center;
@@ -491,16 +817,61 @@
     }
     footer .footer-links a {
       color: var(--text-2); text-decoration: none;
+      transition: color 200ms;
     }
-    footer .footer-links a:hover { color: var(--text); }
+    footer .footer-links a:hover { color: var(--orange); }
     footer .copyright {
       font-size: 12px; color: var(--text-3);
+    }
+
+    /* ── Activity Ticker (kleine Bottom-Pill, schwebt rein) ──── */
+    .ticker {
+      position: fixed;
+      bottom: 20px; left: 50%;
+      transform: translateX(-50%) translateY(120px);
+      padding: 10px 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      backdrop-filter: blur(20px) saturate(180%);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.10);
+      display: flex; align-items: center; gap: 10px;
+      font-size: 13px; font-weight: 500;
+      color: var(--text);
+      z-index: 50;
+      max-width: calc(100vw - 40px);
+      transition: transform 600ms var(--ease-out), opacity 600ms;
+      opacity: 0;
+    }
+    .ticker.is-visible { transform: translateX(-50%) translateY(0); opacity: 1; }
+    .ticker .ticker-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 3px rgba(95,169,55,0.20);
+      animation: livepulse 2s ease-in-out infinite;
+      flex-shrink: 0;
+    }
+    .ticker .ticker-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    @media (max-width: 520px) { .ticker { font-size: 12px; bottom: 14px; padding: 8px 14px; } }
+
+    /* Accessibility — reduzierte Animationen für sensitive User */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="aurora">
-    <div class="aurora-orb"></div>
+  <div class="scroll-progress" id="scrollProgress"></div>
+
+  <div class="aurora" id="aurora">
+    <div class="orb-1"></div>
+    <div class="orb-2"></div>
+    <div class="orb-3"></div>
   </div>
 
   <nav class="topbar">
@@ -518,42 +889,73 @@
 
   <!-- ── Hero ─────────────────────────────────────────────── -->
   <header class="hero container">
-    <div class="badge">
-      <span class="dot"></span>
-      Live in 5 deutschen Städten
+    <div class="hero-text">
+      <div class="badge">
+        <span class="live-dot"></span>
+        Live in 5 deutschen Städten
+      </div>
+      <h1>
+        Fremde werden nicht <span class="grad">Fremde bleiben</span>,
+        wenn du sie triffst.
+      </h1>
+      <p class="lead">
+        Drops zeigt dir in Echtzeit, wer in deiner Nähe gerade spontan loszieht — Kaffee, Laufen, Feierabendbier. Kein Swipen, kein Gruppenchat. Einfach hingehen.
+      </p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="https://apps.apple.com/de/app/drops-triff-leute/id6762097493">
+          <svg class="icon-16" style="width:16px;height:16px"><use href="#i-download"/></svg>
+          Im App Store laden
+        </a>
+        <a class="btn btn-ghost" href="#how">
+          Wie's funktioniert
+          <svg style="width:14px;height:14px;color:var(--text-2)"><use href="#i-arrow-right"/></svg>
+        </a>
+      </div>
+      <div class="hero-meta">
+        <span><svg style="color:var(--orange)"><use href="#i-pin"/></svg> München · Berlin · Hamburg · Köln · Frankfurt</span>
+        <span><svg style="color:var(--green)"><use href="#i-dot"/></svg> ~14 Min zu Fuß im Schnitt</span>
+        <span><svg style="color:var(--text-3)"><use href="#i-lock"/></svg> Keine Profile, keine Bilderdatenbank</span>
+      </div>
     </div>
-    <h1>
-      Fremde werden nicht <span class="grad">Fremde bleiben</span>,
-      wenn du sie triffst.
-    </h1>
-    <p class="lead">
-      Drops zeigt dir in Echtzeit, wer in deiner Nähe gerade spontan loszieht — Kaffee, Laufen, Feierabendbier. Kein Swipen, kein Gruppenchat. Einfach hingehen.
-    </p>
-    <div class="hero-cta">
-      <a class="btn btn-primary" href="https://apps.apple.com/de/app/drops-triff-leute/id6762097493">
-        <svg class="icon-16"><use href="#i-download"/></svg>
-        Im App Store laden
-      </a>
-      <a class="btn btn-ghost" href="#how">Wie's funktioniert</a>
-    </div>
-    <div class="hero-meta">
-      <span><svg style="color:var(--orange)"><use href="#i-pin"/></svg> München · Berlin · Hamburg · Köln · Frankfurt</span>
-      <span><svg style="color:var(--green)"><use href="#i-dot"/></svg> ~14 Min zu Fuß im Schnitt</span>
-      <span><svg style="color:var(--text-3)"><use href="#i-lock"/></svg> Keine Profile, keine Bilderdatenbank</span>
+
+    <!-- iPhone-Mockup mit animierten Drop-Pins -->
+    <div class="hero-visual" id="heroPhone">
+      <div class="phone">
+        <div class="phone-screen">
+          <div class="status-bar">
+            <span>9:41</span>
+            <span class="status-icons">●●● ◗ 100%</span>
+          </div>
+          <div class="fake-map">
+            <div class="drop-pin p1"><svg width="13" height="13"><use href="#i-coffee"/></svg></div>
+            <div class="drop-pin p2"><svg width="13" height="13"><use href="#i-beer"/></svg></div>
+            <div class="drop-pin p3"><svg width="13" height="13"><use href="#i-run"/></svg></div>
+            <div class="user-pin"></div>
+          </div>
+          <div class="floating-card">
+            <div class="emoji-tile"><svg><use href="#i-coffee"/></svg></div>
+            <div class="text">
+              <div class="title">Kaffee am Marienplatz</div>
+              <div class="sub">~3 Min zu Fuß · 240 m</div>
+            </div>
+            <div class="meta">2 / 6</div>
+          </div>
+        </div>
+      </div>
     </div>
   </header>
 
   <!-- ── How it works ─────────────────────────────────────── -->
   <section id="how">
     <div class="container">
-      <h2 class="section-title">In drei Schritten dabei</h2>
-      <p class="section-sub">
+      <h2 class="section-title reveal">In drei Schritten dabei</h2>
+      <p class="section-sub reveal">
         Keine Anmeldemarathons, kein endloses Wischen. Drops koppelt deine spontane Lust mit der Lust anderer in deiner Nähe — und der Rest passiert offline.
       </p>
-      <div class="steps">
+      <div class="steps reveal reveal-stagger">
         <div class="step">
           <h3>Drop droppen oder beitreten</h3>
-          <p>Du hast Lust auf Kaffee, Laufen, oder einen After-Work-Bier? Drop in 2 Tipps erstellen. Oder einem nahen Drop joinen. Die Karte zeigt alles in Echtzeit.</p>
+          <p>Du hast Lust auf Kaffee, Laufen oder ein After-Work-Bier? Drop in zwei Tipps erstellen. Oder einem nahen Drop joinen. Die Karte zeigt alles in Echtzeit.</p>
         </div>
         <div class="step">
           <h3>Hingehen</h3>
@@ -570,11 +972,11 @@
   <!-- ── Features ─────────────────────────────────────────── -->
   <section id="features">
     <div class="container">
-      <h2 class="section-title">Drops anders gedacht</h2>
-      <p class="section-sub">
+      <h2 class="section-title reveal">Drops anders gedacht</h2>
+      <p class="section-sub reveal">
         Keine Algorithmen die Profile nach Attraktivität sortieren. Keine Premium-Locks. Kein Streit darum wer's anschreibt.
       </p>
-      <div class="feature-grid">
+      <div class="feature-grid reveal reveal-stagger" id="featureGrid">
         <div class="feature-card">
           <div class="feature-icon"><svg><use href="#i-pin"/></svg></div>
           <h3>Echtzeit-Karte</h3>
@@ -612,11 +1014,11 @@
   <!-- ── Cities ───────────────────────────────────────────── -->
   <section id="cities">
     <div class="container">
-      <h2 class="section-title">Live in diesen Städten</h2>
-      <p class="section-sub">
+      <h2 class="section-title reveal">Live in diesen Städten</h2>
+      <p class="section-sub reveal">
         Drops läuft aktuell in 5 deutschen Großstädten. Weitere folgen, wenn dort genug aktive Drops zustande kommen.
       </p>
-      <div class="cities">
+      <div class="cities reveal reveal-stagger">
         <span class="city-chip">München</span>
         <span class="city-chip">Berlin</span>
         <span class="city-chip">Hamburg</span>
@@ -629,11 +1031,11 @@
   <!-- ── FAQ ──────────────────────────────────────────────── -->
   <section id="faq">
     <div class="container">
-      <h2 class="section-title">Häufige Fragen</h2>
-      <p class="section-sub">
+      <h2 class="section-title reveal">Häufige Fragen</h2>
+      <p class="section-sub reveal">
         Datenschutz, Anwesenheitsbestätigung, Punkte. Hier die Kurzfassung — Details auf <a href="/support" style="color:var(--orange); font-weight: 600;">Support</a>.
       </p>
-      <div class="faq">
+      <div class="faq reveal">
         <details class="faq-item">
           <summary>Wer sieht meinen Standort?</summary>
           <p>Nur Teilnehmer eines aktiven Drops, dem du beigetreten bist — und auch nur deine ungefähre Live-Position. Außerhalb von Drops bist du komplett unsichtbar. Keine Hintergrund-Tracking-Schicht, kein Verlauf, der jemand anderem zugänglich ist.</p>
@@ -665,11 +1067,11 @@
   <!-- ── Final CTA ────────────────────────────────────────── -->
   <section>
     <div class="container">
-      <div class="cta-block">
+      <div class="cta-block reveal">
         <h2>Bereit für den nächsten Drop?</h2>
         <p>Lade Drops und sei live dabei wenn der nächste in deiner Nähe passiert.</p>
         <a class="btn btn-primary" href="https://apps.apple.com/de/app/drops-triff-leute/id6762097493">
-          <svg class="icon-16"><use href="#i-download"/></svg>
+          <svg style="width:16px;height:16px"><use href="#i-download"/></svg>
           Im App Store laden
         </a>
       </div>
@@ -690,5 +1092,106 @@
       © 2026 Drops · Spontan-Treffen, wie sie sein sollten.
     </div>
   </footer>
+
+  <!-- Activity-Ticker -->
+  <div class="ticker" id="ticker">
+    <span class="ticker-dot"></span>
+    <span class="ticker-text" id="tickerText">Lisa ist gerade einem Drop beigetreten · München</span>
+  </div>
+
+  <script>
+    /* ── Scroll-Progress-Bar ─────────────────────────────── */
+    const progressEl = document.getElementById('scrollProgress');
+    function updateProgress() {
+      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+      const pct = docHeight > 0 ? (window.scrollY / docHeight) * 100 : 0;
+      progressEl.style.setProperty('--progress', pct.toFixed(1) + '%');
+    }
+    window.addEventListener('scroll', updateProgress, { passive: true });
+    updateProgress();
+
+    /* ── Reveal-On-Scroll mit IntersectionObserver ───────── */
+    const reveals = document.querySelectorAll('.reveal');
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(e => {
+        if (e.isIntersecting) {
+          e.target.classList.add('is-visible');
+          io.unobserve(e.target);
+        }
+      });
+    }, { threshold: 0.12, rootMargin: '0px 0px -10% 0px' });
+    reveals.forEach(el => io.observe(el));
+
+    /* ── Mouse-Parallax für Aurora-Orbs ──────────────────── */
+    const aurora = document.getElementById('aurora');
+    const orbs = aurora.querySelectorAll('div');
+    let mx = 0, my = 0, tx = 0, ty = 0;
+    window.addEventListener('mousemove', (e) => {
+      mx = (e.clientX / window.innerWidth - 0.5) * 2;   // -1..1
+      my = (e.clientY / window.innerHeight - 0.5) * 2;
+    });
+    function tickParallax() {
+      // Easing
+      tx += (mx - tx) * 0.04;
+      ty += (my - ty) * 0.04;
+      orbs.forEach((orb, i) => {
+        const factor = (i + 1) * 10;
+        orb.style.transform = `translate(${tx * factor}px, ${ty * factor}px)`;
+      });
+      requestAnimationFrame(tickParallax);
+    }
+    tickParallax();
+
+    /* ── 3D-Tilt auf Feature-Cards ───────────────────────── */
+    const cards = document.querySelectorAll('.feature-card');
+    cards.forEach(card => {
+      card.addEventListener('mousemove', (e) => {
+        const rect = card.getBoundingClientRect();
+        const x = (e.clientX - rect.left) / rect.width - 0.5;
+        const y = (e.clientY - rect.top) / rect.height - 0.5;
+        const rotY = x * 8;   // max ±8°
+        const rotX = -y * 8;
+        card.style.transform = `perspective(900px) rotateX(${rotX}deg) rotateY(${rotY}deg) translateZ(0)`;
+      });
+      card.addEventListener('mouseleave', () => {
+        card.style.transform = '';
+      });
+    });
+
+    /* ── Hero-Phone-Parallax (folgt der Maus) ────────────── */
+    const phone = document.getElementById('heroPhone');
+    if (phone) {
+      window.addEventListener('mousemove', (e) => {
+        const cx = window.innerWidth / 2;
+        const dx = (e.clientX - cx) / cx;
+        phone.style.setProperty('--phone-rx', (-dx * 4) + 'deg');
+      });
+    }
+
+    /* ── Activity-Ticker (rotiert durch Fake-Activities) ─── */
+    const tickerEl = document.getElementById('ticker');
+    const tickerText = document.getElementById('tickerText');
+    const activities = [
+      'Lisa ist einem Drop beigetreten · München',
+      'Neuer Drop „Kaffee am Gärtnerplatz" · München',
+      'Jonas hostet jetzt „Feierabendbier" · Berlin',
+      'Sarah ist vor Ort angekommen · Hamburg',
+      'Neuer Drop „Laufgruppe Englischer Garten" · München',
+      'Max hat 3 Drops in Folge bestätigt · 🔥 Streak +30',
+      'Anna ist einem Drop beigetreten · Köln',
+      'Neuer Drop „Brunch in der Maxvorstadt" · München',
+    ];
+    let idx = 0;
+    // Erst nach 1.5s einblenden, dann alle 4s rotieren
+    setTimeout(() => tickerEl.classList.add('is-visible'), 1500);
+    setInterval(() => {
+      tickerEl.style.opacity = '0';
+      setTimeout(() => {
+        idx = (idx + 1) % activities.length;
+        tickerText.textContent = activities[idx];
+        tickerEl.style.opacity = '1';
+      }, 250);
+    }, 4000);
+  </script>
 </body>
 </html>
