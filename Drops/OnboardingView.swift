@@ -1104,7 +1104,10 @@ struct OnboardingView: View {
             // bei Re-Login / Gerätewechsel zurück auf den Default „😊".
             if let emoji = p.emoji, !emoji.isEmpty {
                 self.store.currentUser.emoji = emoji
-                UserDefaults.standard.set(emoji, forKey: UDKey.userEmoji)
+                // UD persistieren — Key analog zu AppStore.saveAll().
+                // (UDKey ist private im Models-Modul, deshalb hier mit
+                // dem gleichen Roh-String "ud_userEmoji".)
+                UserDefaults.standard.set(emoji, forKey: "ud_userEmoji")
             }
             if let bd = p.birthdate             { self.store.userBirthdate = bd }
             if let gender = p.gender            { self.store.userGender = gender }
