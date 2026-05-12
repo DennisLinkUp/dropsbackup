@@ -197,6 +197,15 @@ struct FreundeView: View {
                 EmojiPickerSheet(selected: store.currentUser.emoji) { emoji in
                     store.currentUser.emoji = emoji
                     store.saveAll()
+                    // Emoji-Auswahl auch nach Firebase pushen — sonst geht
+                    // sie beim Re-Login auf einem anderen Gerät verloren.
+                    let email = (FirebaseAuth.Auth.auth().currentUser?.email
+                                 ?? UserDefaults.standard.string(forKey: "ud_appleEmail"))
+                    RealtimeDBManager.shared.saveUserProfile(
+                        name:  store.currentUser.name,
+                        emoji: emoji,
+                        email: email
+                    )
                 }
                 .presentationDetents([.height(460)])
                 .presentationDragIndicator(.hidden)

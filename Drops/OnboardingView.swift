@@ -1067,6 +1067,7 @@ struct OnboardingView: View {
                      ?? UserDefaults.standard.string(forKey: "ud_appleEmail"))
         RealtimeDBManager.shared.saveUserProfile(
             name:      store.currentUser.name,
+            emoji:     store.currentUser.emoji,
             email:     email,
             birthdate: store.userBirthdate,
             gender:    store.userGender.isEmpty ? nil : store.userGender
@@ -1098,6 +1099,12 @@ struct OnboardingView: View {
                 // Persistiert den Namen für den Quick-Login-Button auf
                 // dem Welcome-Screen — überlebt Logout (anders als UDKey.userName).
                 UserDefaults.standard.set(name, forKey: "ud_lastLoginName")
+            }
+            // Emoji aus Firebase übernehmen — sonst springt der User-Emoji
+            // bei Re-Login / Gerätewechsel zurück auf den Default „😊".
+            if let emoji = p.emoji, !emoji.isEmpty {
+                self.store.currentUser.emoji = emoji
+                UserDefaults.standard.set(emoji, forKey: UDKey.userEmoji)
             }
             if let bd = p.birthdate             { self.store.userBirthdate = bd }
             if let gender = p.gender            { self.store.userGender = gender }

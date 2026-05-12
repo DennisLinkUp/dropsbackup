@@ -90,6 +90,7 @@ class RealtimeDBManager: ObservableObject {
     /// Wird am Ende des Onboardings aufgerufen (phone auth & Apple).
     func saveUserProfile(
         name: String,
+        emoji: String? = nil,
         email: String? = nil,
         birthdate: Date? = nil,
         gender: String? = nil
@@ -100,6 +101,7 @@ class RealtimeDBManager: ObservableObject {
             "name": name,
             "updatedAt": ServerValue.timestamp()
         ]
+        if let emoji = emoji, !emoji.isEmpty   { payload["emoji"] = emoji }
         if let email = email, !email.isEmpty  { payload["email"] = email }
         if let bd = birthdate                  { payload["birthdate"] = bd.timeIntervalSince1970 }
         if let gender = gender, !gender.isEmpty { payload["gender"] = gender }
@@ -136,6 +138,7 @@ class RealtimeDBManager: ObservableObject {
             let settings = dict["settings"] as? [String: Any] ?? [:]
             let profile = UserProfileSnapshot(
                 name:            dict["name"]            as? String,
+                emoji:           dict["emoji"]           as? String,
                 email:           dict["email"]           as? String,
                 birthdate:       (dict["birthdate"]      as? Double).map { Date(timeIntervalSince1970: $0) },
                 gender:          dict["gender"]          as? String,
@@ -2009,6 +2012,7 @@ struct AdminReportEntry: Identifiable {
 
 struct UserProfileSnapshot {
     var name:            String?
+    var emoji:           String?
     var email:           String?
     var birthdate:       Date?
     var gender:          String?
