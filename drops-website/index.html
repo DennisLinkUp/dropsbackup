@@ -35,6 +35,48 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 
+  <!-- ── SVG-Icon-Sprite (Lucide-Stil, stroke-based, currentColor) ─── -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/>
+        <circle cx="12" cy="10" r="3"/>
+      </symbol>
+      <symbol id="i-signal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4.93 19.07a10 10 0 0 1 0-14.14"/>
+        <path d="M7.76 16.24a6 6 0 0 1 0-8.48"/>
+        <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+        <path d="M16.24 7.76a6 6 0 0 1 0 8.48"/>
+        <circle cx="12" cy="12" r="2" fill="currentColor"/>
+      </symbol>
+      <symbol id="i-bubble" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </symbol>
+      <symbol id="i-star" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+      </symbol>
+      <symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+        <polyline points="9 22 9 12 15 12 15 22"/>
+      </symbol>
+      <symbol id="i-bolt" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+      </symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="11" width="18" height="11" rx="2"/>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+      </symbol>
+      <symbol id="i-dot" viewBox="0 0 24 24" fill="currentColor">
+        <circle cx="12" cy="12" r="6"/>
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+      </symbol>
+    </defs>
+  </svg>
+
   <style>
     /* ──────────────────────────────────────────────────────────
        Drops Web — Sunset Aurora Design (matched to iOS app)
@@ -268,7 +310,13 @@
       gap: 24px;
       font-size: 13px; color: var(--text-3); font-weight: 500;
     }
-    .hero-meta span { display: inline-flex; align-items: center; gap: 6px; }
+    .hero-meta span { display: inline-flex; align-items: center; gap: 7px; }
+    .hero-meta svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+    /* Generic icon utilities */
+    .icon-14 { width: 14px; height: 14px; flex-shrink: 0; }
+    .icon-16 { width: 16px; height: 16px; flex-shrink: 0; }
+    .icon-22 { width: 22px; height: 22px; flex-shrink: 0; }
 
     /* ── Sections ────────────────────────────────────────────── */
     h2.section-title {
@@ -313,8 +361,9 @@
       background: var(--gradient-soft);
       display: grid; place-items: center;
       margin-bottom: 18px;
-      font-size: 22px;
+      color: var(--orange);
     }
+    .feature-icon svg { width: 22px; height: 22px; }
     .feature-card h3 {
       font-size: 17px; font-weight: 800;
       letter-spacing: -0.015em;
@@ -482,14 +531,15 @@
     </p>
     <div class="hero-cta">
       <a class="btn btn-primary" href="https://apps.apple.com/de/app/drops-triff-leute/id6762097493">
-        <span>↓</span> Im App Store laden
+        <svg class="icon-16"><use href="#i-download"/></svg>
+        Im App Store laden
       </a>
       <a class="btn btn-ghost" href="#how">Wie's funktioniert</a>
     </div>
     <div class="hero-meta">
-      <span>📍 München · Berlin · Hamburg · Köln · Frankfurt</span>
-      <span>🟢 ~14 Min zu Fuß im Schnitt</span>
-      <span>🔒 Keine Profile, keine Bilderdatenbank</span>
+      <span><svg style="color:var(--orange)"><use href="#i-pin"/></svg> München · Berlin · Hamburg · Köln · Frankfurt</span>
+      <span><svg style="color:var(--green)"><use href="#i-dot"/></svg> ~14 Min zu Fuß im Schnitt</span>
+      <span><svg style="color:var(--text-3)"><use href="#i-lock"/></svg> Keine Profile, keine Bilderdatenbank</span>
     </div>
   </header>
 
@@ -526,32 +576,32 @@
       </p>
       <div class="feature-grid">
         <div class="feature-card">
-          <div class="feature-icon">📍</div>
+          <div class="feature-icon"><svg><use href="#i-pin"/></svg></div>
           <h3>Echtzeit-Karte</h3>
           <p>Live-Pins zeigen aktive Drops in deinem Stadtbezirk. Distance + ETA, alles in Sekunden ablesbar.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">📡</div>
+          <div class="feature-icon"><svg><use href="#i-signal"/></svg></div>
           <h3>Bluetooth-Bestätigung</h3>
           <p>Vor-Ort-Check via BLE — kein Manual-Check, keine GPS-Fakes. Wer kommt, kommt wirklich.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">💬</div>
+          <div class="feature-icon"><svg><use href="#i-bubble"/></svg></div>
           <h3>Kein Swipen, kein Chat</h3>
           <p>Dating-Apps locken in endlose Konversationen. Drops bringt euch direkt zusammen — der Rest passiert vor Ort.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">⭐</div>
+          <div class="feature-icon"><svg><use href="#i-star"/></svg></div>
           <h3>Zuverlässigkeits-Score</h3>
           <p>Wer kommt, wenn er sagt er kommt, sammelt Punkte. Wer ghosted, verliert. Streak-Bonus + Newcomer-Boost.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">🏠</div>
+          <div class="feature-icon"><svg><use href="#i-home"/></svg></div>
           <h3>Heimzone-Schutz</h3>
           <p>Drops warnt dich automatisch, falls du einen Drop nahe deinem Zuhause erstellst. Privatsphäre by default.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">🍃</div>
+          <div class="feature-icon"><svg><use href="#i-bolt"/></svg></div>
           <h3>Power-Hour</h3>
           <p>Drei Bonus-Slots pro Woche, in denen Drops besonders viele Punkte einbringen. Klar geregelt, kein Pay-to-Win.</p>
         </div>
@@ -619,7 +669,8 @@
         <h2>Bereit für den nächsten Drop?</h2>
         <p>Lade Drops und sei live dabei wenn der nächste in deiner Nähe passiert.</p>
         <a class="btn btn-primary" href="https://apps.apple.com/de/app/drops-triff-leute/id6762097493">
-          <span>↓</span> Im App Store laden
+          <svg class="icon-16"><use href="#i-download"/></svg>
+          Im App Store laden
         </a>
       </div>
     </div>
