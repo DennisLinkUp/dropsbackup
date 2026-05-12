@@ -10,14 +10,30 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --brand: #34C759;
-      --bg: #0a0a0a;
-      --bg2: #111111;
-      --text: #f5f5f7;
-      --text2: rgba(245,245,247,0.6);
-      --text3: rgba(245,245,247,0.35);
-      --glass: rgba(255,255,255,0.055);
-      --glass-border: rgba(255,255,255,0.10);
+      --orange:        #E48C3A;
+      --green:         #5FA937;
+      --brand:         #E48C3A;
+      --gradient:      linear-gradient(135deg, #E48C3A 0%, #5FA937 100%);
+
+      --bg:            #FAFAFC;
+      --bg2:           #FFFFFF;
+      --text:          #111418;
+      --text2:         rgba(17,20,24,0.66);
+      --text3:         rgba(17,20,24,0.42);
+      --glass:         rgba(255,255,255,0.72);
+      --glass-border:  rgba(0,0,0,0.08);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:            #0D0F14;
+        --bg2:           #1c1f28;
+        --text:          #F5F5F7;
+        --text2:         rgba(245,245,247,0.65);
+        --text3:         rgba(245,245,247,0.42);
+        --glass:         rgba(28,31,40,0.72);
+        --glass-border:  rgba(255,255,255,0.10);
+      }
     }
 
     html { scroll-behavior: smooth; }
@@ -28,28 +44,56 @@
       color: var(--text);
       -webkit-font-smoothing: antialiased;
       min-height: 100vh;
+      position: relative;
+      overflow-x: hidden;
+    }
+
+    /* Aurora-Background (matches index.html) */
+    body::before, body::after {
+      content: ""; position: fixed; z-index: -1;
+      border-radius: 50%; filter: blur(80px);
+      pointer-events: none;
+    }
+    body::before {
+      width: 480px; height: 480px;
+      background: var(--orange); opacity: 0.18;
+      top: -100px; left: -60px;
+    }
+    body::after {
+      width: 380px; height: 380px;
+      background: var(--green); opacity: 0.14;
+      top: 320px; right: -80px;
+    }
+    @media (prefers-color-scheme: dark) {
+      body::before { opacity: 0.25; }
+      body::after  { opacity: 0.20; }
     }
 
     nav {
       position: sticky; top: 0; left: 0; right: 0; z-index: 100;
       display: flex; align-items: center; justify-content: space-between;
-      padding: 18px 40px;
-      background: rgba(10,10,10,0.85);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
+      padding: 16px 28px;
+      background: color-mix(in oklab, var(--bg) 80%, transparent);
+      backdrop-filter: blur(20px) saturate(150%);
+      -webkit-backdrop-filter: blur(20px) saturate(150%);
       border-bottom: 1px solid var(--glass-border);
     }
 
     .nav-logo {
       display: flex; align-items: center; gap: 10px;
-      font-size: 20px; font-weight: 800; color: var(--text);
+      font-size: 20px; font-weight: 900; color: var(--text);
+      letter-spacing: -0.02em;
       text-decoration: none;
     }
     .nav-logo .dot {
-      width: 10px; height: 10px; border-radius: 50%;
-      background: var(--brand);
-      box-shadow: 0 0 10px rgba(52,199,89,0.5);
+      width: 28px; height: 28px;
+      border-radius: 8px;
+      background: var(--gradient);
+      box-shadow: 0 4px 12px rgba(228,140,58,0.35);
+      display: grid; place-items: center;
+      color: white; font-weight: 900; font-size: 14px;
     }
+    .nav-logo .dot::after { content: "D"; }
     .nav-back {
       font-size: 14px; font-weight: 500; color: var(--text2);
       text-decoration: none; transition: color .2s;
@@ -71,15 +115,15 @@
 
     .page-icon {
       width: 72px; height: 72px; border-radius: 20px;
-      background: rgba(52,199,89,0.12);
-      border: 1px solid rgba(52,199,89,0.25);
+      background: linear-gradient(135deg, rgba(228,140,58,0.14), rgba(95,169,55,0.14));
+      border: 1px solid rgba(228,140,58,0.25);
       display: flex; align-items: center; justify-content: center;
       font-size: 32px;
       margin: 0 auto 24px;
     }
 
     .page-title {
-      font-size: 40px; font-weight: 800; letter-spacing: -0.03em;
+      font-size: 40px; font-weight: 900; letter-spacing: -0.035em;
       margin-bottom: 12px;
     }
 
@@ -94,11 +138,17 @@
       padding: 32px;
       margin-bottom: 32px;
       text-align: center;
+      backdrop-filter: blur(16px) saturate(140%);
+      -webkit-backdrop-filter: blur(16px) saturate(140%);
     }
 
     .contact-email {
-      font-size: 22px; font-weight: 700;
-      color: var(--brand);
+      font-size: 22px; font-weight: 800;
+      background: var(--gradient);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: transparent;
       text-decoration: none;
       display: inline-block;
       margin: 16px 0 12px;
@@ -117,19 +167,22 @@
       border-radius: 20px;
       padding: 28px 32px;
       margin-bottom: 16px;
+      backdrop-filter: blur(16px) saturate(140%);
+      -webkit-backdrop-filter: blur(16px) saturate(140%);
     }
 
     .section-title {
-      font-size: 16px; font-weight: 700;
-      color: var(--brand);
+      font-size: 16px; font-weight: 800;
+      color: var(--orange);
       margin-bottom: 12px;
       display: flex; align-items: center; gap: 8px;
+      letter-spacing: -0.015em;
     }
 
     .section-title::before {
       content: "";
       width: 3px; height: 16px;
-      background: var(--brand);
+      background: var(--gradient);
       border-radius: 2px;
       display: inline-block;
       flex-shrink: 0;
@@ -140,8 +193,8 @@
       color: var(--text2);
     }
 
-    .section-text strong { color: var(--text); font-weight: 600; }
-    .section-text a { color: var(--brand); text-decoration: none; }
+    .section-text strong { color: var(--text); font-weight: 700; }
+    .section-text a { color: var(--orange); text-decoration: none; font-weight: 600; }
     .section-text a:hover { text-decoration: underline; }
 
     footer {
@@ -165,7 +218,7 @@
 <body>
 
 <nav>
-  <a class="nav-logo" href="index.html">
+  <a class="nav-logo" href="/">
     <span class="dot"></span>
     Drops
   </a>

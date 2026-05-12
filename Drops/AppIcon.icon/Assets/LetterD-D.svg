@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Drops Letter-D — Chunky abgerundetes D, weiß (für Liquid-Glass im Composer) -->
+<!-- Linke Seite: rounded corners, rechte Seite: smooth halbkreis -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <path fill-rule="evenodd" fill="#FFFFFF"
+        d="M 314 232
+           H 512
+           A 280 280 0 0 1 512 792
+           H 314
+           A 50 50 0 0 1 264 742
+           V 282
+           A 50 50 0 0 1 314 232
+           Z
+           M 414 342
+           H 512
+           A 170 170 0 0 1 512 682
+           H 414
+           A 40 40 0 0 1 374 642
+           V 382
+           A 40 40 0 0 1 414 342
+           Z"/>
+</svg>

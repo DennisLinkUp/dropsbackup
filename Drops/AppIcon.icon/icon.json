@@ -1,0 +1,97 @@
+{
+  "fill" : {
+    "linear-gradient" : [
+      "display-p3:0.89355,0.54883,0.22632,1.00000",
+      "display-p3:0.37151,0.66245,0.21442,1.00000"
+    ],
+    "orientation" : {
+      "start" : {
+        "x" : 0.5,
+        "y" : 0
+      },
+      "stop" : {
+        "x" : 0.5,
+        "y" : 0.7
+      }
+    }
+  },
+  "groups" : [
+    {
+      "hidden" : false,
+      "layers" : [
+        {
+          "fill" : "none",
+          "image-name" : "radar_wave1 6.svg",
+          "name" : "radar_wave1 6",
+          "opacity" : 0.8,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              77.42839087441553,
+              5.799224318625022
+            ]
+          }
+        },
+        {
+          "fill" : "none",
+          "image-name" : "radar_wave2 4.svg",
+          "name" : "radar_wave2 4",
+          "opacity" : 0.6,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              93.94451990667358,
+              18.186321092818673
+            ]
+          }
+        },
+        {
+          "fill" : "none",
+          "glass" : true,
+          "image-name" : "LetterD-D.svg",
+          "name" : "LetterD-D",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              1.2291683862224545,
+              -0.4053290490485324
+            ]
+          }
+        },
+        {
+          "fill" : "none",
+          "image-name" : "radar_dot 3.svg",
+          "name" : "radar_dot 3",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              73.00939765259415,
+              1.6701920605605096
+            ]
+          }
+        }
+      ],
+      "position" : {
+        "scale" : 1,
+        "translation-in-points" : [
+          15.778144617116823,
+          0.4053290490485324
+        ]
+      },
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}
