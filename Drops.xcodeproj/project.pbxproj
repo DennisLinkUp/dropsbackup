@@ -9,9 +9,10 @@
 /* Begin PBXBuildFile section */
 		13B2973FA52749D888CC45A1 /* FeedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0F5F8C8062A41CBB0CD013D /* FeedView.swift */; };
 		13CF507DAAB3456EB4F37CCF /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AC45B58BF74488B93149C4 /* OnboardingView.swift */; };
-		1F8FA44A225D4E1BA5BECEBE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6EE6CAE16DF44814A86D7973 /* Assets.xcassets */; };
 		89042F9CF58F49A7AAC76CBA /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 327F542C69C2450EB363BF7F /* Preview Assets.xcassets */; };
 		945C33D97EC74398844A2F5C /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A070BC7CF7824527992379F9 /* MainTabView.swift */; };
+		951A8B132FAE762E0003DFC3 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 951A8B122FAE762E0003DFC3 /* AppIcon.icon */; };
+		951A8B152FAE77550003DFC3 /* Assets 2.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 951A8B142FAE77550003DFC3 /* Assets 2.xcassets */; };
 		98D1213810614C4BA718BC7A /* ProfileAndAlertsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C6AE0EAF293496FAAB1180D /* ProfileAndAlertsView.swift */; };
 		AB5D31427FAF496F81E12038 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 872B2889154249B48B39C338 /* DesignSystem.swift */; };
 		B3BB3982DE3946A7B973E3C5 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ABB1429B0CC45F69697DFFE /* Models.swift */; };
@@ -46,6 +47,7 @@
 		FA013MM12F90000000DMM121 /* Localization.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA013MM02F90000000DMM120 /* Localization.swift */; };
 		FA014NN12F90000000ENN121 /* AdminPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA014NN02F90000000ENN120 /* AdminPanelView.swift */; };
 		FA015OO12F90000000FOO121 /* ImagePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA015OO02F90000000FOO120 /* ImagePickerView.swift */; };
+		FA016CF12F90000000FCF121 /* ContentFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA016CF02F90000000FCF120 /* ContentFilter.swift */; };
 		FAPRIVACY1000000010000001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = FAPRIVACY0000000010000000 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
@@ -80,8 +82,9 @@
 		49AC45B58BF74488B93149C4 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		5ABB1429B0CC45F69697DFFE /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		60F2B6D895C04241A50D2A18 /* LiveMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveMapView.swift; sourceTree = "<group>"; };
-		6EE6CAE16DF44814A86D7973 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		872B2889154249B48B39C338 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
+		951A8B122FAE762E0003DFC3 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
+		951A8B142FAE77550003DFC3 /* Assets 2.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Assets 2.xcassets"; sourceTree = "<group>"; };
 		9C6AE0EAF293496FAAB1180D /* ProfileAndAlertsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileAndAlertsView.swift; sourceTree = "<group>"; };
 		A070BC7CF7824527992379F9 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
 		AA000008000000000000008 /* Drops.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Drops.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -109,6 +112,7 @@
 		FA013MM02F90000000DMM120 /* Localization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Localization.swift; sourceTree = "<group>"; };
 		FA014NN02F90000000ENN120 /* AdminPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminPanelView.swift; sourceTree = "<group>"; };
 		FA015OO02F90000000FOO120 /* ImagePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePickerView.swift; sourceTree = "<group>"; };
+		FA016CF02F90000000FCF120 /* ContentFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentFilter.swift; sourceTree = "<group>"; };
 		FAPRIVACY0000000010000000 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -172,7 +176,7 @@
 				C0F5F8C8062A41CBB0CD013D /* FeedView.swift */,
 				9C6AE0EAF293496FAAB1180D /* ProfileAndAlertsView.swift */,
 				E4155E9D2F810EC3006A5368 /* CreateDropView.swift */,
-				6EE6CAE16DF44814A86D7973 /* Assets.xcassets */,
+				951A8B122FAE762E0003DFC3 /* AppIcon.icon */,
 				1206E5CD6A2641AF8F3B9AFE /* Info.plist */,
 				E4315F872F814CEA00E60F54 /* GoogleService-Info.plist */,
 				FA001AA02F900000001AA120 /* FirebaseAuthManager.swift */,
@@ -188,6 +192,8 @@
 				FA012LL02F90000000CLL120 /* BluetoothMeetupManager.swift */,
 				FA013MM02F90000000DMM120 /* Localization.swift */,
 				FA014NN02F90000000ENN120 /* AdminPanelView.swift */,
+				FA016CF02F90000000FCF120 /* ContentFilter.swift */,
+				951A8B142FAE77550003DFC3 /* Assets 2.xcassets */,
 				AA000016000000000000016 /* Preview Content */,
 				E4FFB3312F952A3E004E687A /* DropsPlusView 2.swift */,
 			);
@@ -234,6 +240,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = AA000010000000000000010 /* Build configuration list for PBXNativeTarget "Drops" */;
 			buildPhases = (
+				DB001100000000000001100 /* Bump Build Number */,
 				AA000005000000000000005 /* Sources */,
 				AA000007000000000000007 /* Frameworks */,
 				AA000006000000000000006 /* Resources */,
@@ -322,7 +329,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				89042F9CF58F49A7AAC76CBA /* Preview Assets.xcassets in Resources */,
-				1F8FA44A225D4E1BA5BECEBE /* Assets.xcassets in Resources */,
+				951A8B132FAE762E0003DFC3 /* AppIcon.icon in Resources */,
+				951A8B152FAE77550003DFC3 /* Assets 2.xcassets in Resources */,
 				E4315F882F814CEA00E60F54 /* GoogleService-Info.plist in Resources */,
 				FAPRIVACY1000000010000001 /* PrivacyInfo.xcprivacy in Resources */,
 			);
@@ -339,6 +347,25 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		DB001100000000000001100 /* Bump Build Number */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Bump Build Number";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/scripts/bump-build-number.sh\"\n";
+		};
 		E4FFB3362F9749E3004E687A /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -390,6 +417,7 @@
 				FA013MM12F90000000DMM121 /* Localization.swift in Sources */,
 				FA014NN12F90000000ENN121 /* AdminPanelView.swift in Sources */,
 				FA015OO12F90000000FOO121 /* ImagePickerView.swift in Sources */,
+				FA016CF12F90000000FCF121 /* ContentFilter.swift in Sources */,
 				DA002004000000000002004 /* DropLiveActivityAttributes.swift in Sources */,
 				E4FFB3322F952A3E004E687A /* DropsPlusView 2.swift in Sources */,
 			);
@@ -548,7 +576,7 @@
 				CODE_SIGN_ENTITLEMENTS = Drops/Drops.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"Drops/Preview Content\"";
 				DEVELOPMENT_TEAM = 63N54256Q7;
 				ENABLE_PREVIEWS = YES;
@@ -559,7 +587,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
 				LE_SWIFT_VERSION = 5.0;
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dennis.drops;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -583,7 +611,7 @@
 				CODE_SIGN_ENTITLEMENTS = Drops/Drops.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"Drops/Preview Content\"";
 				DEVELOPMENT_TEAM = 63N54256Q7;
 				ENABLE_PREVIEWS = YES;
@@ -594,7 +622,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
 				LE_SWIFT_VERSION = 5.0;
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dennis.drops;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -616,13 +644,13 @@
 				CODE_SIGN_ENTITLEMENTS = DropLiveActivity/DropLiveActivity.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 63N54256Q7;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = DropLiveActivity/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
 				LE_SWIFT_VERSION = 5.0;
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dennis.drops.DropLiveActivity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -642,13 +670,13 @@
 				CODE_SIGN_ENTITLEMENTS = DropLiveActivity/DropLiveActivity.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 63N54256Q7;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = DropLiveActivity/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
 				LE_SWIFT_VERSION = 5.0;
-				MARKETING_VERSION = 1.0.2;
+				MARKETING_VERSION = 1.0.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dennis.drops.DropLiveActivity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";

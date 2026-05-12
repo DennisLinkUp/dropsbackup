@@ -230,20 +230,23 @@ struct CreateDropView: View {
             // Vollflächiger App-Hintergrund
             AppAuroraBackground().ignoresSafeArea()
 
-            // Aurora-Akzent (Grün, Lila, Teal)
+            // Aurora-Akzent — neue Icon-Sunset-Palette: Orange dominant,
+            // Rose für die Sunset-Wärme, Lavender als kühler Counterpoint.
+            // Vorher: brand-grün/violet/teal — jetzt konsistent zu den
+            // anderen Tab-Headern und dem globalen AppAuroraBackground.
             ZStack {
                 Circle()
-                    .fill(Color.brand.opacity(0.22))
+                    .fill(Color(hex: "E48C3A").opacity(0.24))
                     .frame(width: 300, height: 300)
                     .blur(radius: 80)
                     .offset(x: sheetPulse ? 40 : -30, y: sheetPulse ? -70 : 10)
                 Circle()
-                    .fill(Color(UIColor.systemPurple).opacity(0.16))
+                    .fill(Color(hex: "F08FA3").opacity(0.18))
                     .frame(width: 260, height: 260)
                     .blur(radius: 70)
                     .offset(x: sheetPulse ? -60 : 35, y: sheetPulse ? 10 : -50)
                 Circle()
-                    .fill(Color(UIColor.systemTeal).opacity(0.12))
+                    .fill(Color(hex: "B49BE0").opacity(0.14))
                     .frame(width: 220, height: 220)
                     .blur(radius: 65)
                     .offset(x: sheetPulse ? 50 : -45, y: sheetPulse ? 40 : -20)
@@ -833,8 +836,16 @@ struct CreateDropView: View {
                     pendingHomeZoneCoord = nil
                 }
             )
-            .presentationDetents([.fraction(0.65)])
-            .presentationDragIndicator(.visible)
+            // 0.78 statt 0.65 — auf SE/mini wurden sonst die Buttons
+            // unten abgeschnitten. Der Inhalt ist jetzt zusätzlich
+            // scrollbar (Footer fix), das ist die Belt-and-Suspenders-
+            // Lösung für sehr kompakte Display Zoom-Modi.
+            .presentationDetents([.fraction(0.78)])
+            // Heimzone-Warnung darf nicht versehentlich weggewischt werden —
+            // User soll bewusst „Anderen Ort" oder „Trotzdem erstellen"
+            // wählen, sonst geht der Sicherheits-Check ins Leere.
+            .presentationDragIndicator(.hidden)
+            .interactiveDismissDisabled()
             .sheetBackground()
         }
         .fullScreenCover(isPresented: $showPinMap) {
@@ -989,6 +1000,22 @@ struct CreateDropView: View {
     // MARK: - Create Helper
 
     private func performCreate(coord: CLLocationCoordinate2D) {
+        // Content-Filter: Beleidigungen, Slurs, Sexual-Solicitation und
+        // Drohwörter blockieren den Drop bevor er überhaupt erstellt wird.
+        // Whole-Word-Match auf normalisiertem Text (Leetspeak rückwärts) —
+        // siehe ContentFilter.swift. Aktiviert für Drop-Name + Beschreibung.
+        if let match = ContentFilter.firstMatch(
+            activityName: activityName,
+            description: dropDescription
+        ) {
+            store.showInfoToast(
+                "Dein Drop enthält nicht erlaubte Wörter (\"\(match.word)\"). Bitte umformulieren.",
+                icon: "exclamationmark.shield.fill"
+            )
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            return
+        }
+
         isCreating = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
             let loc = DropLocation(
@@ -1286,11 +1313,18 @@ struct DropQuickTemplatesBar: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 8) {
+            // Section-Header — kräftiger uppercase-Cut mit Tracking,
+            // stärkere Farbe. Vorher wirkten Header + Chips gemeinsam
+            // „ausgegraut" auf dem Aurora-Background — beides sah aus
+            // wie blasse Sektionslabels.
             Text(store.pastDrops.isEmpty ? "Für dich" : "Vorlagen")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.textSecondary)
+                .font(.system(size: 12, weight: .heavy))
+                .tracking(0.6)
+                .textCase(.uppercase)
+                .foregroundColor(.textPrimary)
                 .padding(.horizontal, 20)
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(templates) { tpl in
@@ -1299,29 +1333,23 @@ struct DropQuickTemplatesBar: View {
                                 Text(tpl.emoji).font(.system(size: 16))
                                 Text(tpl.name)
                                     .font(.system(size: 13, weight: .semibold))
-                                    .foregroundColor(.textPrimary)
+                                    .foregroundColor(.white)
                             }
                             .padding(.horizontal, 14).padding(.vertical, 10)
-                            // Brand-getöntes Glass — gleiche Optik wie die
-                            // anderen Sektions-Container in CreateDropView,
-                            // damit sich die Pillen nicht visuell vom Rest
-                            // abheben.
+                            // Solides Brand-Gradient statt ultraThin/10%-Tönung —
+                            // die alte Glass-Variante wirkte ausgegraut auf der
+                            // Aurora. Jetzt klarer Tap-Affordance: vollfarbige
+                            // Capsule mit Sunset-Gradient (passt zur App-Icon-
+                            // Identity).
                             .background(
-                                ZStack {
-                                    Capsule().fill(.ultraThinMaterial)
-                                    Capsule().fill(Color.brand.opacity(0.10))
-                                }
-                            )
-                            .overlay(
-                                Capsule().stroke(
+                                Capsule().fill(
                                     LinearGradient(
-                                        colors: [Color.brand.opacity(0.45), Color.brand.opacity(0.15)],
-                                        startPoint: .topLeading, endPoint: .bottomTrailing
-                                    ),
-                                    lineWidth: 1
+                                        colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                                        startPoint: .leading, endPoint: .trailing
+                                    )
                                 )
                             )
-                            .shadow(color: Color.brand.opacity(0.18), radius: 6, y: 2)
+                            .shadow(color: Color(hex: "E48C3A").opacity(0.30), radius: 8, y: 3)
                         }
                         .buttonStyle(.plain)
                     }
