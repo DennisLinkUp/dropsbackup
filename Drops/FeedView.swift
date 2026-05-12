@@ -42,6 +42,77 @@ struct FeedView: View {
     @State private var profileSubtitle = "Drops-Nutzer"
     @State private var profileAccent: Color = Color(UIColor.systemPurple)
     @State private var auroraAnimate = false
+    /// Persistiert: hat User die First-Time-Hint-Card schon dismisst?
+    /// Nach erstem Tap wird das auf true gesetzt → erscheint nicht wieder.
+    @AppStorage("ud_feedFirstTimeHintDismissed") private var feedHintDismissed = false
+
+    /// Sichtbar nur für echte Erstnutzer: noch keinen Drop erstellt UND
+    /// keinen aktiven Drop laufen. Solange Filter-Treffer vorhanden sind
+    /// (also was im Feed steht zum Antippen), zeigen wir den Hint —
+    /// sonst greift schon der DropsEmptyState weiter unten.
+    private var showFirstTimeHint: Bool {
+        guard !feedHintDismissed else { return false }
+        guard store.pastDrops.isEmpty else { return false }
+        guard store.activeDrops.isEmpty else { return false }
+        guard !strangerAnnotations.isEmpty || !sortedFriendDrops.isEmpty else { return false }
+        return true
+    }
+
+    /// Onboarding-Hint für Erstnutzer — erklärt in einem Satz den Haupt-
+    /// flow ("Tap → vorbeikommen") und ist persistent dismissable.
+    @ViewBuilder
+    private var firstTimeHintCard: some View {
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 36, height: 36)
+                Image(systemName: "hand.wave.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Neu hier?")
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundColor(.textPrimary)
+                Text("Tippe einen Drop und schick eine kurze Anfrage — keine Likes, kein Smalltalk, einfach hingehen.")
+                    .font(.system(size: 12))
+                    .foregroundColor(.textSecondary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+
+            Button {
+                withAnimation(.easeOut(duration: 0.25)) {
+                    feedHintDismissed = true
+                }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.textTertiary)
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(Color.primary.opacity(0.06)))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color(hex: "E48C3A").opacity(0.25), lineWidth: 1)
+                )
+        )
+    }
 
     private func showStrangerProfile(_ item: MapAnnotationItem) {
         let creator = item.participants.first ?? DropParticipant(name: item.name, emoji: item.emoji)
@@ -111,22 +182,30 @@ struct FeedView: View {
     private var strangerAnnotations: [MapAnnotationItem] {
         var base = store.allMapAnnotations.filter { $0.isStranger }
         let userCoord = store.currentUser.coordinate
+        // Drop dem der User aktuell beigetreten ist NIEMALS rausfiltern —
+        // egal welche Distance/Gender/Activity-Filter aktiv sind. Sonst
+        // verschwindet ein gejointer Drop aus dem Umgebungstab obwohl man
+        // ihn auf der Karte sieht (Bug-Report).
+        let joinedDropID = store.activeJoinedDropID?.uuidString
+        let isJoinedDrop: (MapAnnotationItem) -> Bool = { drop in
+            joinedDropID != nil && drop.id.uuidString == joinedDropID
+        }
         switch store.feedDistanceFilter {
         case .nearby, .quarter:
             let radius = store.feedDistanceFilter.meters
-            base = base.filter { $0.distance(from: userCoord) <= radius }
+            base = base.filter { isJoinedDrop($0) || $0.distance(from: userCoord) <= radius }
         case .city:
             if let myCity = ServiceCities.city(for: userCoord) {
-                base = base.filter { myCity.contains($0.coordinate) }
+                base = base.filter { isJoinedDrop($0) || myCity.contains($0.coordinate) }
             } else if let myCityNear = ServiceCities.cityNear(userCoord) {
                 // User im Vorort (40km-Buffer) → zeig Drops aus der nächstgelegenen Stadt
-                base = base.filter { myCityNear.contains($0.coordinate) }
+                base = base.filter { isJoinedDrop($0) || myCityNear.contains($0.coordinate) }
             }
         }
         if store.genderFilterEnabled && store.userGender == "weiblich" {
-            base = base.filter { ($0.hostGender?.lowercased() ?? "") == "weiblich" }
+            base = base.filter { isJoinedDrop($0) || ($0.hostGender?.lowercased() ?? "") == "weiblich" }
         }
-        base = base.filter { matchesActivityFilter($0) }
+        base = base.filter { isJoinedDrop($0) || matchesActivityFilter($0) }
         return base.sorted { a, b in
             // Priority Listing: geboostete Drops immer zuerst
             if a.isBoosted != b.isBoosted { return a.isBoosted }
@@ -373,20 +452,23 @@ struct FeedView: View {
             ZStack(alignment: .top) {
                 Color(UIColor.systemGroupedBackground).ignoresSafeArea()
 
-                // Aurora-Hintergrund oben (wie Freunde-Tab)
+                // Aurora-Hintergrund oben — neue Icon-Sunset-Palette:
+                // Orange (warm-dominant), Rose (Sunset-Wärme), Lavender
+                // (kühler Counterpoint). Konsistent mit dem globalen
+                // AppAuroraBackground und dem App-Icon.
                 ZStack {
                     Circle()
-                        .fill(Color.brand.opacity(0.30))
+                        .fill(Color(hex: "E48C3A").opacity(0.32))
                         .frame(width: 280, height: 280)
                         .blur(radius: 65)
                         .offset(x: auroraAnimate ? 30 : -40, y: auroraAnimate ? -50 : -15)
                     Circle()
-                        .fill(Color(UIColor.systemPurple).opacity(0.20))
+                        .fill(Color(hex: "F08FA3").opacity(0.22))
                         .frame(width: 220, height: 220)
                         .blur(radius: 55)
                         .offset(x: auroraAnimate ? -55 : 35, y: auroraAnimate ? -15 : -55)
                     Circle()
-                        .fill(Color(UIColor.systemTeal).opacity(0.15))
+                        .fill(Color(hex: "B49BE0").opacity(0.18))
                         .frame(width: 180, height: 180)
                         .blur(radius: 48)
                         .offset(x: auroraAnimate ? 60 : -10, y: auroraAnimate ? 5 : -35)
@@ -403,22 +485,6 @@ struct FeedView: View {
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 0) {
 
-                        // ── Power-Hour Countdown-Pille (≤60 Min vor Start
-                        //    oder vor Ende eines aktiven Slots) ──
-                        // Auto-update jede Minute über TimelineView; gleiche
-                        // Komponente wie in der Map-View, damit beide Tabs
-                        // konsistent sind.
-                        TimelineView(.periodic(from: .now, by: 60)) { ctx in
-                            if let cd = AppStore.powerHourCountdown(at: ctx.date) {
-                                PowerHourCountdownPill(countdown: cd)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.horizontal, 16)
-                                    .padding(.top, 6)
-                                    .padding(.bottom, 2)
-                                    .transition(.move(edge: .top).combined(with: .opacity))
-                            }
-                        }
-
                         // ── Filter — scrollen mit (wie im Profil-Tab) ──
                         if store.userGender == "weiblich" {
                             femaleOnlyFilterBar
@@ -432,6 +498,46 @@ struct FeedView: View {
                         activityFilterChips
                             .padding(.top, 2)
                             .padding(.bottom, 8)
+
+                        // ── Power-Hour Countdown-Pille (≤60 Min vor Start
+                        //    oder vor Ende eines aktiven Slots) ──
+                        // Bewusst UNTER den Filtern: visuelle Hierarchie ist
+                        // erst Filter (User-Aktion), dann Power-Hour-Hint
+                        // (passiver Hinweis). Auto-update jede Minute via
+                        // TimelineView; gleiche Komponente wie in der Map-
+                        // View, damit beide Tabs konsistent bleiben.
+                        TimelineView(.periodic(from: .now, by: 60)) { ctx in
+                            if let cd = AppStore.powerHourCountdown(at: ctx.date) {
+                                PowerHourCountdownPill(countdown: cd)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.horizontal, 16)
+                                    .padding(.top, 4)
+                                    .padding(.bottom, 8)
+                                    .transition(.move(edge: .top).combined(with: .opacity))
+                            }
+                        }
+
+                        // ── Push-Permission-Banner ──
+                        // Zeigt sich nur wenn Push deaktiviert + nicht
+                        // dismissed. Tap → iOS-Settings öffnen. Wichtig weil
+                        // ohne Push die ganze Reaktivität (Anfragen, Drop-
+                        // Ende, Auto-Accept) silently broken ist.
+                        PushPermissionBanner()
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 10)
+
+                        // ── First-Time-Hint für neue User ──
+                        // Zeigt sich für User die noch keinen Drop erstellt
+                        // ODER beigetreten sind, solange im Feed mindestens
+                        // 1 Drop sichtbar ist. Verschwindet automatisch nach
+                        // erster Aktion. Erklärt den Hauptpfad in 1 Satz +
+                        // schließbar via X.
+                        if showFirstTimeHint {
+                            firstTimeHintCard
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 10)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
 
                         // ── Freunde in der Nähe (prominent) ──
                         if !sortedFriendDrops.isEmpty {
@@ -515,7 +621,7 @@ struct FeedView: View {
                         canBlock: profileCanBlock
                     ) { profileParticipant = nil }
                         .environmentObject(store)
-                        .presentationDetents([.height(360), .medium])
+                        .presentationDetents([.medium])
                         .presentationDragIndicator(.hidden)
                         .modifier(AvailabilityPresentationBackground())
                 }
@@ -878,61 +984,138 @@ struct StrangerDropFeedCard: View {
                              : "~? min · ~? km")
                             .font(.system(size: 12)).foregroundColor(.textTertiary)
                             .blur(radius: isVerified ? 0 : 4)
-                        if isVerified && !item.participants.isEmpty {
+                        // Teilnehmer-Counter „X / Y" — auch wenn Liste noch
+                        // leer ist (zeigt damit klar wieviel Platz frei ist).
+                        // Vorher: nur sichtbar wenn participants > 0, dann
+                        // ohne Max-Limit. User wusste nie ob Drop voll ist.
+                        if isVerified {
                             Text("·").foregroundColor(.textTertiary).font(.system(size: 12))
-                            Text("\(item.participants.count) \(tr("feed.joining"))")
-                                .font(.system(size: 12)).foregroundColor(.textTertiary)
+                            Image(systemName: "person.2.fill")
+                                .font(.system(size: 10)).foregroundColor(.textTertiary)
+                            Text("\(item.participants.count) / \(item.maxParticipants)")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(item.isFull ? .accentRed : .textTertiary)
                         }
                     }
                 }
 
                 Spacer()
 
-                let isJoined = alreadyJoined || joined
+                // Pending: Anfrage rausgegangen, Host hat noch nicht reagiert.
+                // Wichtig: vor `isJoined` prüfen, weil hasJoinedDrop auch
+                // pending als "joined" zählt — ohne diese Trennung würde der
+                // Joiner sofort "Bin dabei!" sehen, bevor der Host bestätigt.
+                let isPending = store.pendingJoinDropID == item.id
+                let isJoined = (alreadyJoined || joined) && !isPending
                 let cooldown = store.joinCooldownRemaining(dropID: item.id)
-                let inCooldown = cooldown > 0 && !isJoined
+                let inCooldown = cooldown > 0 && !isJoined && !isPending
+                // Blocked: User ist in EINEM ANDEREN Drop drin und kann
+                // diesem nicht beitreten. Vorher: Button war aktiv, Tap
+                // führte zu silent-fail im Store (sendJoinRequest blockt).
+                // User dachte „der Button geht nicht".
+                let blockedByOther = store.isInActiveDrop && !isJoined && !isPending
+                // Voll: Drop hat sein Teilnehmer-Limit erreicht. Auf der
+                // Karte wird der Pin in dem Fall ausgeblendet, hier im
+                // Umgebungstab bleibt er sichtbar — aber der Button
+                // wird zu „Voll" und ist deaktiviert.
+                let isFull = item.isFull && !isJoined && !isPending
 
                 Button(action: {
-                        if isJoined {
+                        // Statt silent-fail bei deaktiviertem Button:
+                        // erklärenden Toast zeigen. User hatte vorher kein
+                        // Feedback warum der Tap nichts macht.
+                        if isFull {
+                            store.showInfoToast(
+                                "Drop ist voll — \(item.maxParticipants) / \(item.maxParticipants) Teilnehmer",
+                                icon: "person.fill.xmark"
+                            )
+                            return
+                        }
+                        if blockedByOther {
+                            store.showInfoToast(
+                                "Du bist schon in einem anderen Drop — erst verlassen, dann beitreten",
+                                icon: "lock.fill"
+                            )
+                            return
+                        }
+                        if inCooldown {
+                            let mins = Int(cooldown / 60) + 1
+                            store.showInfoToast(
+                                "Du hast diesen Drop verlassen — in \(mins) Min kannst du wieder beitreten",
+                                icon: "clock.arrow.circlepath"
+                            )
+                            return
+                        }
+                        if isPending {
+                            // Pending-Tap: Anfrage zurückziehen
+                            store.leaveDropJoin(dropID: item.id)
+                            withAnimation(.spring()) { joined = false }
+                        } else if isJoined {
                             // Bereits dabei → Verlassen bestätigen
                             showLeaveConfirm = true
-                        } else if !inCooldown {
-                            store.joinDrop(item)
-                            withAnimation(.spring()) { joined = true }
+                        } else {
+                            // ÖFFNET das Compose-Sheet — schickt NICHT direkt.
                             showJoinConfirm = true
                         }
                     }) {
-                        HStack(spacing: 4) {
-                            if inCooldown {
-                                Image(systemName: "clock").font(.system(size: 10, weight: .medium))
-                                Text("\(Int(cooldown / 60) + 1) Min")
-                                    .font(.system(size: 12, weight: .semibold))
-                            } else if isJoined {
-                                Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
-                                Text(tr("feed.im_in"))
-                                    .font(.system(size: 12, weight: .semibold))
-                            } else {
-                                Text(tr("feed.im_coming"))
-                                    .font(.system(size: 12, weight: .semibold))
-                            }
-                        }
-                        .foregroundColor(inCooldown ? .textTertiary : isJoined ? .onlineGreen : accentColor)
+                        let colors = feedJoinButtonColors(
+                            blockedByOther: blockedByOther,
+                            inCooldown: inCooldown,
+                            isPending: isPending,
+                            isJoined: isJoined,
+                            isFull: isFull
+                        )
+                        feedJoinButtonLabel(
+                            blockedByOther: blockedByOther,
+                            inCooldown: inCooldown,
+                            cooldownMin: Int(cooldown / 60) + 1,
+                            isPending: isPending,
+                            isJoined: isJoined,
+                            isFull: isFull
+                        )
+                        .foregroundColor(colors.fg)
                         .padding(.horizontal, 12).padding(.vertical, 8)
-                        .background(inCooldown ? Color.primary.opacity(0.05) : isJoined ? Color.onlineGreen.opacity(0.1) : accentColor.opacity(0.1))
+                        .background(colors.bg)
                         .cornerRadius(10)
                         .overlay(RoundedRectangle(cornerRadius: 10)
-                            .stroke(inCooldown ? Color.primary.opacity(0.1) : isJoined ? Color.onlineGreen.opacity(0.3) : accentColor.opacity(0.2), lineWidth: 0.8))
+                            .stroke(colors.stroke, lineWidth: 0.8))
                     }
                     .buttonStyle(.plain)
-                    .disabled(inCooldown)
-                    .confirmationDialog(tr("feed.leave_drop"), isPresented: $showLeaveConfirm, titleVisibility: .visible) {
-                        Button(tr("feed.leave"), role: .destructive) {
+                    // Kein `.disabled(...)` mehr — wir wollen den Tap
+                    // bewusst durchlassen, um im Action-Closure einen
+                    // erklärenden Toast zu zeigen (Cooldown / Voll /
+                    // Bereits-in-Drop). Visuell wirkt der Button durch
+                    // die grauen Farben aus feedJoinButtonColors weiter
+                    // wie „nicht aktiv".
+                    .sheet(isPresented: $showLeaveConfirm) {
+                        // Lokales Sekunden-Delta anhand der hostessen joinRequest
+                        // (createdAt). Bei pending Requests sind 0 sekunden okay,
+                        // bei akzeptierten kann das 12+ min sein → Sheet zeigt
+                        // dann die Score-Risiko-Warnung.
+                        let elapsed: TimeInterval = {
+                            if let req = store.joinRequests.first(where: { $0.dropID == item.id }) {
+                                return Date().timeIntervalSince(req.createdAt)
+                            }
+                            return 0
+                        }()
+                        LeaveDropSheet(
+                            activityEmoji: item.emoji,
+                            activityName: item.activity,
+                            elapsedSeconds: elapsed
+                        ) {
                             store.leaveDropJoin(dropID: item.id)
                             withAnimation(.spring()) { joined = false }
+                            showLeaveConfirm = false
+                        } onCancel: {
+                            showLeaveConfirm = false
                         }
-                        Button(tr("common.cancel"), role: .cancel) {}
-                    } message: {
-                        Text(tr("feed.leave_warning"))
+                        .presentationDetents([.fraction(0.65)])
+                        // Verlassen-Warnung darf nicht versehentlich
+                        // weggewischt werden — User muss bewusst Verlassen
+                        // oder Abbrechen tippen.
+                        .presentationDragIndicator(.hidden)
+                        .interactiveDismissDisabled()
+                        .sheetBackground()
                     }
             }
             .padding(.horizontal, 14).padding(.vertical, 14)
@@ -941,13 +1124,81 @@ struct StrangerDropFeedCard: View {
         .padding(.horizontal, 14).padding(.bottom, 10)
         .contentShape(Rectangle())
         .onTapGesture { onCardTap?() }
-        // Beitritts-Bestätigung
+        // Beitritts-Compose + Bestätigung
         .sheet(isPresented: $showJoinConfirm) {
-            JoinConfirmSheet(item: item)
+            JoinConfirmSheet(item: item) {
+                // Wird vom Sheet aufgerufen wenn die Anfrage tatsächlich
+                // rausgegangen ist — erst dann den Card-State auf "Bin dabei"
+                // setzen, sonst flackert der Status falls der User abbricht.
+                withAnimation(.spring()) { joined = true }
+            }
                 .environmentObject(store)
-                .presentationDetents([.fraction(0.45)])
+                .presentationDetents([.fraction(0.55)])
                 .presentationDragIndicator(.hidden)
                 .sheetBackground()
+        }
+    }
+
+    /// Farbpalette für den Join-Button — als Tuple ausgelagert weil
+    /// inline-Ternäres-Cascading den Compiler überfordert.
+    private func feedJoinButtonColors(
+        blockedByOther: Bool, inCooldown: Bool,
+        isPending: Bool, isJoined: Bool, isFull: Bool
+    ) -> (fg: Color, bg: Color, stroke: Color) {
+        if isFull {
+            // Rot — signalisiert „nicht beitretbar weil voll" (klar
+            // unterscheidbar von neutral-grau wie blocked/cooldown).
+            return (.accentRed, Color.accentRed.opacity(0.10), Color.accentRed.opacity(0.25))
+        }
+        if blockedByOther {
+            return (.textTertiary, Color.primary.opacity(0.05), Color.primary.opacity(0.10))
+        }
+        if inCooldown {
+            return (.textTertiary, Color.primary.opacity(0.05), Color.primary.opacity(0.10))
+        }
+        if isPending {
+            return (.accentOrange, Color.accentOrange.opacity(0.10), Color.accentOrange.opacity(0.30))
+        }
+        if isJoined {
+            return (.onlineGreen, Color.onlineGreen.opacity(0.10), Color.onlineGreen.opacity(0.30))
+        }
+        return (accentColor, accentColor.opacity(0.10), accentColor.opacity(0.20))
+    }
+
+    /// Label für den Join-Button — extrahiert damit der SwiftUI-Compiler
+    /// den verschachtelten if/else-Branch nicht type-check-timeoutet.
+    @ViewBuilder
+    private func feedJoinButtonLabel(blockedByOther: Bool,
+                                     inCooldown: Bool,
+                                     cooldownMin: Int,
+                                     isPending: Bool,
+                                     isJoined: Bool,
+                                     isFull: Bool) -> some View {
+        HStack(spacing: 4) {
+            if isFull {
+                Image(systemName: "person.fill.xmark").font(.system(size: 10, weight: .medium))
+                Text("Voll")
+                    .font(.system(size: 12, weight: .semibold))
+            } else if blockedByOther {
+                Image(systemName: "lock.fill").font(.system(size: 10))
+                Text("In Drop drin")
+                    .font(.system(size: 12, weight: .semibold))
+            } else if inCooldown {
+                Image(systemName: "clock").font(.system(size: 10, weight: .medium))
+                Text("\(cooldownMin) Min")
+                    .font(.system(size: 12, weight: .semibold))
+            } else if isPending {
+                Image(systemName: "hourglass").font(.system(size: 10, weight: .medium))
+                Text("Ausstehend")
+                    .font(.system(size: 12, weight: .semibold))
+            } else if isJoined {
+                Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
+                Text(tr("feed.im_in"))
+                    .font(.system(size: 12, weight: .semibold))
+            } else {
+                Text(tr("feed.im_coming"))
+                    .font(.system(size: 12, weight: .semibold))
+            }
         }
     }
 }
@@ -956,13 +1207,116 @@ struct StrangerDropFeedCard: View {
 
 struct JoinConfirmSheet: View {
     let item: MapAnnotationItem
+    /// Wird gerufen wenn die Anfrage tatsächlich gesendet wurde — die
+    /// FeedView setzt darauf hin den `joined`-State. Vorher fehlte das,
+    /// dadurch flackerte die Card wenn der User das Sheet zumachte ohne
+    /// "Senden" zu drücken.
+    let onSent: () -> Void
     @EnvironmentObject var store: AppStore
     @Environment(\.dismiss) private var dismiss
     @AppStorage("appLanguage") private var appLanguage = "de"
+
+    /// Tatsächlich rausgehende Nachricht — befüllt durch Quick-Chip-Tap
+    /// oder freie Eingabe im TextField. nil = keine Nachricht senden.
+    @State private var composedMessage: String = ""
+    @State private var sending = false
     @State private var sent = false
 
+    /// Activity-bezogene Quick-Messages — passende Vorschläge je nach
+    /// Drop-Typ. WICHTIG: nur Statements, keine Fragen — der Host sieht
+    /// die Nachricht nur einmal in der Beitrittsanfrage und kann nicht
+    /// darauf antworten. Fragen wie "Welche Bar?" laufen also ins Leere.
+    /// Substring-Match damit Varianten wie "Bier", "Bierchen", "Drink"
+    /// dasselbe Set treffen.
+    private var quickMessages: [String] {
+        let activity = item.activity.lowercased()
+        // Drinks / Bar
+        if activity.contains("bier") || activity.contains("drink")
+            || activity.contains("bar") || activity.contains("cocktail")
+            || activity.contains("party") {
+            return ["Bin in 10 Min da 🍻",
+                    "Erste Runde geht auf mich!",
+                    "Hab Bock auf den Abend",
+                    "Freu mich!"]
+        }
+        // Kaffee / Café / Brunch
+        if activity.contains("kaffee") || activity.contains("brunch")
+            || activity.contains("café") || activity.contains("cafe") {
+            return ["Bin gleich da ☕️",
+                    "Brauche dringend Koffein 😅",
+                    "Freu mich auf entspannten Talk",
+                    "Bin in 15 Min da"]
+        }
+        // Essen / Restaurant
+        if activity.contains("essen") || activity.contains("food")
+            || activity.contains("dinner") || activity.contains("lunch")
+            || activity.contains("pizza") || activity.contains("burger") {
+            return ["Hab schon Hunger! 🍴",
+                    "Bin in 15 Min da",
+                    "Freu mich aufs Essen",
+                    "Bin offen für alles"]
+        }
+        // Sport / Workout / Laufen
+        if activity.contains("sport") || activity.contains("workout")
+            || activity.contains("lauf") || activity.contains("yoga")
+            || activity.contains("gym") || activity.contains("fitness")
+            || activity.contains("foto-walk") || activity.contains("walk")
+            || activity.contains("spazier") {
+            return ["Bin pünktlich da 🏃",
+                    "Bin Anfänger, geht's locker an?",
+                    "Hab eigene Sachen dabei",
+                    "Freu mich aufs Auspowern"]
+        }
+        // Konzert / Musik / Festival
+        if activity.contains("konzert") || activity.contains("musik")
+            || activity.contains("festival") || activity.contains("club")
+            || activity.contains("dj") {
+            return ["Hab Bock auf den Abend! 🎵",
+                    "Bin pünktlich da",
+                    "Bin schon vor Ort",
+                    "Freu mich auf die Musik"]
+        }
+        // Kino / Film
+        if activity.contains("kino") || activity.contains("film")
+            || activity.contains("movie") {
+            return ["Bin pünktlich da 🎬",
+                    "Ich hol Popcorn",
+                    "Freu mich auf den Film",
+                    "Bin in 15 Min da"]
+        }
+        // Gaming / Zocken
+        if activity.contains("zock") || activity.contains("gaming")
+            || activity.contains("game") {
+            return ["Bin online 🎮",
+                    "Bin in 5 Min da",
+                    "Hab Bock auf eine Runde",
+                    "Bin entspannt drauf"]
+        }
+        // Park / Outdoor / Hangout
+        if activity.contains("park") || activity.contains("outdoor")
+            || activity.contains("strand") || activity.contains("see") {
+            return ["Bin schon unterwegs 🌳",
+                    "Bin in 10 Min da",
+                    "Bring was zu trinken mit",
+                    "Freu mich auf draußen sein"]
+        }
+        // Shopping / Bummeln
+        if activity.contains("shop") || activity.contains("bummel")
+            || activity.contains("einkauf") {
+            return ["Bin in 10 Min da 🛍",
+                    "Hab nicht viel Zeit",
+                    "Freu mich auf den Stadtbummel",
+                    "Brauche Inspiration"]
+        }
+        // Generischer Fallback
+        return ["Bin gleich da! 🏃",
+                "Bin in 10 Min da",
+                "Freu mich!",
+                "Hab Bock!"]
+    }
+
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 16) {
             // Handle
             Capsule()
                 .fill(Color.white.opacity(0.2))
@@ -978,56 +1332,174 @@ struct JoinConfirmSheet: View {
                     .font(.system(size: 30))
             }
 
-            VStack(spacing: 6) {
-                Text(tr("feed.request_sent"))
-                    .font(.system(size: 19, weight: .bold))
-                    .foregroundColor(.white)
-                Text("\(item.name) wird benachrichtigt und kann dich zum \(item.activity)-Drop einlassen.")
-                    .font(.system(size: 14))
-                    .foregroundColor(.white.opacity(0.6))
+            VStack(spacing: 4) {
+                Text(sent ? "Warte auf Bestätigung" : "Anfrage senden an \(item.name)")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(.textPrimary)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
+                if !sent {
+                    Text("Optional: schreib eine kurze Nachricht.")
+                        .font(.system(size: 13))
+                        .foregroundColor(.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                }
             }
 
-            // Quick-Nachrichten (Demo)
-            VStack(spacing: 8) {
-                Text(tr("feed.add_message"))
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.4))
+            if !sent {
+                // Quick-Nachrichten — Chip befüllt das TextField, User kann's
+                // dann noch editieren oder einfach so absenden.
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(["Bin gleich da! 🏃", "5 Min Wartezeit", "Bin schon in der Nähe ✓", "Komme alleine"], id: \.self) { msg in
-                            Button(action: { sent = true; DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { dismiss() } }) {
+                        ForEach(quickMessages, id: \.self) { msg in
+                            Button {
+                                composedMessage = msg
+                            } label: {
                                 Text(msg)
-                                    .font(.system(size: 12))
-                                    .foregroundColor(sent ? .onlineGreen : Color(UIColor.systemPurple))
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(composedMessage == msg
+                                                     ? .white
+                                                     : Color(UIColor.systemPurple))
                                     .padding(.horizontal, 12).padding(.vertical, 8)
-                                    .background(Color(UIColor.systemPurple).opacity(0.1))
+                                    .background(
+                                        composedMessage == msg
+                                        ? Color(UIColor.systemPurple)
+                                        : Color(UIColor.systemPurple).opacity(0.12)
+                                    )
                                     .cornerRadius(20)
-                                    .overlay(RoundedRectangle(cornerRadius: 20)
-                                        .stroke(Color(UIColor.systemPurple).opacity(0.2), lineWidth: 0.8))
                             }
                             .buttonStyle(.plain)
                         }
                     }
                     .padding(.horizontal, 20)
                 }
+
+                // Freies TextField — synchron mit Quick-Chips. Max 200 Zeichen.
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "bubble.left.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(.textTertiary)
+                        .padding(.top, 10)
+                    TextField("Nachricht (optional)",
+                              text: $composedMessage, axis: .vertical)
+                        .lineLimit(1...3)
+                        .font(.system(size: 13))
+                        .padding(.vertical, 8)
+                        .onChange(of: composedMessage) { _, new in
+                            if new.count > 200 {
+                                composedMessage = String(new.prefix(200))
+                            }
+                        }
+                }
+                .padding(.horizontal, 12)
+                .background(Color.primary.opacity(0.05),
+                            in: RoundedRectangle(cornerRadius: 12))
+                .padding(.horizontal, 20)
+            } else {
+                // Wartezustand nach Senden — zeigt klar dass der Host
+                // erst noch bestätigen muss. Pulsierender Indicator gibt
+                // visuelles Feedback dass die App aktiv "wartet" und kein
+                // dead-end ist.
+                VStack(spacing: 12) {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                            .tint(Color(UIColor.systemPurple))
+                            .scaleEffect(0.9)
+                        Text("\(item.name) wurde benachrichtigt — Antwort kommt gleich.")
+                            .font(.system(size: 13))
+                            .foregroundColor(.textSecondary)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(.ultraThinMaterial)
+                    )
+                    Text("Du kannst dieses Fenster schließen — wir benachrichtigen dich sobald \(item.name) reagiert.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.textTertiary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 8)
+                }
+                .padding(.horizontal, 20)
             }
 
-            Button(action: { dismiss() }) {
-                Text(tr("feed.close"))
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.6))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color.white.opacity(0.07))
-                    .cornerRadius(14)
-                    .padding(.horizontal, 20)
+            Spacer(minLength: 0)
+
+            // Senden / Schließen
+            HStack(spacing: 10) {
+                if !sent {
+                    Button { dismiss() } label: {
+                        Text("Abbrechen")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.textSecondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 13)
+                            .background(Capsule().fill(Color.primary.opacity(0.06)))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button { sendRequest() } label: {
+                        HStack(spacing: 6) {
+                            if sending {
+                                ProgressView().tint(.white).scaleEffect(0.85)
+                            } else {
+                                Image(systemName: "paperplane.fill")
+                                    .font(.system(size: 13, weight: .bold))
+                            }
+                            Text(sending ? "Sende…" : "Senden")
+                                .font(.system(size: 15, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 13)
+                        .background(
+                            Capsule().fill(Color(UIColor.systemPurple))
+                                .shadow(color: Color(UIColor.systemPurple).opacity(0.35),
+                                        radius: 10, y: 3)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(sending)
+                } else {
+                    // Sheet bleibt offen bis User selber schließt — sonst
+                    // sieht's so aus als wäre die Anfrage angenommen, was
+                    // sie noch nicht ist. User entscheidet wann fertig.
+                    Button { dismiss() } label: {
+                        Text("Im Hintergrund warten")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.textPrimary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 13)
+                            .background(Capsule().fill(Color.primary.opacity(0.06)))
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            .buttonStyle(.plain)
-            .padding(.bottom, 16)
+            .padding(.horizontal, 20).padding(.bottom, 18)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func sendRequest() {
+        guard !sending && !sent else { return }
+        sending = true
+        let trimmed = composedMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        let payload: String? = trimmed.isEmpty ? nil : trimmed
+        store.sendJoinRequest(to: item, message: payload)
+        // Kleines visuelles Delay damit der User die Senden-Animation sieht.
+        // KEIN Auto-Dismiss mehr — vorher schloss das Sheet 1.5s nach Senden,
+        // was den falschen Eindruck erzeugte als wäre die Anfrage akzeptiert.
+        // Jetzt bleibt das Sheet offen mit "Warte auf Bestätigung"-State,
+        // User schließt selber wenn er bereit ist (FeedView-Card zeigt ja
+        // "Ausstehend" parallel weiter, kein Info-Verlust).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            sending = false
+            withAnimation(.spring(response: 0.35)) { sent = true }
+            onSent()
+        }
     }
 }
 

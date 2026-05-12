@@ -121,33 +121,44 @@ struct AppAuroraBackground: View {
                     let p4 = Self.pulse(forCircle: 4, at: elapsed)
 
                     ZStack {
-                        // Kreis 1 — grün (top-left)
+                        // Aurora-Sunset Palette — Orange + Grün als Anker
+                        // (aus dem App-Icon), plus drei weiche Akzent-
+                        // Farben (Rose, Gold, Lavender) für mehr visuelle
+                        // Tiefe und Aurora-Feel ohne den warmen Charakter
+                        // zu verlieren. Bewusst weiche, gedämpfte Töne —
+                        // nicht knall-bunt.
+                        //
+                        // Kreis 1 — Orange (top-left, dominant) wie Icon-Top
                         Circle()
-                            .fill(Color(hex: "34D36E").opacity((light ? 0.78 : 0.62) * (1 + Self.pulseBoost * p0)))
+                            .fill(Color(hex: "E48C3A").opacity((light ? 0.74 : 0.58) * (1 + Self.pulseBoost * p0)))
                             .frame(width: 520 * (1 + 0.06 * p0))
                             .offset(x: a ? -130 : -80, y: a ? -370 : -320)
                             .blur(radius: 90)
-                        // Kreis 2 — violet (top-right)
+                        // Kreis 2 — Soft Rose/Pink (top-right) — warmer
+                        // Sunset-Hauch, bricht das reine Orange auf
                         Circle()
-                            .fill(Color(hex: "A78BFA").opacity((light ? 0.68 : 0.54) * (1 + Self.pulseBoost * p1)))
+                            .fill(Color(hex: "F08FA3").opacity((light ? 0.58 : 0.46) * (1 + Self.pulseBoost * p1)))
                             .frame(width: 460 * (1 + 0.06 * p1))
                             .offset(x: a ? 160 : 110, y: a ? -350 : -300)
                             .blur(radius: 85)
-                        // Kreis 3 — teal (bottom-left)
+                        // Kreis 3 — Grün (bottom-left, dominant) wie Icon-Bottom
                         Circle()
-                            .fill(Color(hex: "2DD4BF").opacity((light ? 0.58 : 0.46) * (1 + Self.pulseBoost * p2)))
+                            .fill(Color(hex: "5FA937").opacity((light ? 0.60 : 0.46) * (1 + Self.pulseBoost * p2)))
                             .frame(width: 420 * (1 + 0.06 * p2))
                             .offset(x: a ? -150 : -100, y: a ? 420 : 370)
                             .blur(radius: 80)
-                        // Kreis 4 — amber (bottom-right)
+                        // Kreis 4 — Soft Lavender (bottom-right) — kühler
+                        // Aurora-Akzent, balanciert das warme Top-Drittel
                         Circle()
-                            .fill(Color(hex: "FBBF24").opacity((light ? 0.52 : 0.42) * (1 + Self.pulseBoost * p3)))
+                            .fill(Color(hex: "B49BE0").opacity((light ? 0.50 : 0.40) * (1 + Self.pulseBoost * p3)))
                             .frame(width: 380 * (1 + 0.06 * p3))
                             .offset(x: a ? 140 : 90, y: a ? 400 : 350)
                             .blur(radius: 75)
-                        // Kreis 5 — grün (center)
+                        // Kreis 5 — Warm Gold (center) — Sun-Glow als
+                        // weiche Übergangsfarbe zwischen Orange-Top und
+                        // Grün-Bottom. Setzt die Mitte „in Licht".
                         Circle()
-                            .fill(Color(hex: "34D36E").opacity((light ? 0.42 : 0.30) * (1 + Self.pulseBoost * p4)))
+                            .fill(Color(hex: "F6BD4D").opacity((light ? 0.44 : 0.32) * (1 + Self.pulseBoost * p4)))
                             .frame(width: 260 * (1 + 0.06 * p4))
                             .offset(x: a ? 20 : -20, y: a ? 40 : 80)
                             .blur(radius: 60)
@@ -170,6 +181,98 @@ struct AppAuroraBackground: View {
         .allowsHitTesting(false)
         .onAppear {
             withAnimation(.easeInOut(duration: 6).repeatForever(autoreverses: true)) { a = true }
+        }
+    }
+}
+
+// MARK: - Push Permission Banner
+//
+// Persistenter Inline-Banner für User die Push abgelehnt haben oder den
+// Reask-Sheet weggedismissed haben. Wichtig weil ohne Push die ganze App-
+// Reaktivität wegfällt: Drop-Anfragen, Drop-beendet, Pair-Auto-Accept
+// sind alle silently broken. Banner ist klar dismissable damit User der
+// bewusst kein Push will nicht genervt wird (ud_pushBannerDismissed).
+struct PushPermissionBanner: View {
+    @AppStorage("ud_pushBannerDismissed") private var dismissed = false
+    @State private var isAuthorized: Bool? = nil
+    @State private var checkedOnce = false
+
+    var body: some View {
+        Group {
+            if !dismissed,
+               let auth = isAuthorized,
+               !auth {
+                content
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            } else {
+                EmptyView()
+            }
+        }
+        .task(id: checkedOnce) {
+            let center = UNUserNotificationCenter.current()
+            let settings = await center.notificationSettings()
+            let auth = settings.authorizationStatus == .authorized
+                || settings.authorizationStatus == .provisional
+            await MainActor.run { self.isAuthorized = auth }
+        }
+    }
+
+    private var content: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color(hex: "E48C3A"), Color(hex: "F08FA3")],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 36, height: 36)
+                Image(systemName: "bell.badge.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.white)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Push aktivieren")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundColor(.textPrimary)
+                Text("Ohne Push verpasst du Anfragen und Drop-Updates. Tippe um zu aktivieren.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.textSecondary)
+                    .lineSpacing(1)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+
+            Button {
+                withAnimation(.easeOut(duration: 0.25)) { dismissed = true }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.textTertiary)
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(Color.primary.opacity(0.06)))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color(hex: "E48C3A").opacity(0.3), lineWidth: 1)
+                )
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onTapGesture {
+            // iOS-Einstellungen für die App öffnen — Apple erlaubt keinen
+            // zweiten Permission-Dialog programmatisch nach „Denied".
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url)
+            }
         }
     }
 }
@@ -198,25 +301,39 @@ struct DropsEmptyState: View {
     var body: some View {
         VStack(spacing: 20) {
             ZStack {
+                // Drei Sunset-getönte Radar-Ringe (matched zum App-Icon
+                // und dem Hero im Onboarding). Vorher: 3× Color.brand =
+                // legacy Apple-Grün, inkonsistent mit dem Rest der App.
                 Circle()
-                    .stroke(Color.brand.opacity(0.12), lineWidth: 1)
+                    .stroke(Color(hex: "E48C3A").opacity(0.16), lineWidth: 1)
                     .frame(width: 116, height: 116)
                     .scaleEffect(pulse0 ? 1.06 : 0.96)
                 Circle()
-                    .stroke(Color.brand.opacity(0.08), lineWidth: 1)
+                    .stroke(Color(hex: "E48C3A").opacity(0.10), lineWidth: 1)
                     .frame(width: 160, height: 160)
                     .scaleEffect(pulse1 ? 1.05 : 0.97)
                 Circle()
-                    .stroke(Color.brand.opacity(0.05), lineWidth: 1)
+                    .stroke(Color(hex: "5FA937").opacity(0.08), lineWidth: 1)
                     .frame(width: 204, height: 204)
                     .scaleEffect(pulse2 ? 1.04 : 0.97)
                 ZStack {
                     Circle()
-                        .fill(Color.brand.opacity(0.12))
+                        .fill(
+                            LinearGradient(
+                                colors: [Color(hex: "E48C3A").opacity(0.18),
+                                         Color(hex: "5FA937").opacity(0.14)],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                            )
+                        )
                         .frame(width: 72, height: 72)
                     Image(systemName: "binoculars.fill")
                         .font(.system(size: 28, weight: .medium))
-                        .foregroundColor(Color.brand)
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                            )
+                        )
                 }
             }
             .frame(width: 180, height: 180)
@@ -269,8 +386,15 @@ struct DropsEmptyState: View {
                     }
                     .foregroundColor(.white)
                     .padding(.horizontal, 22).padding(.vertical, 12)
-                    .background(Capsule().fill(Color.brand))
-                    .shadow(color: Color.brand.opacity(0.35), radius: 10, y: 4)
+                    .background(
+                        Capsule().fill(
+                            LinearGradient(
+                                colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                                startPoint: .leading, endPoint: .trailing
+                            )
+                        )
+                    )
+                    .shadow(color: Color(hex: "E48C3A").opacity(0.35), radius: 10, y: 4)
                 }
                 .buttonStyle(.plain)
                 .padding(.top, 6)
@@ -293,28 +417,39 @@ struct DropsEmptyState: View {
 // MARK: - Empty State: Noch keine Freunde
 
 struct FreundeEmptyState: View {
+    /// Optionaler Tap-Handler für „Aus Kontakten hinzufügen". Wenn gesetzt
+    /// wird der Button gerendert. Falls die Parent-View den Flow nicht
+    /// braucht (z.B. Settings-Section ohne diesen Aktion), kann sie nil
+    /// übergeben und der Button erscheint nicht.
+    var onAddFromContacts: (() -> Void)? = nil
+    var onShareInvite: (() -> Void)? = nil
+
     @State private var pulse0 = false
     @State private var pulse1 = false
     @AppStorage("appLanguage") private var appLanguage = "de"
 
     var body: some View {
         VStack(spacing: 20) {
+            // Icon-Stack — neue Sunset-Palette (Orange dominant) statt
+            // purple, damit's mit dem App-Icon und den Tab-Headern matched.
+            // person.2.fill ist semantisch positiver als person.2.slash —
+            // signalisiert "Freunde finden" statt "keine Freunde".
             ZStack {
                 Circle()
-                    .stroke(Color(UIColor.systemPurple).opacity(0.12), lineWidth: 1)
+                    .stroke(Color(hex: "E48C3A").opacity(0.18), lineWidth: 1)
                     .frame(width: 116, height: 116)
                     .scaleEffect(pulse0 ? 1.06 : 0.96)
                 Circle()
-                    .stroke(Color(UIColor.systemPurple).opacity(0.07), lineWidth: 1)
+                    .stroke(Color(hex: "E48C3A").opacity(0.10), lineWidth: 1)
                     .frame(width: 160, height: 160)
                     .scaleEffect(pulse1 ? 1.05 : 0.97)
                 ZStack {
                     Circle()
-                        .fill(Color(UIColor.systemPurple).opacity(0.12))
+                        .fill(Color(hex: "E48C3A").opacity(0.16))
                         .frame(width: 72, height: 72)
-                    Image(systemName: "person.2.slash")
+                    Image(systemName: "person.2.fill")
                         .font(.system(size: 26, weight: .medium))
-                        .foregroundColor(Color(UIColor.systemPurple))
+                        .foregroundColor(Color(hex: "E48C3A"))
                 }
             }
             .frame(width: 180, height: 160)
@@ -323,12 +458,57 @@ struct FreundeEmptyState: View {
                 Text("Noch keine Freunde")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                     .foregroundColor(.textPrimary)
-                Text("Triff jemanden bei einem Drop und bestätige die Begegnung – so entstehen Verbindungen.")
+                Text("Triff jemanden bei einem Drop oder lade Freunde direkt ein — so entstehen die ersten Verbindungen.")
                     .font(.system(size: 13))
-                    .foregroundColor(.textTertiary)
+                    .foregroundColor(.textSecondary)
                     .multilineTextAlignment(.center)
                     .lineSpacing(3)
                     .padding(.horizontal, 32)
+            }
+
+            // CTA-Buttons — primär „Kontakte" (häufigster Pfad), sekundär
+            // „Einladungslink teilen". Vorher: gar nichts klickbar →
+            // Sackgassen-Empty-State, Frust statt Action.
+            if onAddFromContacts != nil || onShareInvite != nil {
+                VStack(spacing: 8) {
+                    if let action = onAddFromContacts {
+                        Button(action: action) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "person.crop.circle.badge.plus")
+                                    .font(.system(size: 15, weight: .semibold))
+                                Text("Aus Kontakten hinzufügen")
+                                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 18).padding(.vertical, 11)
+                            .background(
+                                Capsule().fill(
+                                    LinearGradient(
+                                        colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                                        startPoint: .leading, endPoint: .trailing
+                                    )
+                                )
+                            )
+                            .shadow(color: Color(hex: "E48C3A").opacity(0.35), radius: 10, y: 3)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if let share = onShareInvite {
+                        Button(action: share) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "square.and.arrow.up")
+                                    .font(.system(size: 12, weight: .semibold))
+                                Text("Einladungslink teilen")
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            .foregroundColor(.brand)
+                            .padding(.horizontal, 14).padding(.vertical, 9)
+                            .background(Capsule().fill(Color.brand.opacity(0.10)))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.top, 4)
             }
         }
         .onAppear {
@@ -415,7 +595,10 @@ enum ProfileHeroTemplate: String, CaseIterable, Identifiable {
             return [Color(hex: "ec4899"), Color(hex: "06b6d4"),
                     Color(hex: "fbbf24"), Color(hex: "a855f7")]
         case .aurora:
-            return [Color(hex: "22c55e"), Color(hex: "06b6d4"), Color(hex: "a855f7")]
+            // Neue Icon-Palette: warmes Orange → Coral → frisches Grün.
+            // Direkt aus icon.json abgeleitet damit das Profil-Hero
+            // dieselbe Brand-Identity hat wie Login + App-Icon.
+            return [Color(hex: "E48C3A"), Color(hex: "F4956A"), Color(hex: "5FA937")]
         case .sunset:
             return [Color(hex: "fb923c"), Color(hex: "ec4899"), Color(hex: "8b5cf6")]
         case .ocean:
@@ -789,80 +972,158 @@ struct AppVersionRecommendBanner: View {
 
 /// Vollbild-Blocker: kein "X", kein Drag-Dismiss. Einziger Ausweg ist
 /// "App Store öffnen". Genutzt nur für Notfälle (kritische Bugs).
+///
+/// Design: vollflächiger `AppAuroraBackground` (matched zum Rest der App)
+/// + Hero-Icon-Stack mit drei pulsierenden Radar-Wellen + Sunset-Gradient-
+/// Glow drumherum. Visuell parallel zum `EndDropSheet`/`HomeZoneWarningSheet`,
+/// nur „aufwärts" statt „beenden" konnotiert.
 private struct ForceUpdateSheet: View {
     let requiredVersion: String
     @EnvironmentObject var store: AppStore
 
+    @State private var ring0 = false
+    @State private var ring1 = false
+    @State private var ring2 = false
+    @State private var iconBeat = false
+
     var body: some View {
         ZStack {
-            // Voll-deckender Hintergrund (Aurora-ähnlich) — sperrt Inhalte
-            // dahinter komplett aus.
-            LinearGradient(
-                colors: [Color.brand.opacity(0.18), Color.accentOrange.opacity(0.10)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
-            .background(.regularMaterial)
+            // Aurora-Hintergrund — exakt wie ActiveDropTabView / Onboarding.
+            // Eindeutig kein „X", weil .ignoresSafeArea + voll-deckend.
+            AppAuroraBackground()
+                .ignoresSafeArea()
 
-            VStack(spacing: 24) {
+            VStack(spacing: 26) {
                 Spacer()
+
+                // ── Hero-Icon mit drei pulsierenden Radar-Wellen ──────
                 ZStack {
+                    radarRing(scale: ring0 ? 1.7 : 0.95, opacity: ring0 ? 0.0 : 0.55)
+                    radarRing(scale: ring1 ? 1.7 : 0.95, opacity: ring1 ? 0.0 : 0.55)
+                    radarRing(scale: ring2 ? 1.7 : 0.95, opacity: ring2 ? 0.0 : 0.55)
+
                     Circle()
                         .fill(
                             LinearGradient(
-                                colors: [Color.accentOrange.opacity(0.25),
-                                         Color.brand.opacity(0.18)],
+                                colors: [Color(hex: "E48C3A").opacity(0.30),
+                                         Color(hex: "5FA937").opacity(0.18)],
                                 startPoint: .topLeading, endPoint: .bottomTrailing
                             )
                         )
-                        .frame(width: 110, height: 110)
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 48, weight: .bold))
-                        .foregroundColor(.accentOrange)
-                        .shadow(color: Color.accentOrange.opacity(0.45), radius: 12)
+                        .frame(width: 96, height: 96)
+                        .shadow(color: Color(hex: "E48C3A").opacity(0.40), radius: 18, y: 6)
+
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 44, weight: .bold))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                            )
+                        )
+                        .shadow(color: Color(hex: "E48C3A").opacity(0.50), radius: 10)
+                        .scaleEffect(iconBeat ? 1.08 : 1.0)
                 }
+                .frame(height: 140)
 
                 VStack(spacing: 10) {
                     Text("Update erforderlich")
-                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                        .font(.system(size: 26, weight: .bold, design: .rounded))
                         .foregroundColor(.textPrimary)
-                    Text("Drops braucht jetzt Version \(requiredVersion) oder neuer, um weiter zu funktionieren.")
-                        .font(.system(size: 14))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 20)
+                    Text("Drops braucht jetzt Version \(requiredVersion) oder neuer.")
+                        .font(.system(size: 15))
                         .foregroundColor(.textSecondary)
                         .multilineTextAlignment(.center)
-                        .padding(.horizontal, 36)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 28)
                 }
 
-                Text("Du nutzt aktuell \(store.currentAppVersion).")
-                    .font(.system(size: 12))
-                    .foregroundColor(.textTertiary)
+                // Version-Badge — kleine Glass-Pill mit „Du nutzt 1.0.x"
+                HStack(spacing: 6) {
+                    Image(systemName: "iphone")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.textTertiary)
+                    Text("Du nutzt \(store.currentAppVersion)")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.textSecondary)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().stroke(Color.primary.opacity(0.08), lineWidth: 1))
 
                 Spacer()
 
+                // App-Store-Button — Sunset-Gradient-Pill
                 Button(action: openAppStore) {
                     HStack(spacing: 8) {
-                        Image(systemName: "arrow.up.forward.app.fill")
-                        Text("App Store öffnen")
+                        Image(systemName: "arrow.down.app.fill")
+                            .font(.system(size: 16, weight: .bold))
+                        Text("Im App Store öffnen")
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
                     }
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
+                    .padding(.vertical, 15)
                     .background(
                         Capsule().fill(
                             LinearGradient(
-                                colors: [Color.accentOrange, Color.brand],
+                                colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
                                 startPoint: .leading, endPoint: .trailing
                             )
                         )
                     )
-                    .shadow(color: Color.accentOrange.opacity(0.30), radius: 10, y: 3)
+                    .shadow(color: Color(hex: "E48C3A").opacity(0.35), radius: 12, y: 4)
                 }
                 .buttonStyle(.plain)
-                .padding(.horizontal, 22)
-                .padding(.bottom, 32)
+                .padding(.horizontal, 28)
+                .padding(.bottom, 36)
             }
         }
+        .onAppear {
+            // Drei zeitversetzte Ring-Wellen mit 0.6s-Stagger — wie das
+            // Radar-Pulse-Muster im AppIcon und beim EndDropSheet.
+            let dur: Double = 2.0
+            withAnimation(.easeOut(duration: dur).repeatForever(autoreverses: false)) {
+                ring0 = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) {
+                withAnimation(.easeOut(duration: dur).repeatForever(autoreverses: false)) {
+                    ring1 = true
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.30) {
+                withAnimation(.easeOut(duration: dur).repeatForever(autoreverses: false)) {
+                    ring2 = true
+                }
+            }
+            // Icon-Beat synchron zum ersten Ring.
+            withAnimation(
+                .spring(response: 0.7, dampingFraction: 0.55)
+                    .repeatForever(autoreverses: true)
+            ) {
+                iconBeat = true
+            }
+        }
+    }
+
+    /// Einzelner Radar-Ring — fadet von 0.55 → 0.0 während er von 0.95×
+    /// auf 1.7× skaliert. Gestaffelt mit 0.65s-Versatz.
+    @ViewBuilder
+    private func radarRing(scale: CGFloat, opacity: Double) -> some View {
+        Circle()
+            .stroke(
+                LinearGradient(
+                    colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ),
+                lineWidth: 2.5
+            )
+            .frame(width: 96, height: 96)
+            .scaleEffect(scale)
+            .opacity(opacity)
     }
 
     private func openAppStore() {
@@ -956,62 +1217,81 @@ struct HomeZoneWarningSheet: View {
     @State private var pulse = false
 
     var body: some View {
-        VStack(spacing: 22) {
-            Spacer(minLength: 4)
+        // Inhalt in ScrollView — auf kleinen Geräten (SE / mini) war
+        // sonst der Bottom-Button abgeschnitten, weil 110pt-Visual +
+        // Titel + 2 Warning-Rows + 2 Buttons mehr Höhe brauchen als die
+        // 0.65-Detent-Fraction hergibt. Buttons unten in einem festen
+        // Footer, der Rest scrollt.
+        VStack(spacing: 0) {
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 22) {
+                    // Visual: pulsierendes Haus mit Schild-Overlay
+                    ZStack {
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.accentOrange.opacity(0.22),
+                                             Color.brand.opacity(0.14)],
+                                    startPoint: .topLeading, endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 110, height: 110)
+                            .scaleEffect(pulse ? 1.05 : 0.96)
+                        Image(systemName: "house.fill")
+                            .font(.system(size: 42, weight: .bold))
+                            .foregroundColor(.accentOrange)
+                            .shadow(color: Color.accentOrange.opacity(0.4), radius: 10)
+                        // Schild-Overlay rechts unten am Haus
+                        Image(systemName: "exclamationmark.shield.fill")
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundColor(.white)
+                            .shadow(color: Color.black.opacity(0.18), radius: 4, y: 2)
+                            .padding(6)
+                            .background(Circle().fill(Color.accentOrange))
+                            .offset(x: 30, y: 30)
+                    }
+                    .padding(.top, 12)
 
-            // Visual: pulsierendes Haus mit Schild-Overlay
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.accentOrange.opacity(0.22),
-                                     Color.brand.opacity(0.14)],
-                            startPoint: .topLeading, endPoint: .bottomTrailing
+                    VStack(spacing: 8) {
+                        Text("Drop in deiner Heimzone")
+                            .font(.system(size: 22, weight: .bold, design: .rounded))
+                            .foregroundColor(.textPrimary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .minimumScaleFactor(0.85)
+                            .padding(.horizontal, 20)
+                        // Padding von 36 → 20 reduziert: vorher brach
+                        // "Zuhause" auf kompakten Geräten unsauber um und
+                        // wurde teils abgeschnitten. minimumScaleFactor
+                        // greift falls die Textgröße trotzdem mal nicht
+                        // reicht (z.B. größere Dynamic-Type-Stufen).
+                        Text("Du startest gerade einen Drop nahe deinem Zuhause.")
+                            .font(.system(size: 14))
+                            .foregroundColor(.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .minimumScaleFactor(0.85)
+                            .padding(.horizontal, 20)
+                    }
+
+                    // Konkrete Hinweis-Liste
+                    VStack(spacing: 12) {
+                        warningRow(
+                            icon: "eye.fill",
+                            text: "Andere können auf der Karte ungefähr sehen wo du wohnst — solange der Drop läuft."
                         )
-                    )
-                    .frame(width: 110, height: 110)
-                    .scaleEffect(pulse ? 1.05 : 0.96)
-                Image(systemName: "house.fill")
-                    .font(.system(size: 42, weight: .bold))
-                    .foregroundColor(.accentOrange)
-                    .shadow(color: Color.accentOrange.opacity(0.4), radius: 10)
-                // Schild-Overlay rechts unten am Haus
-                Image(systemName: "exclamationmark.shield.fill")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundColor(.white)
-                    .shadow(color: Color.black.opacity(0.18), radius: 4, y: 2)
-                    .padding(6)
-                    .background(Circle().fill(Color.accentOrange))
-                    .offset(x: 30, y: 30)
+                        warningRow(
+                            icon: "person.fill",
+                            text: "Treffe lieber an einem öffentlichen Ort: Café, Park, Platz."
+                        )
+                    }
+                    .padding(.horizontal, 22)
+                    .padding(.bottom, 8)
+                }
+                .frame(maxWidth: .infinity)
             }
 
-            VStack(spacing: 8) {
-                Text("Drop in deiner Heimzone")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundColor(.textPrimary)
-                Text("Du startest gerade einen Drop nahe deinem Zuhause.")
-                    .font(.system(size: 14))
-                    .foregroundColor(.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 36)
-            }
-
-            // Konkrete Hinweis-Liste
-            VStack(spacing: 12) {
-                warningRow(
-                    icon: "eye.fill",
-                    text: "Andere können auf der Karte ungefähr sehen wo du wohnst — solange der Drop läuft."
-                )
-                warningRow(
-                    icon: "person.fill",
-                    text: "Treffe lieber an einem öffentlichen Ort: Café, Park, Platz."
-                )
-            }
-            .padding(.horizontal, 22)
-
-            Spacer()
-
-            // Aktionen
+            // Aktionen — fester Footer, scrollt nicht weg
             VStack(spacing: 10) {
                 // Primär: sicherer Weg
                 Button(action: onCancel) {
@@ -1043,6 +1323,7 @@ struct HomeZoneWarningSheet: View {
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 22)
+            .padding(.top, 6)
             .padding(.bottom, 22)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1072,6 +1353,129 @@ struct HomeZoneWarningSheet: View {
             RoundedRectangle(cornerRadius: 14)
                 .fill(.ultraThinMaterial)
         )
+    }
+}
+
+// MARK: - Admin Notice Sheet
+//
+// Pflicht-Sheet wenn ein Admin den Drop des Users via Live-Drops-Monitor
+// entfernt hat. Wird auf MainTabView-Ebene gebunden (sheet(item:)
+// auf store.pendingAdminNotice). Der User MUSS „Verstanden" tippen,
+// das löscht den Notice aus Firebase. Drag-to-dismiss ist deaktiviert
+// — die Botschaft soll wirklich gelesen werden.
+
+struct AdminNoticeSheet: View {
+    let notice: RealtimeDBManager.AdminNotice
+    let onAcknowledge: () -> Void
+
+    private var headline: String {
+        switch notice.type {
+        case "drop_removed": return "Dein Drop wurde entfernt"
+        default:             return "Hinweis vom Drops-Team"
+        }
+    }
+
+    private var body1: String {
+        switch notice.type {
+        case "drop_removed":
+            return "Ein Admin hat deinen Drop von der Karte genommen."
+        default:
+            return "Bitte beachte den folgenden Hinweis."
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 22) {
+                    // Visual: Schild mit Ausrufezeichen
+                    ZStack {
+                        Circle()
+                            .fill(Color.accentRed.opacity(0.15))
+                            .frame(width: 96, height: 96)
+                        Image(systemName: "exclamationmark.shield.fill")
+                            .font(.system(size: 42, weight: .bold))
+                            .foregroundColor(.accentRed)
+                    }
+                    .padding(.top, 18)
+
+                    VStack(spacing: 8) {
+                        Text(headline)
+                            .font(.system(size: 22, weight: .bold, design: .rounded))
+                            .foregroundColor(.textPrimary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 20)
+                        Text(body1)
+                            .font(.system(size: 14))
+                            .foregroundColor(.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 20)
+                    }
+
+                    // Reason-Card
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "text.alignleft")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.textSecondary)
+                            Text("Begründung")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.textSecondary)
+                                .textCase(.uppercase)
+                        }
+                        Text(notice.reason)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundColor(.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(Color.accentRed.opacity(0.08))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14)
+                            .stroke(Color.accentRed.opacity(0.25), lineWidth: 1)
+                    )
+                    .padding(.horizontal, 20)
+
+                    // Sekundär-Hinweis
+                    Text("Wenn du Fragen hast, kontaktiere uns über Profil → Support.")
+                        .font(.system(size: 12))
+                        .foregroundColor(.textTertiary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 4)
+                }
+                .padding(.bottom, 12)
+            }
+
+            // Acknowledge-Button — fester Footer
+            Button(action: onAcknowledge) {
+                Text("Verstanden")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(
+                        Capsule().fill(
+                            LinearGradient(
+                                colors: [Color.accentRed, Color.accentOrange],
+                                startPoint: .leading, endPoint: .trailing
+                            )
+                        )
+                    )
+                    .shadow(color: Color.accentRed.opacity(0.30), radius: 10, y: 3)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 22)
+            .padding(.top, 8)
+            .padding(.bottom, 22)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -1195,22 +1599,33 @@ struct PointsToastView: View {
     @State private var visible = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: toast.isPowerHour ? "bolt.fill" : "sparkles")
-                .font(.system(size: 14, weight: .bold))
-                .foregroundColor(.white)
-            Text("+\(toast.delta) Punkte")
-                .font(.system(size: 14, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
-            if toast.isPowerHour {
-                Text("Power-Hour")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.85))
-                    .padding(.horizontal, 8).padding(.vertical, 2)
-                    .background(Capsule().fill(Color.white.opacity(0.18)))
+        // Wenn Reason vorhanden → 2-Zeilen-Layout mit Subline darunter,
+        // sonst kompakte 1-Zeile wie vorher. So weiß der User immer wofür
+        // die Punkte kommen, ohne dass die Pille überfüllt wirkt.
+        VStack(spacing: 2) {
+            HStack(spacing: 8) {
+                Image(systemName: toast.isPowerHour ? "bolt.fill" : "sparkles")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white)
+                Text("+\(toast.delta) Punkte")
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                if toast.isPowerHour {
+                    Text("Power-Hour")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.85))
+                        .padding(.horizontal, 8).padding(.vertical, 2)
+                        .background(Capsule().fill(Color.white.opacity(0.18)))
+                }
+            }
+            if let reason = toast.reason, !reason.isEmpty {
+                Text(reason)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.white.opacity(0.92))
+                    .lineLimit(1)
             }
         }
-        .padding(.horizontal, 16).padding(.vertical, 10)
+        .padding(.horizontal, 16).padding(.vertical, toast.reason == nil ? 10 : 8)
         .background(
             Capsule().fill(
                 LinearGradient(
@@ -1237,5 +1652,599 @@ struct PointsToastView: View {
             try? await Task.sleep(nanoseconds: 300_000_000)
             onDismiss()
         }
+    }
+}
+
+// MARK: - Info-Toast (Anti-Farm-Feedback)
+//
+// Negativ-Variante des PointsToast: zeigt KEINE Punkte-Zahl, sondern
+// einen kurzen Hinweis warum gerade nichts vergeben wurde
+// ("Drop zu kurz", "12 h Cooldown"). Eigenes Styling (neutral grau-blau
+// statt Brand-Orange) damit der User es sofort als „kein Gewinn"
+// einordnet. Auto-Dismiss erfolgt im Store über asyncAfter — die View
+// rendert nur solange `store.infoToast != nil`.
+struct InfoToastView: View {
+    let toast: AppStore.InfoToast
+
+    @State private var visible = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: toast.icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.white)
+            Text(toast.message)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundColor(.white)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(
+            Capsule().fill(
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.20, green: 0.22, blue: 0.28),
+                        Color(red: 0.28, green: 0.30, blue: 0.36)
+                    ],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+            )
+        )
+        .shadow(color: Color.black.opacity(0.20), radius: 10, y: 3)
+        .scaleEffect(visible ? 1.0 : 0.9)
+        .opacity(visible ? 1.0 : 0.0)
+        .onAppear {
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) {
+                visible = true
+            }
+        }
+    }
+}
+
+// MARK: - Leave-Drop Sheet (Joiner verlässt einen Drop)
+//
+// Visuell und vom Aufbau angelehnt an HomeZoneWarningSheet — wir wollen
+// nicht dass der User aus Versehen einen Drop verlässt und seine
+// Reliability-Punkte verliert. Klares Wording, primärer Bleiben-Button,
+// destruktiver Verlassen-Button als Sekundär-Aktion.
+struct LeaveDropSheet: View {
+    let activityEmoji: String
+    let activityName: String
+    /// Sekunden seit Beitritt — entscheidet ob ein No-Show-Risiko besteht
+    /// (nach 12 min wird Verlassen als Score-Abzug gewertet).
+    let elapsedSeconds: TimeInterval
+    let onLeave: () -> Void
+    let onCancel: () -> Void
+
+    @State private var pulse = false
+
+    /// 12-Min-Schwelle = "kritischer Bereich" mit Score-Risiko.
+    private var hasScoreRisk: Bool { elapsedSeconds >= 12 * 60 }
+
+    var body: some View {
+        VStack(spacing: 22) {
+            // Mehr Top-Spacing damit der pulsierende Kreis nicht den Drag-
+            // Indicator des Sheets überlappt — die Animation skaliert bis
+            // 1.05× und schluckt sonst die obere Sheet-Kante.
+            Spacer(minLength: 28)
+
+            // Visual: pulsierender Ausgang. Tür-Symbol passt semantisch
+            // besser als "figure.walk.departure" — "ich gehe durch die Tür".
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: hasScoreRisk
+                                ? [Color.accentRed.opacity(0.22), Color.accentOrange.opacity(0.14)]
+                                : [Color.accentOrange.opacity(0.22), Color.brand.opacity(0.14)],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 110, height: 110)
+                    .scaleEffect(pulse ? 1.05 : 0.96)
+                Image(systemName: "door.left.hand.open")
+                    .font(.system(size: 44, weight: .bold))
+                    .foregroundColor(hasScoreRisk ? .accentRed : .accentOrange)
+                    .shadow(color: (hasScoreRisk ? Color.accentRed : Color.accentOrange).opacity(0.4), radius: 10)
+            }
+
+            VStack(spacing: 8) {
+                Text("Drop wirklich verlassen?")
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .foregroundColor(.textPrimary)
+                Text("\(activityEmoji) \(activityName)")
+                    .font(.system(size: 14))
+                    .foregroundColor(.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 36)
+            }
+
+            // Konkrete Hinweis-Liste — Inhalt abhängig von der Dauer
+            VStack(spacing: 12) {
+                if hasScoreRisk {
+                    infoRow(
+                        icon: "exclamationmark.triangle.fill",
+                        tint: .accentRed,
+                        text: "Du bist seit ≥ 12 min dabei — der Host wartet wahrscheinlich schon. Verlassen zählt jetzt als No-Show (Score-Abzug)."
+                    )
+                } else {
+                    infoRow(
+                        icon: "checkmark.shield.fill",
+                        tint: .onlineGreen,
+                        text: "Noch unter 12 min — Verlassen wirkt sich nicht negativ auf deinen Score aus."
+                    )
+                }
+                infoRow(
+                    icon: "person.fill.questionmark",
+                    tint: .accentOrange,
+                    text: "Der Host sieht dass du nicht mehr dabei bist."
+                )
+                infoRow(
+                    icon: "clock.arrow.circlepath",
+                    tint: .brand,
+                    text: "10-Min-Cooldown: du kannst diesem Drop nicht sofort wieder beitreten."
+                )
+            }
+            .padding(.horizontal, 22)
+
+            Spacer()
+
+            // Aktionen
+            VStack(spacing: 10) {
+                // Primär: dabei bleiben (sicherer Pfad)
+                Button(action: onCancel) {
+                    Text("Dabei bleiben")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            Capsule().fill(
+                                LinearGradient(
+                                    colors: [Color.brand, Color.onlineGreen],
+                                    startPoint: .leading, endPoint: .trailing
+                                )
+                            )
+                        )
+                        .shadow(color: Color.brand.opacity(0.30), radius: 10, y: 3)
+                }
+                .buttonStyle(.plain)
+
+                // Sekundär (destruktiv): wirklich verlassen
+                Button(action: onLeave) {
+                    Text("Drop verlassen")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.accentRed)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 22)
+            .padding(.bottom, 22)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func infoRow(icon: String, tint: Color, text: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(tint)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(tint.opacity(0.14)))
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundColor(.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(.ultraThinMaterial)
+        )
+    }
+}
+
+// MARK: - End-Drop Sheet (Host beendet seinen eigenen Drop)
+//
+// Gleiches Design-Pattern wie LeaveDropSheet, aber Host-Perspektive:
+// klare Konsequenzen + primärer Weiter-Button damit der Host nicht aus
+// Versehen einen laufenden Drop killt während Joiner unterwegs sind.
+struct EndDropSheet: View {
+    let activityEmoji: String
+    let activityName: String
+    let participantCount: Int
+    /// Sekunden seit Drop-Erstellung — ≥ 15 min = Punkte werden vergeben.
+    let elapsedSeconds: TimeInterval
+    let onEnd: () -> Void
+    let onCancel: () -> Void
+
+    /// 3 versetzte Ring-Wellen für eine "Stopp"-Pulsation. Phase-shift
+    /// erzeugt einen Wellen-Effekt — wirkt energetischer als ein einfacher
+    /// Pulse und unterstreicht den destruktiven Charakter der Aktion.
+    @State private var ring0 = false
+    @State private var ring1 = false
+    @State private var ring2 = false
+    /// Subtle Icon-Beat im Takt der ersten Welle.
+    @State private var iconBeat = false
+
+    private var qualifiesForPoints: Bool { elapsedSeconds >= 15 * 60 }
+    private var hasOthers: Bool { participantCount >= 2 }
+
+    var body: some View {
+        // ScrollView damit auf kleinen Devices (iPhone SE) der Content
+        // nicht abgeschnitten wird. Buttons sind Pinned am Bottom außerhalb
+        // der ScrollView, sonst muss der User scrollen um zu beenden.
+        VStack(spacing: 0) {
+            ScrollView(showsIndicators: false) {
+                contentBlock
+            }
+            actionButtons
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            // Drei zeitversetzte Ring-Wellen erzeugen einen Sirenen-Effekt.
+            // Jede Welle dauert 1.8s und repeatet forever; Stagger 0.6s.
+            let dur: Double = 1.8
+            withAnimation(.easeOut(duration: dur).repeatForever(autoreverses: false)) {
+                ring0 = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                withAnimation(.easeOut(duration: dur).repeatForever(autoreverses: false)) {
+                    ring1 = true
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                withAnimation(.easeOut(duration: dur).repeatForever(autoreverses: false)) {
+                    ring2 = true
+                }
+            }
+            // Icon-Beat synchron zum ersten Ring — Spring sorgt für lebendige
+            // Pulsation statt mechanischem Skalieren.
+            withAnimation(
+                .spring(response: 0.6, dampingFraction: 0.55)
+                    .repeatForever(autoreverses: true)
+            ) {
+                iconBeat = true
+            }
+        }
+    }
+
+    /// Scrollbarer Content-Block: Visual + Header + Info-Rows.
+    /// Kompakt gehalten damit das Sheet bei `.fraction(0.62)` ohne
+    /// Scrolling auskommt. Buttons sind außerhalb der ScrollView pinned
+    /// (siehe body). Falls iPhone SE / Display-Zoom doch nicht reicht,
+    /// kann der User scrollen.
+    @ViewBuilder
+    private var contentBlock: some View {
+        VStack(spacing: 10) {
+            Spacer(minLength: 4)
+
+            ZStack {
+                radarRing(scale: ring0 ? 1.5 : 0.9, opacity: ring0 ? 0.0 : 0.45)
+                radarRing(scale: ring1 ? 1.5 : 0.9, opacity: ring1 ? 0.0 : 0.45)
+                radarRing(scale: ring2 ? 1.5 : 0.9, opacity: ring2 ? 0.0 : 0.45)
+
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.accentRed.opacity(0.30),
+                                     Color.accentOrange.opacity(0.18)],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 64, height: 64)
+                    .shadow(color: Color.accentRed.opacity(0.35), radius: 12, y: 4)
+
+                Image(systemName: "flag.checkered")
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundColor(.accentRed)
+                    .shadow(color: Color.accentRed.opacity(0.5), radius: 8)
+                    .scaleEffect(iconBeat ? 1.08 : 1.0)
+            }
+            .frame(height: 92)
+
+            VStack(spacing: 2) {
+                Text("Drop beenden?")
+                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                    .foregroundColor(.textPrimary)
+                Text("\(activityEmoji) \(activityName)")
+                    .font(.system(size: 13))
+                    .foregroundColor(.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 30)
+            }
+
+            VStack(spacing: 6) {
+                if hasOthers {
+                    infoRow(
+                        icon: "person.2.fill",
+                        tint: .accentOrange,
+                        text: "\(participantCount - 1) Teilnehmer \(participantCount - 1 == 1 ? "wird" : "werden") informiert."
+                    )
+                } else {
+                    infoRow(
+                        icon: "person.crop.circle.badge.xmark",
+                        tint: .textTertiary,
+                        text: "Noch keine Teilnehmer — Drop wird einfach geschlossen."
+                    )
+                }
+                if qualifiesForPoints && hasOthers {
+                    infoRow(
+                        icon: "sparkles",
+                        tint: .onlineGreen,
+                        text: "Host-Punkte werden vergeben (≥ 15 min erfüllt)."
+                    )
+                } else if !qualifiesForPoints && hasOthers {
+                    infoRow(
+                        icon: "hourglass",
+                        tint: .accentOrange,
+                        text: "Erst seit \(Int(elapsedSeconds / 60)) min — unter 15 min keine Punkte."
+                    )
+                }
+                infoRow(
+                    icon: "map",
+                    tint: .brand,
+                    text: "Drop verschwindet sofort von der Karte."
+                )
+            }
+            .padding(.horizontal, 18)
+            .padding(.bottom, 4)
+        }
+    }
+
+    /// Action-Buttons unten am Sheet — bleiben außerhalb der ScrollView
+    /// damit der User immer beenden/cancel kann ohne erst scrollen zu müssen.
+    @ViewBuilder
+    private var actionButtons: some View {
+        VStack(spacing: 8) {
+            Button(action: onCancel) {
+                Text("Weiterlaufen lassen")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(
+                        Capsule().fill(
+                            LinearGradient(
+                                colors: [Color.brand, Color.accentOrange],
+                                startPoint: .leading, endPoint: .trailing
+                            )
+                        )
+                    )
+                    .shadow(color: Color.brand.opacity(0.30), radius: 8, y: 2)
+            }
+            .buttonStyle(.plain)
+
+            Button(action: onEnd) {
+                Text("Drop beenden")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.accentRed)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 22)
+        .padding(.top, 4)
+        .padding(.bottom, 14)
+        .background(.ultraThinMaterial)
+    }
+
+    /// Einzelner expandierender Warnring — fadet von 0.45 → 0.0 während er
+    /// von 0.9× auf 1.6× skaliert. Stack mehrerer Rings mit Stagger-Delay
+    /// erzeugt den Sirenen-Effekt.
+    @ViewBuilder
+    private func radarRing(scale: CGFloat, opacity: Double) -> some View {
+        Circle()
+            .stroke(
+                LinearGradient(
+                    colors: [Color.accentRed, Color.accentOrange],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ),
+                lineWidth: 2.5
+            )
+            .frame(width: 110, height: 110)
+            .scaleEffect(scale)
+            .opacity(opacity)
+    }
+
+    @ViewBuilder
+    private func infoRow(icon: String, tint: Color, text: String) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(tint)
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(tint.opacity(0.14)))
+            Text(text)
+                .font(.system(size: 12.5))
+                .foregroundColor(.textPrimary)
+                .lineSpacing(1)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.ultraThinMaterial)
+        )
+    }
+}
+
+// MARK: - Drop-Feedback Sheet
+//
+// Erscheint nach Drop-Ende (für Host nach `cancelDrop`, für Joiner nach
+// `leaveActiveJoin` mit Session ≥ 5 min). Zeigt pro Mit-Teilnehmer eine
+// Zeile mit 👍/👎. User kann pro Person voten oder einfach "Überspringen"
+// drücken — Datenschutz: nichts ist Pflicht.
+struct DropFeedbackSheet: View {
+    @EnvironmentObject var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+    let prompt: AppStore.DropFeedbackPrompt
+
+    /// votes[targetUID] = "up" | "down" | nil (= unentschieden / skip)
+    @State private var votes: [String: String] = [:]
+    @State private var submitted: Bool = false
+
+    private var headline: String {
+        prompt.wasHostMyself ? "Wie waren deine Gäste?" : "Wie war der Host?"
+    }
+
+    private var subline: String {
+        "\(prompt.dropEmoji) \(prompt.dropActivity)"
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            VStack(spacing: 8) {
+                Text(headline)
+                    .font(.system(size: 19, weight: .bold))
+                    .foregroundColor(.textPrimary)
+                Text(subline)
+                    .font(.system(size: 13))
+                    .foregroundColor(.textSecondary)
+            }
+            .padding(.top, 22).padding(.bottom, 22)
+
+            ScrollView {
+                VStack(spacing: 10) {
+                    ForEach(prompt.targets) { target in
+                        feedbackRow(for: target)
+                    }
+                }
+                .padding(.horizontal, 18)
+            }
+            .frame(maxHeight: 320)
+
+            Spacer(minLength: 12)
+
+            // Buttons
+            HStack(spacing: 10) {
+                Button {
+                    dismiss()
+                } label: {
+                    Text("Überspringen")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Capsule().fill(Color.primary.opacity(0.06)))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    submitAll()
+                } label: {
+                    HStack(spacing: 6) {
+                        if submitted {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 15, weight: .bold))
+                        }
+                        Text(submitted ? "Danke!" : "Senden")
+                            .font(.system(size: 15, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(
+                        Capsule().fill(votes.isEmpty ? Color.textTertiary : Color.brand)
+                            .shadow(color: Color.brand.opacity(0.3), radius: 10, y: 3)
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(votes.isEmpty || submitted)
+            }
+            .padding(.horizontal, 18).padding(.bottom, 24)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.ultraThinMaterial)
+    }
+
+    @ViewBuilder
+    private func feedbackRow(for target: AppStore.FeedbackTarget) -> some View {
+        let currentVote = votes[target.id]
+        HStack(spacing: 12) {
+            // Avatar
+            if let url = target.profileImageURL, !url.isEmpty {
+                RemoteProfileImage(url: url, fallbackEmoji: target.emoji,
+                                   size: 44, strokeColor: .clear)
+            } else {
+                Circle()
+                    .fill(Color.brand.opacity(0.1))
+                    .frame(width: 44, height: 44)
+                    .overlay(Text(target.emoji).font(.system(size: 22)))
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    Text(target.name)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.textPrimary)
+                    if target.wasHost {
+                        Image(systemName: "crown.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(.accentOrange)
+                    }
+                }
+                Text(target.wasHost ? "Host" : "Teilnehmer")
+                    .font(.system(size: 11))
+                    .foregroundColor(.textTertiary)
+            }
+
+            Spacer()
+
+            HStack(spacing: 8) {
+                voteButton(systemImage: "hand.thumbsdown.fill",
+                           selected: currentVote == "down",
+                           tint: .accentRed) {
+                    votes[target.id] = currentVote == "down" ? nil : "down"
+                }
+                voteButton(systemImage: "hand.thumbsup.fill",
+                           selected: currentVote == "up",
+                           tint: .onlineGreen) {
+                    votes[target.id] = currentVote == "up" ? nil : "up"
+                }
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(Color.primary.opacity(0.04),
+                    in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    @ViewBuilder
+    private func voteButton(systemImage: String, selected: Bool,
+                            tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(selected ? .white : tint.opacity(0.6))
+                .frame(width: 38, height: 38)
+                .background(
+                    Circle().fill(selected ? tint : tint.opacity(0.12))
+                )
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(selected ? 1.1 : 1.0)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: selected)
+    }
+
+    private func submitAll() {
+        guard !submitted else { return }
+        for (uid, vote) in votes {
+            store.submitFeedbackVote(ratedUID: uid, dropID: prompt.dropID, vote: vote)
+        }
+        withAnimation(.spring(response: 0.3)) { submitted = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { dismiss() }
     }
 }

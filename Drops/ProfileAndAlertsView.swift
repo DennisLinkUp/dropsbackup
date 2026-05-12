@@ -13,6 +13,23 @@ struct FreundeView: View {
     @AppStorage("appLanguage") private var appLanguage = "de"
     @StateObject private var contactsVM = ContactsViewModel()
     @State private var showAddSheet = false
+
+    /// Öffnet UIActivityViewController mit dem Drops-Invite-Link. Wird vom
+    /// FreundeEmptyState getriggert wenn der User dort "Einladungslink
+    /// teilen" tappt — gleicher Inhalt wie das bestehende ShareLink im
+    /// addFriendCard, nur programmatisch ansprechbar.
+    private func presentInviteShareSheet() {
+        let uid = FirebaseAuth.Auth.auth().currentUser?.uid ?? ""
+        let url = URL(string: "https://apps.apple.com/de/app/drops-triff-leute/id6762097493?ref=invite_\(uid)")!
+        let av = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        av.excludedActivityTypes = [.assignToContact, .saveToCameraRoll, .print]
+        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+           let root = scene.windows.first?.rootViewController {
+            var top = root
+            while let presented = top.presentedViewController { top = presented }
+            top.present(av, animated: true)
+        }
+    }
     @State private var addedContactUIDs: Set<String> = []
     @State private var profileParticipant: DropParticipant? = nil
     @State private var justConfirmedEncounterId: UUID? = nil
@@ -55,18 +72,21 @@ struct FreundeView: View {
 
                 // Aurora-Hintergrund oben
                 ZStack {
+                    // Header-Aurora aufs neue Icon-Palette: Orange dominant,
+                    // Rose-Akzent, Lavender als kühler Counter — gleicher
+                    // Look wie FeedView und globaler AppAuroraBackground.
                     Circle()
-                        .fill(Color.brand.opacity(0.32))
+                        .fill(Color(hex: "E48C3A").opacity(0.34))
                         .frame(width: 280, height: 280)
                         .blur(radius: 65)
                         .offset(x: auroraAnimate ? 25 : -35, y: auroraAnimate ? -40 : -10)
                     Circle()
-                        .fill(Color(UIColor.systemPurple).opacity(0.22))
+                        .fill(Color(hex: "F08FA3").opacity(0.24))
                         .frame(width: 220, height: 220)
                         .blur(radius: 55)
                         .offset(x: auroraAnimate ? -50 : 30, y: auroraAnimate ? -20 : -50)
                     Circle()
-                        .fill(Color(UIColor.systemTeal).opacity(0.16))
+                        .fill(Color(hex: "B49BE0").opacity(0.20))
                         .frame(width: 180, height: 180)
                         .blur(radius: 48)
                         .offset(x: auroraAnimate ? 55 : -15, y: auroraAnimate ? 10 : -30)
@@ -130,14 +150,19 @@ struct FreundeView: View {
                         // Drop-Verlauf
                         pastDropsSection
 
-                        // Empty State wenn noch keine Freunde
+                        // Empty-State ODER Freund-hinzufügen-Card — niemals
+                        // beide gleichzeitig, sonst stehen "Aus Kontakten
+                        // hinzufügen" + "Einladungslink teilen" doppelt da.
+                        // Empty-State hat die CTA-Buttons schon eingebaut.
                         if store.friends.isEmpty && store.pendingEncounters.isEmpty && store.friendSuggestions.isEmpty {
-                            FreundeEmptyState()
-                                .padding(.top, 32)
+                            FreundeEmptyState(
+                                onAddFromContacts: { showAddSheet = true },
+                                onShareInvite: { presentInviteShareSheet() }
+                            )
+                            .padding(.top, 32)
+                        } else {
+                            addFriendCard
                         }
-
-                        // Freund hinzufügen
-                        addFriendCard
 
                         Spacer(minLength: 32)
                     }
@@ -243,7 +268,7 @@ struct FreundeView: View {
                             isFriend: isFriend
                         ) { profileParticipant = nil }
                         .environmentObject(store)
-                        .presentationDetents([.height(360)])
+                        .presentationDetents([.height(460)])
                         .presentationDragIndicator(.hidden)
                         .presentationBackground(.clear)
                     } else {
@@ -261,7 +286,7 @@ struct FreundeView: View {
                             isFriend: isFriend
                         ) { profileParticipant = nil }
                         .environmentObject(store)
-                        .presentationDetents([.height(360)])
+                        .presentationDetents([.height(460)])
                         .presentationDragIndicator(.hidden)
                     }
                 }
@@ -306,7 +331,7 @@ struct FreundeView: View {
                 get: { profileHeroTemplate },
                 set: { profileHeroTemplateRaw = $0.rawValue }
             ))
-            .presentationDetents([.medium, .large])
+            .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
         }
     }
@@ -761,8 +786,11 @@ struct FreundeView: View {
     // MARK: Letzte Begegnungen
 
     @ViewBuilder private var encountersSection: some View {
-        // Pending immer oben, dann bestätigte/abgelehnte nach Datum sortiert
-        let sorted = store.encounters.sorted { a, b in
+        // Pending immer oben, dann bestätigte/abgelehnte nach Datum sortiert.
+        // `visibleEncounters` blendet Pre-Encounter aus, deren Drop noch
+        // läuft — die sollen erst nach Drop-Ende in „Letzte Begegnungen"
+        // auftauchen.
+        let sorted = store.visibleEncounters.sorted { a, b in
             let aPending = !a.confirmed && !a.denied && !a.isExpired
             let bPending = !b.confirmed && !b.denied && !b.isExpired
             if aPending != bPending { return aPending }
@@ -780,17 +808,55 @@ struct FreundeView: View {
             .padding(.horizontal, 20).padding(.bottom, 8)
 
             VStack(spacing: 0) {
-                ForEach(Array(sorted.enumerated()), id: \.element.id) { i, encounter in
-                    EncounterRow(encounter: encounter)
-                    if i < sorted.count - 1 {
-                        Divider().padding(.leading, 68)
+                if sorted.isEmpty {
+                    // Inline-Empty-State — vorher renderte die Card komplett
+                    // leer, was wie ein Layout-Bug aussah. Jetzt klarer
+                    // Hint, wie Begegnungen entstehen.
+                    HStack(spacing: 12) {
+                        ZStack {
+                            Circle()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Color(hex: "E48C3A").opacity(0.16),
+                                                 Color(hex: "5FA937").opacity(0.14)],
+                                        startPoint: .topLeading, endPoint: .bottomTrailing
+                                    )
+                                )
+                                .frame(width: 40, height: 40)
+                            Image(systemName: "person.2.wave.2.fill")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(
+                                    LinearGradient(
+                                        colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                                        startPoint: .topLeading, endPoint: .bottomTrailing
+                                    )
+                                )
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Noch keine Begegnungen")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.textPrimary)
+                            Text("Jeder Drop, den du beendest, landet hier.")
+                                .font(.system(size: 12))
+                                .foregroundColor(.textSecondary)
+                                .lineLimit(2)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 14)
+                } else {
+                    ForEach(Array(sorted.enumerated()), id: \.element.id) { i, encounter in
+                        EncounterRow(encounter: encounter)
+                        if i < sorted.count - 1 {
+                            Divider().padding(.leading, 68)
+                        }
                     }
                 }
             }
             .liquidGlass(cornerRadius: 18)
             .padding(.horizontal, 16)
         }
-        .animation(.spring(), value: store.encounters.map { $0.confirmed || $0.denied })
+        .animation(.spring(), value: store.visibleEncounters.map { $0.confirmed || $0.denied })
     }
 
     // MARK: Drop-Statistiken
@@ -822,12 +888,15 @@ struct FreundeView: View {
     }
 
     @ViewBuilder private var dropStatsSection: some View {
-        // Aktive eigene Drops mitzählen — sonst wirkt die Statistik leer
-        // solange ein User seinen ersten Drop noch nicht beendet hat
-        // (war bisheriger Bug: "Drops gesamt = 0" trotz 2 laufender Drops).
+        // Aktive eigene Drops mitzählen — aber nur wenn tatsächlich jemand
+        // beigetreten ist (>=2 Teilnehmer = Host + mindestens 1 Joiner).
+        // "Leere" Drops (nur der Host, nichts passiert) zählen NICHT in die
+        // Statistik — sonst wäre Drop-Erstellen + Sofort-Beenden eine
+        // Pseudo-Aktivität. Konsistent zur cancelDrop-Logik wo solche
+        // Drops auch nicht im Verlauf landen.
         let pastTotal    = store.pastDrops.count
         let pastHosted   = store.pastDrops.filter { $0.wasHost }.count
-        let activeHosted = store.activeDrops.count
+        let activeHosted = store.activeDrops.filter { $0.participants.count >= 2 }.count
         let total   = pastTotal + activeHosted
         let hosted  = pastHosted + activeHosted
         let joined  = total - hosted
@@ -986,14 +1055,25 @@ struct FreundeView: View {
 
                                 Spacer()
 
-                                // Teilnehmer-Avatare (max 3) + Reliability-Dot
+                                // Teilnehmer-Avatare (max 3) — Profilbild bevorzugt,
+                                // Emoji als Fallback. Bisher zeigte die Liste immer
+                                // das Default-😊 statt der echten Profilbilder.
                                 HStack(spacing: -8) {
                                     ForEach(drop.participants.prefix(3)) { p in
-                                        Text(p.emoji)
-                                            .font(.system(size: 14))
-                                            .frame(width: 26, height: 26)
-                                            .background(Color(.systemBackground), in: Circle())
-                                            .overlay(Circle().stroke(Color.primary.opacity(0.08), lineWidth: 1))
+                                        if let url = p.profileImageURL, !url.isEmpty {
+                                            RemoteProfileImage(
+                                                url: url,
+                                                fallbackEmoji: p.emoji,
+                                                size: 26,
+                                                strokeColor: Color.primary.opacity(0.08)
+                                            )
+                                        } else {
+                                            Text(p.emoji)
+                                                .font(.system(size: 14))
+                                                .frame(width: 26, height: 26)
+                                                .background(Color(.systemBackground), in: Circle())
+                                                .overlay(Circle().stroke(Color.primary.opacity(0.08), lineWidth: 1))
+                                        }
                                     }
                                 }
                                 .padding(.trailing, 4)
@@ -1023,51 +1103,55 @@ struct FreundeView: View {
     // MARK: Freund hinzufügen
 
     private var addFriendCard: some View {
-        VStack(spacing: 0) {
-            // Via Kontakte
+        // Gleicher Stil wie FreundeEmptyState (Sunset-Gradient-Pill für die
+        // Primary-Action „Aus Kontakten hinzufügen", Brand-Outline-Pill für
+        // „Einladungslink teilen") — vorher hatte diese Card noch das alte
+        // Row-Layout mit Icon-Quadraten und Chevrons, was inkonsistent zum
+        // Empty-State aussah. Jetzt einheitlich.
+        VStack(spacing: 8) {
             Button(action: { showAddSheet = true }) {
-                HStack(spacing: 14) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 10).fill(Color.brand.opacity(0.12)).frame(width: 40, height: 40)
-                        Image(systemName: "person.crop.circle.badge.plus")
-                            .font(.system(size: 17)).foregroundColor(.brand)
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(tr("profile.add_from_contacts"))
-                            .font(.system(size: 15, weight: .medium)).foregroundColor(.textPrimary)
-                        Text(tr("profile.find_friends_using"))
-                            .font(.system(size: 12)).foregroundColor(.textSecondary)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right").font(.system(size: 12)).foregroundColor(.textTertiary)
+                HStack(spacing: 8) {
+                    Image(systemName: "person.crop.circle.badge.plus")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text(tr("profile.add_from_contacts"))
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
                 }
-                .padding(.horizontal, 16).padding(.vertical, 13)
+                .foregroundColor(.white)
+                .padding(.horizontal, 18).padding(.vertical, 11)
+                .background(
+                    Capsule().fill(
+                        LinearGradient(
+                            colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                    )
+                )
+                .shadow(color: Color(hex: "E48C3A").opacity(0.35), radius: 10, y: 3)
             }
             .buttonStyle(.plain)
 
-            Divider().padding(.leading, 60)
-
-            // Via Link
-            ShareLink(item: URL(string: "https://drops-app.de/invite/\(FirebaseAuth.Auth.auth().currentUser?.uid ?? "")")!) {
-                HStack(spacing: 14) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 10).fill(Color(UIColor.systemBlue).opacity(0.12)).frame(width: 40, height: 40)
-                        Image(systemName: "link.badge.plus")
-                            .font(.system(size: 17)).foregroundColor(Color(UIColor.systemBlue))
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(tr("profile.share_invite_link"))
-                            .font(.system(size: 15, weight: .medium)).foregroundColor(.textPrimary)
-                        Text(tr("profile.link_via_messaging"))
-                            .font(.system(size: 12)).foregroundColor(.textSecondary)
-                    }
-                    Spacer()
-                    Image(systemName: "square.and.arrow.up").font(.system(size: 13)).foregroundColor(.textTertiary)
+            // App-Store-Link mit User-UID als Tracking-Parameter (`ref`).
+            // Funktioniert für jeden Empfänger:
+            //   - App nicht installiert → App Store öffnet, User installiert
+            //   - App installiert → "Öffnen"-Button im Store, App startet
+            // Vorher Universal-Link auf drops-app.de/invite/{UID} — der ging
+            // ins Leere weil die Web-Seite 404 lieferte und Apex-Redirect
+            // den AASA-Fetch von Apple verhindert hat.
+            ShareLink(item: URL(string: "https://apps.apple.com/de/app/drops-triff-leute/id6762097493?ref=invite_\(FirebaseAuth.Auth.auth().currentUser?.uid ?? "")")!) {
+                HStack(spacing: 6) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(tr("profile.share_invite_link"))
+                        .font(.system(size: 13, weight: .semibold))
                 }
-                .padding(.horizontal, 16).padding(.vertical, 13)
+                .foregroundColor(.brand)
+                .padding(.horizontal, 14).padding(.vertical, 9)
+                .background(Capsule().fill(Color.brand.opacity(0.10)))
             }
+            .buttonStyle(.plain)
         }
-        .liquidGlass(cornerRadius: 18)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
         .padding(.horizontal, 16)
         .sheet(isPresented: $showAddSheet) {
             AddFromContactsSheet().environmentObject(store)
@@ -1165,14 +1249,28 @@ struct DropSummarySheet: View {
                         VStack(spacing: 0) {
                             ForEach(Array(drop.participants.enumerated()), id: \.element.id) { i, p in
                                 HStack(spacing: 14) {
-                                    Text(p.emoji)
-                                        .font(.system(size: 22))
-                                        .frame(width: 38, height: 38)
-                                        .background(p.didShowUp ? Color.brand.opacity(0.07) : Color.red.opacity(0.06),
-                                                    in: Circle())
-                                        .overlay(
-                                            Circle().stroke(p.didShowUp ? Color.clear : Color.red.opacity(0.2), lineWidth: 1)
-                                        )
+                                    // Profilbild wenn vorhanden, sonst Emoji-Fallback.
+                                    // Border bleibt rot bei No-Show — Visual-Cue gleich
+                                    // wie vorher.
+                                    Group {
+                                        if let url = p.profileImageURL, !url.isEmpty {
+                                            RemoteProfileImage(
+                                                url: url,
+                                                fallbackEmoji: p.emoji,
+                                                size: 38,
+                                                strokeColor: p.didShowUp ? Color.clear : Color.red.opacity(0.2)
+                                            )
+                                        } else {
+                                            Text(p.emoji)
+                                                .font(.system(size: 22))
+                                                .frame(width: 38, height: 38)
+                                                .background(p.didShowUp ? Color.brand.opacity(0.07) : Color.red.opacity(0.06),
+                                                            in: Circle())
+                                                .overlay(
+                                                    Circle().stroke(p.didShowUp ? Color.clear : Color.red.opacity(0.2), lineWidth: 1)
+                                                )
+                                        }
+                                    }
 
                                     VStack(alignment: .leading, spacing: 2) {
                                         HStack(spacing: 6) {
@@ -1194,16 +1292,19 @@ struct DropSummarySheet: View {
 
                                     Spacer()
 
-                                    // Reliability-Score
+                                    // Reliability-Score in % anzeigen — cappen auf 100
+                                    // damit Roh-Punktestände (z.B. 202) nicht als
+                                    // "202%" erscheinen.
+                                    let cappedScore = min(p.reliabilityScore, 100)
                                     let scoreColor: Color = {
-                                        switch p.reliabilityScore {
+                                        switch cappedScore {
                                         case 85...: return .onlineGreen
                                         case 65..<85: return .accentOrange
                                         default: return .red
                                         }
                                     }()
                                     VStack(spacing: 3) {
-                                        Text("\(p.reliabilityScore)%")
+                                        Text("\(cappedScore)%")
                                             .font(.system(size: 13, weight: .bold))
                                             .foregroundColor(scoreColor)
                                         // Mini-Balken
@@ -1214,7 +1315,7 @@ struct DropSummarySheet: View {
                                                     .frame(height: 3)
                                                 RoundedRectangle(cornerRadius: 2)
                                                     .fill(scoreColor)
-                                                    .frame(width: geo.size.width * CGFloat(p.reliabilityScore) / 100, height: 3)
+                                                    .frame(width: geo.size.width * CGFloat(cappedScore) / 100, height: 3)
                                             }
                                         }
                                         .frame(width: 44, height: 3)
@@ -1271,15 +1372,36 @@ struct DropSummarySheet: View {
 
 struct EncounterRow: View {
     let encounter: Encounter
+    @EnvironmentObject var store: AppStore
     @AppStorage("appLanguage") private var appLanguage = "de"
+    @State private var requestSent = false
+
+    /// User ist bereits Freund? Dann „Hinzufügen"-Button ausblenden.
+    private var isAlreadyFriend: Bool {
+        guard let uid = encounter.friendUID else { return false }
+        return store.friends.contains(where: { $0.firebaseUID == uid })
+    }
+
+    // Local-only state für „Angefragt"-Feedback nach Tap. Echte Server-
+    // seitige Pending-Request-Liste pflegen wir nicht — wäre extra Round-
+    // trip ohne klaren Mehrwert (User dismisst die Encounter eh nach Add).
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
-                // Avatar
-                ZStack {
-                    Circle().fill(Color.brand.opacity(0.1)).frame(width: 48, height: 48)
-                    Text(encounter.friendEmoji).font(.system(size: 24))
+                // Avatar — Profilbild wenn vorhanden, sonst Emoji-Fallback.
+                if let url = encounter.friendProfileImageURL, !url.isEmpty {
+                    RemoteProfileImage(
+                        url: url,
+                        fallbackEmoji: encounter.friendEmoji,
+                        size: 48,
+                        strokeColor: .clear
+                    )
+                } else {
+                    ZStack {
+                        Circle().fill(Color.brand.opacity(0.1)).frame(width: 48, height: 48)
+                        Text(encounter.friendEmoji).font(.system(size: 24))
+                    }
                 }
 
                 // Info
@@ -1297,18 +1419,68 @@ struct EncounterRow: View {
 
                 Spacer()
 
-                // Status-Badge
+                // Status-Badge / Aktionen
                 if encounter.confirmed {
-                    HStack(spacing: 4) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 14))
-                            .foregroundColor(.onlineGreen)
-                        Text(tr("profile.confirmed"))
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.onlineGreen)
+                    if isAlreadyFriend {
+                        // Schon befreundet → einfaches Häkchen
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 14))
+                                .foregroundColor(.onlineGreen)
+                            Text("Befreundet")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.onlineGreen)
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Color.onlineGreen.opacity(0.1), in: Capsule())
+                    } else if requestSent {
+                        // Request schon raus → wartet auf Antwort
+                        HStack(spacing: 4) {
+                            Image(systemName: "hourglass")
+                                .font(.system(size: 11))
+                            Text("Angefragt")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .foregroundColor(.accentOrange)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Color.accentOrange.opacity(0.10), in: Capsule())
+                    } else if let uid = encounter.friendUID {
+                        // Hauptpfad: Add-Friend-Button (CTA in Brand-Sunset-Gradient)
+                        Button {
+                            store.sendFriendRequest(to: uid)
+                            withAnimation(.spring(response: 0.3)) { requestSent = true }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "person.badge.plus")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text("Hinzufügen")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(
+                                Capsule().fill(
+                                    LinearGradient(
+                                        colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                                        startPoint: .leading, endPoint: .trailing
+                                    )
+                                )
+                            )
+                            .shadow(color: Color(hex: "E48C3A").opacity(0.30), radius: 5, y: 1)
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        // Confirmed aber keine UID — Legacy-Fallback
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 14))
+                            Text(tr("profile.confirmed"))
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .foregroundColor(.onlineGreen)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Color.onlineGreen.opacity(0.1), in: Capsule())
                     }
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(Color.onlineGreen.opacity(0.1), in: Capsule())
                 } else if encounter.denied || encounter.isExpired {
                     Text(encounter.isExpired && !encounter.denied ? "Abgelaufen" : "Nicht getroffen")
                         .font(.system(size: 12))
@@ -1692,8 +1864,12 @@ struct AddFromContactsSheet: View {
                     }
                 }
 
-                // Einladen Button
-                ShareLink(item: URL(string: "https://drops.app/invite")!) {
+                // Einladen Button — App-Store-Link (vorher fälschlich auf
+                // drops.app/invite, das ist eine fremde Domain). Der echte
+                // App-Store-Link funktioniert in beide Richtungen: Empfänger
+                // ohne App landet im Store + installiert; Empfänger mit App
+                // sieht "Öffnen" und startet die App direkt aus dem Store.
+                ShareLink(item: URL(string: "https://apps.apple.com/de/app/drops-triff-leute/id6762097493")!) {
                     HStack(spacing: 8) {
                         Image(systemName: "square.and.arrow.up")
                         Text("Alle anderen einladen")
@@ -1921,18 +2097,21 @@ struct ProfileView: View {
 
                 // Aurora-Hintergrund oben (wie FreundeView)
                 ZStack {
+                    // Header-Aurora aufs neue Icon-Palette: Orange dominant,
+                    // Rose-Akzent, Lavender als kühler Counter — gleicher
+                    // Look wie FeedView und globaler AppAuroraBackground.
                     Circle()
-                        .fill(Color.brand.opacity(0.32))
+                        .fill(Color(hex: "E48C3A").opacity(0.34))
                         .frame(width: 280, height: 280)
                         .blur(radius: 65)
                         .offset(x: auroraAnimate ? 25 : -35, y: auroraAnimate ? -40 : -10)
                     Circle()
-                        .fill(Color(UIColor.systemPurple).opacity(0.22))
+                        .fill(Color(hex: "F08FA3").opacity(0.24))
                         .frame(width: 220, height: 220)
                         .blur(radius: 55)
                         .offset(x: auroraAnimate ? -50 : 30, y: auroraAnimate ? -20 : -50)
                     Circle()
-                        .fill(Color(UIColor.systemTeal).opacity(0.16))
+                        .fill(Color(hex: "B49BE0").opacity(0.20))
                         .frame(width: 180, height: 180)
                         .blur(radius: 48)
                         .offset(x: auroraAnimate ? 55 : -15, y: auroraAnimate ? 10 : -30)
@@ -2889,9 +3068,15 @@ struct ProfileView: View {
                 }
                 Spacer()
                 CustomSwitch(isOn: isSelected) {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                        mapStyleModeRaw = mode.rawValue
-                    }
+                    // Kein withAnimation(.spring()) mehr um den AppStorage-
+                    // Write — die Spring-Kurve (0.3 s response) lief gegen die
+                    // OS-Color-Scheme-Transition und ließ den Wechsel träge
+                    // wirken. Außerdem cacht der iOS-26-`glassEffect` sein
+                    // Rendering bis die SwiftUI-Animation fertig ist, weshalb
+                    // der Settings-Block noch in der alten Hell-Optik blieb.
+                    // Direkter Write → SwiftUI propagiert den Schema-Wechsel
+                    // sofort, das System animiert den Übergang selbst.
+                    mapStyleModeRaw = mode.rawValue
                 }
             }
             .frame(minHeight: 52)
