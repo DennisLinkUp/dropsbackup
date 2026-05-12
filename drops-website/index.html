@@ -268,20 +268,12 @@
 
     /* ── Hero ────────────────────────────────────────────────── */
     .hero {
-      padding: 80px 0 100px;
-      display: grid;
-      grid-template-columns: 1.1fr 1fr;
-      gap: 60px;
-      align-items: center;
+      padding: 96px 0 110px;
+      text-align: center;
     }
-    @media (max-width: 980px) {
-      .hero { grid-template-columns: 1fr; text-align: center; }
-      .hero-visual { order: -1; max-width: 340px; margin: 0 auto; }
-    }
-    @media (max-width: 640px) { .hero { padding: 40px 0 64px; gap: 40px; } }
+    @media (max-width: 640px) { .hero { padding: 56px 0 72px; } }
 
-    .hero-text { max-width: 620px; }
-    @media (max-width: 980px) { .hero-text { margin: 0 auto; } }
+    .hero-text { max-width: 760px; margin: 0 auto; }
 
     .badge {
       display: inline-flex; align-items: center; gap: 8px;
@@ -328,16 +320,15 @@
     .hero p.lead {
       font-size: clamp(16px, 2.2vw, 19px);
       color: var(--text-2);
-      max-width: 540px;
-      margin: 0 0 36px;
+      max-width: 620px;
+      margin: 0 auto 36px;
       line-height: 1.55;
     }
-    @media (max-width: 980px) { .hero p.lead { margin: 0 auto 36px; } }
 
     .hero-cta {
-      display: flex; flex-wrap: wrap; gap: 12px;
+      display: inline-flex; flex-wrap: wrap; gap: 12px;
+      justify-content: center;
     }
-    @media (max-width: 980px) { .hero-cta { justify-content: center; } }
 
     .btn {
       display: inline-flex; align-items: center; gap: 8px;
@@ -367,189 +358,11 @@
     .hero-meta {
       margin-top: 32px;
       display: flex; flex-wrap: wrap; gap: 24px;
+      justify-content: center;
       font-size: 13px; color: var(--text-3); font-weight: 500;
     }
-    @media (max-width: 980px) { .hero-meta { justify-content: center; } }
     .hero-meta span { display: inline-flex; align-items: center; gap: 7px; }
     .hero-meta svg { width: 14px; height: 14px; flex-shrink: 0; }
-
-    /* ── Hero Visual — iPhone-Mockup mit Live-Karte ──────────── */
-    .hero-visual {
-      position: relative;
-      perspective: 1200px;
-    }
-    .phone {
-      position: relative;
-      width: 100%; max-width: 400px;
-      aspect-ratio: 9 / 19.5;
-      margin: 0 auto;
-      border-radius: 44px;
-      background: linear-gradient(160deg, #1a1d24 0%, #2a2e38 100%);
-      padding: 14px;
-      box-shadow:
-        0 30px 80px rgba(228,140,58,0.25),
-        0 60px 120px rgba(95,169,55,0.20),
-        0 0 0 1.5px rgba(255,255,255,0.10) inset,
-        0 1px 0 rgba(255,255,255,0.18) inset;
-      transform: rotate3d(0.6, 1, 0, var(--phone-rx, 0deg)) rotate3d(0, 0, 1, 0deg) translateZ(0);
-      transform-style: preserve-3d;
-      transition: transform 400ms var(--ease-out);
-    }
-    .phone::before {
-      content: ""; position: absolute;
-      top: 14px; left: 50%; transform: translateX(-50%);
-      width: 95px; height: 30px;
-      background: #0a0c12;
-      border-radius: 18px;
-      z-index: 5;
-    }
-    .phone-screen {
-      width: 100%; height: 100%;
-      border-radius: 32px;
-      overflow: hidden;
-      position: relative;
-      background: linear-gradient(160deg, #F4F1EC 0%, #E8E4DC 100%);
-    }
-
-    /* Status-Bar */
-    .status-bar {
-      position: absolute; top: 0; left: 0; right: 0;
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 14px 28px 0;
-      font-size: 11px; font-weight: 700; color: #1a1a1a;
-      z-index: 4;
-    }
-    .status-bar .status-icons {
-      display: flex; gap: 4px; align-items: center;
-    }
-
-    /* Fake-Karte */
-    .fake-map {
-      position: absolute; inset: 0;
-      background:
-        radial-gradient(circle at 30% 25%, rgba(228,140,58,0.18), transparent 60%),
-        radial-gradient(circle at 70% 75%, rgba(95,169,55,0.15), transparent 55%),
-        linear-gradient(160deg, #f4f1ec 0%, #ede9e0 100%);
-      overflow: hidden;
-    }
-    /* Straßen-Linien */
-    .fake-map::before {
-      content: ""; position: absolute; inset: 0;
-      background-image:
-        linear-gradient(45deg, transparent 49.6%, rgba(0,0,0,0.06) 49.6%, rgba(0,0,0,0.06) 50.4%, transparent 50.4%),
-        linear-gradient(-45deg, transparent 49.6%, rgba(0,0,0,0.05) 49.6%, rgba(0,0,0,0.05) 50.4%, transparent 50.4%),
-        linear-gradient(0deg, transparent 49.6%, rgba(0,0,0,0.04) 49.6%, rgba(0,0,0,0.04) 50.4%, transparent 50.4%);
-      background-size: 60px 60px, 80px 80px, 40px 40px;
-      opacity: 0.7;
-    }
-    .fake-map::after {
-      content: ""; position: absolute; inset: 0;
-      background:
-        radial-gradient(ellipse at center, transparent 30%, rgba(244,241,236,0.5) 80%);
-    }
-
-    /* Drop-Pins auf der Karte */
-    .drop-pin {
-      position: absolute;
-      width: 28px; height: 28px;
-      border-radius: 50%;
-      background: var(--gradient);
-      border: 2px solid white;
-      box-shadow: 0 4px 12px rgba(228,140,58,0.45);
-      display: grid; place-items: center;
-      color: white;
-      font-size: 13px;
-      z-index: 3;
-      animation: pinDrop 600ms var(--ease-spring) backwards;
-    }
-    .drop-pin::after {
-      content: ""; position: absolute;
-      inset: -8px;
-      border-radius: 50%;
-      border: 2px solid var(--green);
-      opacity: 0;
-      animation: pinPulse 2.6s ease-out infinite;
-    }
-    .drop-pin.p1 { top: 28%; left: 24%; animation-delay: .15s; }
-    .drop-pin.p1::after { animation-delay: .15s; }
-    .drop-pin.p2 { top: 48%; left: 60%; animation-delay: .35s; }
-    .drop-pin.p2::after { animation-delay: .9s; }
-    .drop-pin.p3 { top: 67%; left: 32%; animation-delay: .55s; }
-    .drop-pin.p3::after { animation-delay: 1.6s; }
-    @keyframes pinDrop {
-      0%   { transform: translateY(-30px) scale(0.6); opacity: 0; }
-      60%  { transform: translateY(5px) scale(1.08); opacity: 1; }
-      100% { transform: translateY(0) scale(1); opacity: 1; }
-    }
-    @keyframes pinPulse {
-      0%   { transform: scale(0.6); opacity: 0.85; }
-      80%  { transform: scale(2.2); opacity: 0; }
-      100% { transform: scale(2.4); opacity: 0; }
-    }
-
-    /* Userpin (in Mitte) */
-    .user-pin {
-      position: absolute;
-      top: 50%; left: 50%;
-      width: 18px; height: 18px;
-      border-radius: 50%;
-      background: #3b82f6;
-      border: 3px solid white;
-      box-shadow: 0 4px 10px rgba(59,130,246,0.40);
-      transform: translate(-50%, -50%);
-      z-index: 4;
-    }
-    .user-pin::before {
-      content: ""; position: absolute;
-      inset: -16px;
-      border-radius: 50%;
-      background: radial-gradient(circle, rgba(59,130,246,0.22), transparent 70%);
-      animation: userPulse 3s ease-out infinite;
-    }
-    @keyframes userPulse {
-      0%   { transform: scale(0.6); opacity: 0.7; }
-      100% { transform: scale(1.8); opacity: 0; }
-    }
-
-    /* Floating Drop-Card im Phone */
-    .floating-card {
-      position: absolute;
-      bottom: 24px; left: 16px; right: 16px;
-      padding: 14px 16px;
-      background: rgba(255,255,255,0.92);
-      backdrop-filter: blur(20px) saturate(180%);
-      border-radius: 18px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.10);
-      display: flex; align-items: center; gap: 12px;
-      z-index: 6;
-      animation: cardFadeUp 800ms var(--ease-out) 0.8s backwards;
-    }
-    @keyframes cardFadeUp {
-      from { transform: translateY(20px); opacity: 0; }
-      to   { transform: translateY(0); opacity: 1; }
-    }
-    .floating-card .emoji-tile {
-      width: 36px; height: 36px;
-      border-radius: 10px;
-      background: var(--gradient-soft);
-      display: grid; place-items: center;
-      color: var(--orange);
-      flex-shrink: 0;
-    }
-    .floating-card .emoji-tile svg { width: 18px; height: 18px; }
-    .floating-card .text { flex: 1; min-width: 0; }
-    .floating-card .title { font-size: 13px; font-weight: 800; color: #1a1a1a; }
-    .floating-card .sub { font-size: 11px; color: rgba(0,0,0,0.55); margin-top: 1px; }
-    .floating-card .meta {
-      font-size: 11px; font-weight: 700; color: var(--green);
-      display: inline-flex; align-items: center; gap: 4px;
-      flex-shrink: 0;
-    }
-    .floating-card .meta::before {
-      content: ""; width: 6px; height: 6px; border-radius: 50%;
-      background: var(--green);
-      box-shadow: 0 0 0 3px rgba(95,169,55,0.20);
-    }
 
     /* ── Section Title ───────────────────────────────────────── */
     h2.section-title {
@@ -917,32 +730,6 @@
         <span><svg style="color:var(--text-3)"><use href="#i-lock"/></svg> Keine Profile, keine Bilderdatenbank</span>
       </div>
     </div>
-
-    <!-- iPhone-Mockup mit animierten Drop-Pins -->
-    <div class="hero-visual" id="heroPhone">
-      <div class="phone">
-        <div class="phone-screen">
-          <div class="status-bar">
-            <span>9:41</span>
-            <span class="status-icons">●●● ◗ 100%</span>
-          </div>
-          <div class="fake-map">
-            <div class="drop-pin p1"><svg width="13" height="13"><use href="#i-coffee"/></svg></div>
-            <div class="drop-pin p2"><svg width="13" height="13"><use href="#i-beer"/></svg></div>
-            <div class="drop-pin p3"><svg width="13" height="13"><use href="#i-run"/></svg></div>
-            <div class="user-pin"></div>
-          </div>
-          <div class="floating-card">
-            <div class="emoji-tile"><svg><use href="#i-coffee"/></svg></div>
-            <div class="text">
-              <div class="title">Kaffee am Marienplatz</div>
-              <div class="sub">~3 Min zu Fuß · 240 m</div>
-            </div>
-            <div class="meta">2 / 6</div>
-          </div>
-        </div>
-      </div>
-    </div>
   </header>
 
   <!-- ── How it works ─────────────────────────────────────── -->
@@ -1157,16 +944,6 @@
         card.style.transform = '';
       });
     });
-
-    /* ── Hero-Phone-Parallax (folgt der Maus) ────────────── */
-    const phone = document.getElementById('heroPhone');
-    if (phone) {
-      window.addEventListener('mousemove', (e) => {
-        const cx = window.innerWidth / 2;
-        const dx = (e.clientX - cx) / cx;
-        phone.style.setProperty('--phone-rx', (-dx * 4) + 'deg');
-      });
-    }
 
     /* ── Activity-Ticker (rotiert durch Fake-Activities) ─── */
     const tickerEl = document.getElementById('ticker');
