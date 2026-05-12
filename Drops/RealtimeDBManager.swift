@@ -1159,14 +1159,22 @@ class RealtimeDBManager: ObservableObject {
         let group = DispatchGroup()
         var entries: [AdminUserEntry] = []
 
-        // 1. Alle User laden
+        // 1. Alle User laden + zuletzt-bekannte Koord aus User-Profil mitnehmen.
+        // Der Heartbeat schreibt `lastLat`/`lastLng` ins User-Node — wir
+        // nutzen das als 3. Fallback für die Stadt-Derivation (1. eigener
+        // Drop, 2. Joiner-Drop, 3. last-known beim letzten App-Open).
         group.enter()
+        var lastKnownCoord: [String: (lat: Double, lng: Double)] = [:]
         db.child("users").observeSingleEvent(of: .value) { snapshot in
             guard let dict = snapshot.value as? [String: Any] else { group.leave(); return }
             for (uid, value) in dict {
                 guard let data = value as? [String: Any] else { continue }
                 // Soft-gelöschte Accounts ausblenden
                 if data["isDeleted"] as? Bool == true { continue }
+                if let lat = data["lastLat"] as? Double,
+                   let lng = data["lastLng"] as? Double {
+                    lastKnownCoord[uid] = (lat, lng)
+                }
                 entries.append(AdminUserEntry(
                     id:           uid,
                     name:         data["name"]         as? String ?? "–",
@@ -1255,23 +1263,23 @@ class RealtimeDBManager: ObservableObject {
                     entries[i].activeDropActivity = info.label
                     entries[i].activeDropID       = info.dropKey
                 }
-                // Registrations-Stadt — Priorität: eigener Drop > Joiner-Coord.
-                // Eigene Drops sind „eigene Stadt" (User hostet wo er wohnt),
-                // Joiner-Coord ist „Stadt wo der User aktiv ist" — beides
-                // dieselbe Info aus Service-Cities-Sicht.
+                // Stadt-Derivation Priorität:
+                //   1. eigener Drop (User hostet wo er wohnt — beste Quelle)
+                //   2. Joiner-Coord aus dropins/ (User war dort aktiv)
+                //   3. last-known Koord aus User-Profil (App-Heartbeat) —
+                //      fängt User die noch keinen Drop gemacht / besucht
+                //      haben, aber die App schon mal geöffnet haben.
                 //
-                // Wir nutzen `cityNear()` (großzügig) statt `city()` (strikt
-                // polygon-contained), damit Vororte (Karlsfeld, Dachau,
-                // Unterschleißheim etc.) der nächstgelegenen Großstadt
-                // zugeordnet werden. Sonst landeten User die ihren ersten
-                // Drop knapp außerhalb der Stadt-Polygone gemacht haben in
-                // „Ohne Stadt", obwohl sie eindeutig zum Speckgürtel
-                // gehören.
+                // `cityNear()` (großzügig, mit Puffer-Radius) statt `city()`
+                // (strikt polygon-contained) — fängt Vororte / Speckgürtel.
                 if let first = earliestDropCoord[uid] {
                     let coord = CLLocationCoordinate2D(latitude: first.lat, longitude: first.lng)
                     entries[i].cityName = ServiceCities.cityNear(coord)?.name
                 } else if let joinCoord = joinerCoord[uid] {
                     let coord = CLLocationCoordinate2D(latitude: joinCoord.lat, longitude: joinCoord.lng)
+                    entries[i].cityName = ServiceCities.cityNear(coord)?.name
+                } else if let last = lastKnownCoord[uid] {
+                    let coord = CLLocationCoordinate2D(latitude: last.lat, longitude: last.lng)
                     entries[i].cityName = ServiceCities.cityNear(coord)?.name
                 }
             }
@@ -1746,11 +1754,28 @@ class RealtimeDBManager: ObservableObject {
     /// dem Server-Timestamp. Freunde-Observer lesen diesen Wert und zeigen
     /// den User als online wenn der Timestamp < 5 Minuten alt ist.
     /// Wird aus der App getriggert: beim Login + bei jedem Foreground-Enter.
-    func markOnlineHeartbeat() {
+    ///
+    /// Optional: aktuelle Koordinate mitschreiben (`lastLat` / `lastLng`).
+    /// Wird im Admin-Panel für die Stadt-Derivation genutzt — so haben
+    /// auch User die noch nie einen Drop erstellt oder besucht haben
+    /// eine Stadt-Zuordnung, sobald sie die App einmal öffnen.
+    /// Privacy-OK: die Koord wird nur lesbar für eingeloggte User
+    /// (database.rules.json) und zeigt nur den groben Standort beim
+    /// letzten App-Open, kein dauerhaftes Tracking.
+    func markOnlineHeartbeat(coordinate: CLLocationCoordinate2D? = nil) {
         guard let uid = Auth.auth().currentUser?.uid else { return }
-        db.child("users").child(uid).updateChildValues([
+        var payload: [String: Any] = [
             "lastActiveAt": ServerValue.timestamp()
-        ])
+        ]
+        if let coord = coordinate,
+           // Plausibel — keine 0/0-Default-Koords und keine Apple-Sim-Cupertino
+           // (37.3, -122) reinschreiben, sonst landen alle US-User in „Ohne Stadt".
+           abs(coord.latitude)  > 0.01,
+           abs(coord.longitude) > 0.01 {
+            payload["lastLat"] = coord.latitude
+            payload["lastLng"] = coord.longitude
+        }
+        db.child("users").child(uid).updateChildValues(payload)
     }
 
     /// Liest die eigene Profilbild-URL aus der Realtime DB.

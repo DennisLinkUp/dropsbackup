@@ -919,8 +919,11 @@ struct OnboardingView: View {
                 store.startObservingAdminNotices()
             }
             // Online-Heartbeat — sonst sieht einen Freunde nicht als "online" bis
-            // zur ersten Background-Return.
-            RealtimeDBManager.shared.markOnlineHeartbeat()
+            // zur ersten Background-Return. Inkl. Koord für Admin-Panel-
+            // Stadt-Derivation.
+            RealtimeDBManager.shared.markOnlineHeartbeat(
+                coordinate: store.currentUser.coordinate
+            )
             store.isAuthenticated = true
         }
     }
@@ -993,8 +996,11 @@ struct OnboardingView: View {
             if let token = UserDefaults.standard.string(forKey: "fcmToken"), !token.isEmpty {
                 RealtimeDBManager.shared.setMyFCMToken(token)
             }
-            // Online-Heartbeat — markiert User als "online" für Freundes-Observer
-            RealtimeDBManager.shared.markOnlineHeartbeat()
+            // Online-Heartbeat — markiert User als "online" für Freundes-
+            // Observer. Inkl. Koord für Admin-Panel-Stadt-Derivation.
+            RealtimeDBManager.shared.markOnlineHeartbeat(
+                coordinate: store.currentUser.coordinate
+            )
             // Profilbild-URL parallel zum Profil laden (beides hängt am selben UID-Token).
             store.loadProfileImageURL()
 

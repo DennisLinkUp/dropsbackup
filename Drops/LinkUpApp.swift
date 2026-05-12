@@ -143,6 +143,9 @@ struct LinkUpApp: App {
                     // anlegen / refreshen — iOS feuert sie dann jede Woche zur
                     // konfigurierten Uhrzeit auch wenn die App nicht läuft.
                     PushNotificationManager.shared.schedulePowerHourNotifications()
+                    // Daily Evening Re-Engagement — Mo/Di/Do 19:00
+                    // (Wochentage ohne Power-Hour, sonst Doppel-Push).
+                    PushNotificationManager.shared.scheduleDailyEveningPrompts()
                     // App-Version-Gate beim Foregrounding refreshen — falls
                     // der Server inzwischen Force-Update aktiviert hat, sieht
                     // der User es spätestens beim nächsten App-Open.
@@ -152,8 +155,14 @@ struct LinkUpApp: App {
                     // bereit, der Beta-Badge bleibt dann ungeladen.
                     store.loadOwnCreatedAtIfNeeded()
                 }
-                // Online-Heartbeat für Freundes-Anzeige (users/{uid}/lastActiveAt)
-                RealtimeDBManager.shared.markOnlineHeartbeat()
+                // Online-Heartbeat — schreibt zusätzlich aktuelle Koord
+                // ins User-Profil, damit Admin-Panel die Stadt auch für
+                // User ableiten kann die noch keinen Drop erstellt /
+                // besucht haben. Nutzt store.currentUser.coordinate als
+                // Quelle (kommt vom LocationManager der App).
+                RealtimeDBManager.shared.markOnlineHeartbeat(
+                    coordinate: store.currentUser.coordinate
+                )
             default:
                 break
             }
