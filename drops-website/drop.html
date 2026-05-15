@@ -146,8 +146,28 @@
 </head>
 <body>
   <div class="card">
-    <img src="/app-icon.png" alt="Drops" class="icon">
-    <h1>Drops öffnen</h1>
+    <!-- Drop-Preview-Karte: wird nur befüllt wenn /drop/<id> erreichbar ist
+         UND die Cloud Function getDropSummary erfolgreich antwortet.
+         Default: hidden — fallback zur generischen Smart-Banner-View. -->
+    <div id="dropPreview" style="display:none; margin-bottom: 24px;">
+      <div style="font-size: 72px; line-height: 1; margin-bottom: 12px;" id="dpEmoji">📍</div>
+      <div style="font-size: 24px; font-weight: 800; color: var(--text); letter-spacing: -0.5px;" id="dpActivity">Drop</div>
+      <div style="font-size: 14px; color: var(--text-2); margin-top: 6px;" id="dpLocation"></div>
+      <div style="display:flex; gap:12px; justify-content:center; margin-top: 16px; font-size: 13px;">
+        <span id="dpHost" style="display:inline-flex; align-items:center; gap:6px; padding:6px 12px; background: rgba(0,0,0,0.05); border-radius:999px;">
+          <span id="dpHostEmoji">👤</span>
+          <span id="dpHostName">Jemand</span>
+        </span>
+        <span id="dpStatus" style="display:inline-flex; align-items:center; gap:6px; padding:6px 12px; background: rgba(95,169,55,0.15); color:#2A9940; border-radius:999px; font-weight:600;">
+          <span style="width:8px;height:8px;background:#3FB852;border-radius:50%;display:inline-block;"></span>
+          live
+        </span>
+      </div>
+      <div style="font-size: 13px; color: var(--text-3); margin-top: 12px;" id="dpParticipants">— / —</div>
+    </div>
+
+    <img src="/app-icon.png" alt="Drops" class="icon" id="defaultIcon">
+    <h1 id="defaultTitle">Drops öffnen</h1>
     <p id="subtitle">
       Tippe auf den Button — wenn du Drops installiert hast, öffnet sich die App direkt.
       Sonst lädst du sie kostenlos im App Store.
@@ -169,6 +189,7 @@
   </div>
 
   <script>
+    // ── Universal Link + App Store Fallback ──────────────────────────────
     // Re-konstruiere den Original-Universal-Link aus dem aktuellen Pfad
     // (z.B. /drop/<UUID> oder /invite/<UID>) und triggere ihn beim Klick.
     (function () {
@@ -194,12 +215,78 @@
         });
       });
 
-      // Subtitle anpassen je nach URL-Typ
+      // Subtitle anpassen je nach URL-Typ (Default-State, wird ggf. von der
+      // Drop-Preview-Logik überschrieben).
       const subtitle = document.getElementById("subtitle");
       if (path.startsWith("/drop/")) {
         subtitle.textContent = "Jemand hat dir einen Drop geschickt. Tippe um ihn in der App zu öffnen.";
       } else if (path.startsWith("/invite/")) {
         subtitle.textContent = "Du wurdest zu Drops eingeladen — tippe um die App zu öffnen oder lade sie kostenlos im App Store.";
+      }
+    })();
+
+    // ── Drop Preview (Strava-Pattern) ────────────────────────────────────
+    // Liest Drop-ID aus URL-Pfad, ruft die Cloud Function getDropSummary auf,
+    // rendert Drop-Details vor Install. Bei Fehler: silent fallback zur
+    // Default-Smart-Banner-View — User sieht keinen Error.
+    (async function loadDropPreview() {
+      const match = window.location.pathname.match(/^\/drop\/([A-Z0-9-]{8,64})$/i);
+      if (!match) return;
+      const dropID = match[1];
+
+      // Cloud-Function-URL — region+project muss matchen mit functions/index.ts.
+      const FN_URL = "https://europe-west1-drops-858d1.cloudfunctions.net/getDropSummary";
+
+      try {
+        const res = await fetch(`${FN_URL}?id=${encodeURIComponent(dropID)}`);
+        if (!res.ok) return;
+        const d = await res.json();
+        if (d.error) return;
+
+        // Drop-Preview-Karte befüllen + sichtbar machen.
+        document.getElementById("dpEmoji").textContent = d.activityEmoji || "📍";
+        document.getElementById("dpActivity").textContent = d.activityName || "Drop";
+        document.getElementById("dpLocation").textContent = d.locationTitle || "";
+        document.getElementById("dpHostEmoji").textContent = d.hostEmoji || "👤";
+        document.getElementById("dpHostName").textContent = d.hostName || "Jemand";
+
+        // Live-Status: läuft / startet gleich / abgelaufen
+        const status = document.getElementById("dpStatus");
+        if (!d.isLive) {
+          const now = Date.now();
+          if (d.createdAt > now) {
+            status.innerHTML = '<span style="width:8px;height:8px;background:#F6BD4D;border-radius:50%;display:inline-block;"></span> startet gleich';
+            status.style.background = "rgba(246,189,77,0.15)";
+            status.style.color = "#8a5a00";
+          } else {
+            status.innerHTML = '<span style="width:8px;height:8px;background:#888;border-radius:50%;display:inline-block;"></span> beendet';
+            status.style.background = "rgba(0,0,0,0.05)";
+            status.style.color = "#888";
+          }
+        } else if (d.expiresAt) {
+          const remainingMin = Math.max(1, Math.floor((d.expiresAt - Date.now()) / 60000));
+          const remainingLabel = remainingMin >= 60
+            ? `noch ${Math.floor(remainingMin/60)}h ${remainingMin%60}m`
+            : `noch ${remainingMin} Min`;
+          status.innerHTML = `<span style="width:8px;height:8px;background:#3FB852;border-radius:50%;display:inline-block;"></span> live · ${remainingLabel}`;
+        }
+
+        // Teilnehmer
+        const cur = d.currentParticipants ?? 1;
+        const max = d.maxParticipants ?? 10;
+        document.getElementById("dpParticipants").textContent = `${cur} / ${max} dabei`;
+
+        // UI-Switch: Drop-Preview einblenden, Default-Icon+Titel ausblenden,
+        // Subtitle auf Drop-spezifischen Call-To-Action.
+        document.getElementById("dropPreview").style.display = "block";
+        document.getElementById("defaultIcon").style.display = "none";
+        document.getElementById("defaultTitle").style.display = "none";
+        document.getElementById("subtitle").textContent =
+          d.isLive ? "Komm vorbei — öffne den Drop in der App." :
+                     "Drop schon vorbei. Lade Drops und sei beim nächsten dabei.";
+      } catch (err) {
+        // Silent fail — fallback bleibt aktiv. User sieht weiter den Smart-Banner.
+        console.warn("getDropSummary fetch failed", err);
       }
     })();
   </script>
