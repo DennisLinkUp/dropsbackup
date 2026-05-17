@@ -112,6 +112,12 @@
       <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
         <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
       </symbol>
+      <symbol id="i-crew" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+        <circle cx="9" cy="7" r="4"/>
+        <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+        <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+      </symbol>
     </defs>
   </svg>
 
@@ -569,6 +575,33 @@
       color: var(--text-2);
       line-height: 1.6;
     }
+    .feature-card .coming-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 16px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--green);
+      background: var(--green-soft);
+      padding: 4px 11px;
+      border-radius: 20px;
+      border: 1px solid rgba(95,169,55,0.28);
+    }
+    .feature-card .coming-badge::before {
+      content: "";
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      flex-shrink: 0;
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1;   transform: scale(1);   }
+      50%       { opacity: 0.4; transform: scale(0.75); }
+    }
 
     /* ── How-It-Works (3 Steps mit Connecting Line) ──────────── */
     .steps {
@@ -935,6 +968,12 @@
           <div class="feature-icon"><svg><use href="#i-bolt"/></svg></div>
           <h3>Power-Hour</h3>
           <p>Drei Bonus-Slots pro Woche, in denen Drops besonders viele Punkte einbringen. Klar geregelt, kein Pay-to-Win.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon"><svg><use href="#i-crew"/></svg></div>
+          <h3>Community Creator</h3>
+          <p>Verified Creators bauen ihre eigene Community direkt in Drops — mit eigenem Pin auf der Karte, privaten Drops nur für Mitglieder und Beitritt via Invite-Link.</p>
+          <span class="coming-badge">Bald verfügbar</span>
         </div>
       </div>
     </div>
