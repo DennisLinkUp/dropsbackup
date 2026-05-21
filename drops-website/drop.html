@@ -179,7 +179,7 @@
     </a>
 
     <!-- Fallback: App Store -->
-    <a class="btn btn-secondary" href="https://apps.apple.com/de/app/drops-triff-leute/id6762097493">
+    <a id="storeBtn" class="btn btn-secondary" href="https://apps.apple.com/de/app/drops-triff-leute/id6762097493" target="_blank">
       Im App Store laden
     </a>
 
@@ -214,6 +214,15 @@
           if (document.hidden) clearTimeout(fallbackTimer);
         });
       });
+
+      // App-Store-Button: auf iOS itms-apps:// (öffnet App Store direkt,
+      // kein Web-Redirect). Auf Desktop target="_blank" reicht.
+      const storeBtn = document.getElementById("storeBtn");
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      if (isIOS) {
+        storeBtn.href = "itms-apps://apps.apple.com/de/app/drops-triff-leute/id6762097493";
+        storeBtn.removeAttribute("target"); // kein neues Tab auf iOS nötig
+      }
 
       // Subtitle anpassen je nach URL-Typ (Default-State, wird ggf. von der
       // Drop-Preview-Logik überschrieben).
