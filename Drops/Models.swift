@@ -2,7 +2,7 @@ import SwiftUI
 import MapKit
 import CoreBluetooth
 import Combine
-import FirebaseDatabase
+@preconcurrency import FirebaseDatabase
 import FirebaseAuth
 import FirebaseStorage
 import FirebaseFirestore
@@ -20,6 +20,11 @@ enum FeatureFlags {
     /// Wenn `true`: Settings-Banner, Boost-Option, Paywall-Trigger,
     /// Plus-Avatar-Ring etc. werden angezeigt. Sonst überall hidden.
     static let dropsPlusEnabled: Bool = false
+
+    /// Communities-Feature ist deaktiviert bis zur nächsten Version.
+    /// Wenn `true`: Community-Creator-Bereich in Settings, Community-Pins
+    /// auf der Karte und Community-Strips im Feed werden angezeigt.
+    static let communitiesEnabled: Bool = false
 }
 
 // MARK: - Crash Reporter
@@ -163,7 +168,9 @@ struct DropEvent: Identifiable {
     var scheduledTime: String
     var maxParticipants: Int = 10   // 2–15, default 10
     var durationMinutes: Int = 120  // 0 = kein Limit (12h Fallback)
-    var isBoosted: Bool = false     // Drops+ Feature: Boost auf der Karte
+    /// Falls Community-Drop: ID der Community. Wird in Firebase mitgeschrieben,
+    /// auf der Map in Clero-Grün dargestellt und automatisch an Member gepusht.
+    var communityID: String? = nil
 
     /// Verzögerung zwischen `createdAt` und tatsächlichem Drop-Start.
     /// "In 30 Min" → 1800s usw. Wird zu `expiresAt` addiert damit die
@@ -315,7 +322,6 @@ struct DropParticipant: Identifiable {
     /// Default 0 = „neuer User / unbekannt" → zeigt Drop-Entdecker-Tier.
     var reliabilityCommits: Int = 0
     var age: Int? = nil
-    var isVerified: Bool = false
     var statusMessage: String = ""
     /// 8-stelliger BLE-Token (Prefix der User-UUID) — für Bluetooth-Presence-Filter.
     var token: String = ""
@@ -437,9 +443,16 @@ struct MapAnnotationItem: Identifiable {
     var realCoordinate: CLLocationCoordinate2D? = nil
     /// Geschlecht des Hosts — für optionalen Geschlechts-Filter ("männlich" | "weiblich" | "divers" | nil)
     var hostGender: String? = nil
-    var isBoosted: Bool = false     // Drops+ Boost: goldener Rand auf der Karte
     /// Firebase UID des Hosts — für Drop-Invite-Bonus (+5 an Host wenn via Link gejoint).
     var hostUID: String? = nil
+    /// Reliability-Score des Hosts — für MiniProfileSheet bei Stranger-Drops.
+    var hostReliabilityPoints: Int? = nil
+    /// Falls dieser Drop von einem Community-Creator über das Dashboard erstellt
+    /// wurde — markiert ihn als Community-Drop, wird auf der Map in Clero-Grün
+    /// dargestellt und an alle Mitglieder gepusht.
+    var communityID: String? = nil
+    /// True wenn der Drop einer Community gehört (für Map-Styling).
+    var isCommunityDrop: Bool { communityID != nil }
     var isStranger: Bool { type == .stranger }
     /// Live-Teilnehmerzahl aus `drops/{id}/currentParticipants` (Host + Joiner).
     /// Nur bei Stranger-Drops gesetzt — beim eigenen Drop ist `participants`
@@ -496,9 +509,19 @@ struct MapAnnotationItem: Identifiable {
     }
     enum AnnotationType { case friend, myDrop, stranger, joiner }
 
+    /// Für Entfernungsberechnungen immer den echten Standort nutzen.
+    /// Der fuzzy Pin auf der Karte ist bewusst versetzt (800-1000m) — Distanz
+    /// und ETA sollen aber auf dem echten Treffpunkt basieren. Ohne diesen
+    /// Fix würde die Push-Notification nie feuern (Fuzzy-Offset > 500m-Radius)
+    /// und das Sheet würde falsche Walk-Times anzeigen.
+    var effectiveCoordinate: CLLocationCoordinate2D {
+        isFuzzy ? (realCoordinate ?? coordinate) : coordinate
+    }
+
     func distance(from userCoord: CLLocationCoordinate2D) -> Double {
         let from = CLLocation(latitude: userCoord.latitude, longitude: userCoord.longitude)
-        let to   = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let to   = CLLocation(latitude: effectiveCoordinate.latitude,
+                              longitude: effectiveCoordinate.longitude)
         return from.distance(from: to)
     }
 
@@ -668,7 +691,7 @@ enum AgeGroup: String, CaseIterable, Codable, Identifiable {
         switch self {
         case .young:    return Color(hex: "22c55e") // grün (brand)
         case .twenties: return Color(hex: "06b6d4") // cyan
-        case .thirties: return Color(hex: "f59e0b") // amber
+        case .thirties: return Color.auroraAmber // amber
         case .forties:  return Color(hex: "8b5cf6") // violet
         case .seniors:  return Color(hex: "ec4899") // pink
         }
@@ -701,7 +724,6 @@ private enum UDKey {
     static let userName             = "ud_userName"
     static let userEmoji            = "ud_userEmoji"
     static let isUnderageBlocked    = "ud_isUnderageBlocked"
-        static let isIdVerified         = "ud_isIdVerified"
     static let userBirthdate        = "ud_userBirthdate"
     static let userGender           = "ud_userGender"
     static let blockedUsers         = "ud_blockedUsers"
@@ -744,6 +766,9 @@ private enum UDKey {
     static let ageFilterMax        = "ud_ageFilterMax"
     static let feedDistanceFilter  = "ud_feed_distance_filter"
     static let feedTonightOnly     = "ud_feed_tonight_only"
+    static let notificationRadius  = "ud_notificationRadius"  // Benachrichtigungsradius in Metern
+    static let pendingNameChange   = "ud_pendingNameChange"   // Ausstehende Namensänderung
+    static let lastNameChangeDate  = "ud_lastNameChangeDate"  // Datum der letzten genehmigten Namensänderung
 }
 
 /// Distanz-Filter im Umgebungs-Tab. Default: `.city` (verhält sich wie vorher
@@ -772,9 +797,9 @@ enum FeedDistanceFilter: String, CaseIterable {
 
     var detailLabel: String {
         switch self {
-        case .nearby:  return "Nähe · 1 km"
-        case .quarter: return "Viertel · 3 km"
-        case .city:    return "Ganze Stadt"
+        case .nearby:  return tr("models.range_nearby")
+        case .quarter: return tr("models.range_quarter")
+        case .city:    return tr("models.range_city")
         }
     }
 }
@@ -788,17 +813,17 @@ enum FirstDropCelebration: String, Identifiable {
 
     var title: String {
         switch self {
-        case .created: return "Dein erster Drop! 🎉"
-        case .joined:  return "Erster Drop dabei! 🙌"
+        case .created: return tr("models.first_drop_created")
+        case .joined:  return tr("models.first_drop_joined")
         }
     }
 
     var body: String {
         switch self {
         case .created:
-            return "Drop läuft. Wer in der Nähe ist sieht's jetzt auf der Karte. Halte dein Telefon dabei — Bluetooth bestätigt, wer wirklich vorbeikommt."
+            return tr("models.host_running_info")
         case .joined:
-            return "Drop joined! Schau auf der Karte wo's lang geht. Vor Ort wirst du automatisch via Bluetooth bestätigt — kein manueller Check-In."
+            return tr("models.joined_info")
         }
     }
 }
@@ -828,9 +853,9 @@ enum DropNotificationManager {
 
         // Erinnerungen vor Ablauf
         let reminders: [(TimeInterval, String)] = [
-            (60 * 60, "⏳ Noch 1 Stunde — dein Drop \"\(drop.activity)\" läuft gleich ab."),
-            (30 * 60, "⏰ Noch 30 Minuten — \"\(drop.activity)\" endet bald."),
-            (10 * 60, "🔔 Nur noch 10 Minuten! \"\(drop.activity)\" läuft gleich ab.")
+            (60 * 60, tr("models.expire_1h").replacingOccurrences(of: "{activity}", with: drop.activity)),
+            (30 * 60, tr("models.expire_30min").replacingOccurrences(of: "{activity}", with: drop.activity)),
+            (10 * 60, tr("models.expire_10min").replacingOccurrences(of: "{activity}", with: drop.activity))
         ]
 
         for (offset, body) in reminders {
@@ -838,7 +863,7 @@ enum DropNotificationManager {
             guard fireDate > Date() else { continue }   // Vergangenheit überspringen
 
             let content = UNMutableNotificationContent()
-            content.title = "Drop läuft ab"
+            content.title = tr("models.drop_expiring")
             content.body  = body
             content.sound = .default
 
@@ -851,8 +876,8 @@ enum DropNotificationManager {
         // Benachrichtigung bei Ablauf (nur wenn in der Zukunft)
         guard expiresAt > Date() else { return }
         let expiredContent = UNMutableNotificationContent()
-        expiredContent.title = "Drop abgelaufen"
-        expiredContent.body  = "🏁 \"\(drop.activity)\" ist abgelaufen."
+        expiredContent.title = tr("models.drop_expired")
+        expiredContent.body  = tr("models.drop_expired_body").replacingOccurrences(of: "{activity}", with: drop.activity)
         expiredContent.sound = .default
         let expComps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: expiresAt)
         let expTrigger = UNCalendarNotificationTrigger(dateMatching: expComps, repeats: false)
@@ -867,9 +892,9 @@ enum DropNotificationManager {
 
         // Erinnerungen vor Ablauf
         let reminders: [(TimeInterval, String)] = [
-            (60 * 60, "⏳ Noch 1 Stunde — dein Drop \"\(drop.activity.name)\" läuft gleich ab."),
-            (30 * 60, "⏰ Noch 30 Minuten — \"\(drop.activity.name)\" endet bald."),
-            (10 * 60, "🔔 Nur noch 10 Minuten! \"\(drop.activity.name)\" läuft gleich ab.")
+            (60 * 60, tr("models.expire_1h").replacingOccurrences(of: "{activity}", with: drop.activity.name)),
+            (30 * 60, tr("models.expire_30min").replacingOccurrences(of: "{activity}", with: drop.activity.name)),
+            (10 * 60, tr("models.expire_10min").replacingOccurrences(of: "{activity}", with: drop.activity.name))
         ]
 
         for (offset, body) in reminders {
@@ -877,7 +902,7 @@ enum DropNotificationManager {
             guard fireDate > Date() else { continue }
 
             let content = UNMutableNotificationContent()
-            content.title = "Drop läuft ab"
+            content.title = tr("models.drop_expiring")
             content.body  = body
             content.sound = .default
 
@@ -890,8 +915,8 @@ enum DropNotificationManager {
         // Benachrichtigung bei Ablauf — Host: kurze Erinnerung, den Drop zu beenden
         guard expiresAt > Date() else { return }
         let expiredContent = UNMutableNotificationContent()
-        expiredContent.title = "Drop abgelaufen"
-        expiredContent.body  = "🏁 \"\(drop.activity.name)\" ist abgelaufen. War jemand dabei?"
+        expiredContent.title = tr("models.drop_expired")
+        expiredContent.body  = tr("models.drop_expired_host").replacingOccurrences(of: "{activity}", with: drop.activity.name)
         expiredContent.sound = .default
         let expComps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: expiresAt)
         let expTrigger = UNCalendarNotificationTrigger(dateMatching: expComps, repeats: false)
@@ -945,6 +970,22 @@ class AppStore: ObservableObject {
     lazy var bluetoothMeetup: BluetoothMeetupManager = BluetoothMeetupManager()
 
     @Published var radiusFilter: Double = 2000   // Free-Default: 2km
+    @Published var notificationRadius: Double = 2000  // Benachrichtigungsradius: 500m–10km
+    @Published var pendingNameChange: String? = nil   // Ausstehende Namensänderung (wartet auf Admin)
+    @Published var lastNameChangeDate: Date? = nil    // Datum der letzten genehmigten Namensänderung
+
+    /// true wenn seit der letzten Genehmigung mehr als 14 Tage vergangen sind
+    var canRequestNameChange: Bool {
+        guard let last = lastNameChangeDate else { return true }
+        return Date().timeIntervalSince(last) >= 14 * 86_400
+    }
+    /// Verbleibende Tage bis zur nächsten erlaubten Änderung (0 wenn erlaubt)
+    var daysUntilNextNameChange: Int {
+        guard let last = lastNameChangeDate else { return 0 }
+        let elapsed = Date().timeIntervalSince(last)
+        let remaining = (14 * 86_400) - elapsed
+        return remaining > 0 ? Int(ceil(remaining / 86_400)) : 0
+    }
     @Published var userGender: String = ""   // "männlich" | "weiblich" | "divers"
     @Published var genderFilterEnabled: Bool = false
     /// Aktuelle Aktivitäts-Kategorie im Umgebungs-Tab-Filter. Leer = "Alle".
@@ -1013,6 +1054,11 @@ class AppStore: ObservableObject {
     /// Optionale Handynummer für Kontakt-Suche (z.B. "+4915712345678")
     @Published var userPhone: String = ""
     @Published var activeJoinedDropID: UUID? = nil
+    /// DB-Observer-Handle für „Drop-active=false / Drop-gelöscht"-Detection.
+    /// Wird beim `setActiveJoin` gestartet, beim `leaveActiveJoin` entfernt.
+    /// Garantiert dass der Joiner „Host hat Drop beendet"-Alert auch im
+    /// Live-Tab bekommt (observeNearbyDrops läuft dort nicht).
+    private var joinedDropEndHandle: DatabaseHandle? = nil
     /// dropID → Zeitpunkt des Verlassens. Schützt vor Missbrauch durch Re-Join.
     @Published var dropLeaveTimes: [UUID: Date] = [:]
     static let joinCooldown: TimeInterval = 10 * 60   // 10 Minuten
@@ -1020,8 +1066,20 @@ class AppStore: ObservableObject {
     @Published var unavailabilityReason: String = ""
     @Published var userBirthdate: Date? = nil
     @Published var isUnderageBlocked: Bool = false
-    @Published var isIdVerified: Bool = false
     @Published var isAdmin: Bool = false
+
+    // MARK: - Community Creator
+    /// Status des Community-Antrags: nil | "pending" | "approved" | "denied"
+    @Published var communityCreatorStatus: String? = nil
+    /// True wenn der User Community Creator ist (Antrag genehmigt).
+    @Published var isCommunityCreator: Bool = false
+    /// Die vom User erstellte Community (falls Antrag genehmigt + Community existiert).
+    @Published var myCommunity: Community? = nil
+    /// Alle genehmigten Communities — werden als Pins auf der Karte gezeigt.
+    @Published var nearbyCommunities: [Community] = []
+    /// IDs der Communities denen der User beigetreten ist. Wird lokal gepflegt
+    /// damit die Join-Sheet sofort den "Mitglied"-Status zeigt.
+    @Published var myCommunityMemberships: Set<String> = []
 
     // MARK: - Drops+
     /// Ground truth kommt von DropsStoreManager — wird beim Start und nach Kauf synchronisiert.
@@ -1294,6 +1352,16 @@ class AppStore: ObservableObject {
     /// "Ausstehend" statt "Bin dabei!" anzuzeigen — sonst wirkt's so als
     /// hätte der Host schon bestätigt, was zu Verwirrung führt.
     @Published var pendingJoinDropID: UUID? = nil
+    /// Zeitpunkt der pending Beitrittsanfrage — Source-of-Truth für den
+    /// Countdown in der Pending-Pill oben in der App. Wird beim
+    /// `sendJoinRequest` gesetzt und beim Status-Change geleert.
+    @Published var pendingJoinRequestedAt: Date? = nil
+    /// Emoji + Activity-Name des pending Drops — cached beim sendJoinRequest
+    /// damit die Pending-Pill auch dann den richtigen Emoji zeigt wenn der
+    /// Drop aus `allMapAnnotations` rausfällt (z.B. außerhalb Radius oder
+    /// vom Host beendet). Vorher fiel der Emoji auf 📍 zurück.
+    @Published var pendingJoinDropEmoji: String = ""
+    @Published var pendingJoinDropActivity: String = ""
     /// Timer-Task für den 5-Min-Auto-Accept-Watcher auf Joiner-Seite. Wenn
     /// der Host nach 5 min nicht reagiert hat, gehen wir auf die DB und
     /// kicken Auto-Accept selbst (Host-App könnte ja closed sein). Push
@@ -1302,6 +1370,14 @@ class AppStore: ObservableObject {
 
     private var joinRequestObserverHandle: DatabaseHandle?
     private var myJoinStatusObserverHandle: DatabaseHandle?
+    private var nameChangeResultHandle: UInt? = nil
+    /// Direkter Observer auf den Drop-Pfad während eine Beitrittsanfrage
+    /// pending ist. Wenn der Host den Drop beendet (active=false) ODER der
+    /// Drop ganz aus Firebase verschwindet (Cleanup), feuert dieser
+    /// Observer und räumt den Pending-State sofort auf. Sonst hing die
+    /// Pending-Pill bis zum 5-Min-Auto-Cleanup hängen.
+    private var pendingDropEndHandle: DatabaseHandle?
+    private var pendingDropEndDropID: String?
     private var autoAcceptTimer: Timer?
 
     // MARK: - Init
@@ -1319,6 +1395,14 @@ class AppStore: ObservableObject {
         // isAuthenticated startet als false. Wenn Firebase einen gültigen User
         // hat UND das Onboarding abgeschlossen wurde, direkt in die App.
         let hasOnboarded = UserDefaults.standard.bool(forKey: "hasOnboarded")
+
+        // Safety: iCloud-Backup kann bei Neuinstallation oder Account-Wechsel
+        // ein altes hasSeenWelcome=true zurückspielen, obwohl kein Firebase-User
+        // mehr da ist. Ohne diesen Reset würde der WelcomeSheet nie erscheinen
+        // und Permissions würden sofort gefeuert — vor dem Onboarding-Kontext.
+        if FirebaseAuth.Auth.auth().currentUser == nil {
+            UserDefaults.standard.removeObject(forKey: "hasSeenWelcome")
+        }
 
         // Nach Deinstallation persistiert die Firebase-Session im Keychain.
         // UserDefaults ist normalerweise leer → hasOnboarded=false → Logout.
@@ -1343,10 +1427,12 @@ class AppStore: ObservableObject {
 
         if FirebaseAuth.Auth.auth().currentUser != nil && hasOnboarded && hasNameStored {
             isAuthenticated = true
-            // Returning User → Welcome-Sheet skippen. Auch falls UserDefaults
-            // inkonsistent ist (z.B. iCloud-Teilrestore), ist jemand mit
-            // gültigem Firebase-User + Name definitiv kein Neuling.
-            UserDefaults.standard.set(true, forKey: "hasSeenWelcome")
+            // hasSeenWelcome wird NICHT mehr hier gesetzt — der WelcomeSheet
+            // soll auch nach Neuinstallation erscheinen (Dynamic Island Demo +
+            // First-Drop-Walkthrough). hasSeenWelcome wird erst in MainTabView
+            // gesetzt, wenn der User den Sheet wirklich gesehen und dismissed hat.
+            // Ohne Neuinstallation ist hasSeenWelcome durch den früheren Dismiss
+            // bereits true und der Sheet erscheint ohnehin nicht nochmals.
             // Firebase UID persistent speichern damit der Drop-Filter auch beim Start funktioniert
             if let uid = FirebaseAuth.Auth.auth().currentUser?.uid {
                 UserDefaults.standard.set(uid, forKey: UDKey.firebaseUID)
@@ -1407,11 +1493,21 @@ class AppStore: ObservableObject {
                 RealtimeDBManager.shared.loadUserProfile { [weak self] profile in
                     guard let self = self, let p = profile else { return }
                     DispatchQueue.main.async {
-                        if p.isAdmin    { self.isAdmin    = true }
-                        if p.isPlusUser { self.isPlusUser = true }   // Admin-gewährtes Plus
+                        if p.isAdmin           { self.isAdmin           = true }
+                        if p.isPlusUser        { self.isPlusUser        = true }   // Admin-gewährtes Plus
+
+                        // Community-Creator-Status real-time observieren — reagiert
+                        // sofort auf Admin-Genehmigung/Ablehnung ohne App-Neustart.
+                        if let uid = FirebaseAuth.Auth.auth().currentUser?.uid {
+                            CommunityManager.shared.observeMyStatus(uid: uid)
+                            CommunityManager.shared.observeMyCommunity(uid: uid)
+                            CommunityManager.shared.observeMyMemberships(uid: uid)
+                        }
+                        // Alle Communities für die Map laden.
+                        CommunityManager.shared.observeAllCommunities()
 
                         if let name = p.name, !name.isEmpty {
-                            self.currentUser.name = name
+                            self.currentUser.name = name.capitalizedFirst
                         }
                         // Geburtsdatum + Geschlecht auch aus Firebase zurückholen —
                         // sonst fehlen sie nach Reinstall / Session-Restore, obwohl sie
@@ -1465,7 +1561,7 @@ class AppStore: ObservableObject {
                         type: .current
                     )
                     let duration = max(0, Int(snap.expiresAt.timeIntervalSince(snap.createdAt) / 60))
-                    var drop = DropEvent(
+                    let drop = DropEvent(
                         id: dropUUID, host: self.currentUser,
                         activity: activity, location: location,
                         participants: [self.currentUser],
@@ -1475,7 +1571,6 @@ class AppStore: ObservableObject {
                         maxParticipants: snap.maxParticipants,
                         durationMinutes: duration
                     )
-                    drop.isBoosted = snap.isBoosted
                     self.activeDrops.append(drop)
                     DropNotificationManager.scheduleExpiryReminders(for: drop)
                     self.startObservingDropIns(forDropID: snap.dropID)
@@ -1806,6 +1901,10 @@ class AppStore: ObservableObject {
         // Nur wirklich sensitives löschen:
         ud.removeObject(forKey: "savedPhoneNumber")
         ud.removeObject(forKey: "savedPhoneDialCode")
+        // WelcomeSheet nach Logout immer zurücksetzen — beim nächsten Login
+        // (auch Account-Wechsel auf demselben Gerät) soll der Sheet erscheinen
+        // damit Permissions erst danach angefragt werden.
+        ud.removeObject(forKey: "hasSeenWelcome")
 
         // ── 2. Selfie-Datei löschen + Image-Cache räumen ──────────────────
         try? FileManager.default.removeItem(at: selfieURL)
@@ -1822,11 +1921,10 @@ class AppStore: ObservableObject {
         currentUser.name          = ""
         currentUser.emoji         = "😊"
         currentUser.isAvailable   = false
-        currentUser.statusMessage = "Tippe um verfügbar zu sein"
+        currentUser.statusMessage = tr("models.status_tap_available")
         selfieImage               = nil
         userBirthdate             = nil
         isAdmin                   = false
-        isIdVerified              = false
         isUnderageBlocked         = false
         userGender                = ""
         blockedUserNames          = []
@@ -1865,7 +1963,6 @@ class AppStore: ObservableObject {
         ud.set(currentUser.emoji, forKey: UDKey.userEmoji)
         if isAdmin { ud.set(true, forKey: UDKey.isAdmin) }  // Admin-Flag cachen
         ud.set(isUnderageBlocked, forKey: UDKey.isUnderageBlocked)
-        ud.set(isIdVerified,      forKey: UDKey.isIdVerified)
         if let bd = userBirthdate {
             ud.set(bd.timeIntervalSinceReferenceDate, forKey: UDKey.userBirthdate)
         } else {
@@ -1883,6 +1980,17 @@ class AppStore: ObservableObject {
         ud.set(ageFilterMax, forKey: UDKey.ageFilterMax)
         ud.set(userInterests,                                  forKey: UDKey.userInterests)
         ud.set(radiusFilter,                                  forKey: UDKey.radiusFilter)
+        ud.set(notificationRadius,                            forKey: UDKey.notificationRadius)
+        if let pnc = pendingNameChange {
+            ud.set(pnc, forKey: UDKey.pendingNameChange)
+        } else {
+            ud.removeObject(forKey: UDKey.pendingNameChange)
+        }
+        if let lncd = lastNameChangeDate {
+            ud.set(lncd.timeIntervalSinceReferenceDate, forKey: UDKey.lastNameChangeDate)
+        } else {
+            ud.removeObject(forKey: UDKey.lastNameChangeDate)
+        }
         ud.set(unavailabilityReason,                          forKey: UDKey.unavailabilityReason)
         if let hz = homeZoneCoordinate {
             ud.set(hz.latitude,  forKey: UDKey.homeZoneLat)
@@ -2177,11 +2285,10 @@ class AppStore: ObservableObject {
     private func loadAll() {
         let ud = UserDefaults.standard
         if let name = ud.string(forKey: UDKey.userName), !name.isEmpty  {
-            currentUser.name  = name
+            currentUser.name  = name.capitalizedFirst
         }
         if let emoji = ud.string(forKey: UDKey.userEmoji), !emoji.isEmpty { currentUser.emoji = emoji }
         isUnderageBlocked = ud.bool(forKey: UDKey.isUnderageBlocked)
-        isIdVerified      = ud.bool(forKey: UDKey.isIdVerified)
         if ud.bool(forKey: UDKey.isAdmin) { isAdmin = true }  // gecachtes Admin-Flag laden
         if let ti = ud.object(forKey: UDKey.userBirthdate) as? Double {
             userBirthdate = Date(timeIntervalSinceReferenceDate: ti)
@@ -2220,6 +2327,16 @@ class AppStore: ObservableObject {
         // Mindestalter 18 — keine Einschränkung mehr nötig
         let radius = ud.double(forKey: UDKey.radiusFilter)
         if radius > 0 { radiusFilter = radius }
+        let notifRadius = ud.double(forKey: UDKey.notificationRadius)
+        if notifRadius > 0 { notificationRadius = notifRadius }
+        pendingNameChange = ud.string(forKey: UDKey.pendingNameChange)
+        let lncdInterval = ud.double(forKey: UDKey.lastNameChangeDate)
+        if lncdInterval > 0 { lastNameChangeDate = Date(timeIntervalSinceReferenceDate: lncdInterval) }
+        // Observer reaktivieren wenn nach App-Neustart noch eine Anfrage offen ist
+        if pendingNameChange != nil,
+           let uid = FirebaseAuth.Auth.auth().currentUser?.uid {
+            startNameChangeResultObserver(uid: uid)
+        }
         unavailabilityReason = ud.string(forKey: UDKey.unavailabilityReason) ?? ""
         let hzLat = ud.double(forKey: UDKey.homeZoneLat)
         let hzLng = ud.double(forKey: UDKey.homeZoneLng)
@@ -2420,6 +2537,7 @@ class AppStore: ObservableObject {
             pendingJoinDropID = nil
             pendingAutoAcceptTask?.cancel()
             pendingAutoAcceptTask = nil
+            removePendingDropEndObserver()
         }
 
         if activeJoinedDropID == dropID { leaveActiveJoin() }
@@ -2487,7 +2605,15 @@ class AppStore: ObservableObject {
     @Published var encounters: [Encounter] = []
 
     var pendingEncounters: [Encounter] {
-        encounters.filter { !$0.confirmed && !$0.denied && !$0.isExpired }
+        // Live-Drops rausfiltern: ein Encounter zu einem laufenden Drop ist
+        // noch nicht „pending zur Bestätigung" — der Drop läuft ja noch. Das
+        // Profil-Tab-Badge soll erst nach Drop-Ende erscheinen.
+        let live = liveDropIDsForEncounterFilter
+        return encounters.filter { enc in
+            guard !enc.confirmed && !enc.denied && !enc.isExpired else { return false }
+            if let did = enc.dropID, live.contains(did) { return false }
+            return true
+        }
     }
 
     /// IDs der Drops, die gerade noch laufen (eigener oder beigetretener).
@@ -2522,7 +2648,7 @@ class AppStore: ObservableObject {
             reliabilityScore.showUps += 1
             applyStreakBonus()
             // Boost: +5 wenn die Umgebung gerade leer ist
-            applyBoostBonusIfActive(reason: "Treffen bestätigt")
+            applyBoostBonusIfActive(reason: tr("models.reason_meeting"))
             saveAll()                           // Score lokal persistieren
             pushReliabilityScoreToFirestore()   // Score für andere sichtbar machen
             maybeAskForReview()                 // Review nach guten Show-Up-Meilensteinen
@@ -2566,6 +2692,7 @@ class AppStore: ObservableObject {
                 // Award-Pfad mitgegeben (z.B. "Drop besucht", "Host-Erfolg").
                 let reason = self.nextPointsReason
                 self.nextPointsReason = nil
+                Haptic.pointsEarned()
                 self.pointsToast = PointsToast(
                     delta: delta,
                     isPowerHour: self.isPowerHourActive,
@@ -2852,7 +2979,7 @@ class AppStore: ObservableObject {
     /// Wird aufgerufen wenn ein eigener Drop zustande gekommen ist (min. 1 weiterer Teilnehmer
     /// war vor Ort). +12 Host-Bonus + Prüfung Neuling-Host-Bonus (+5 pro Drop-Entdecker).
     func recordHostSuccess(arrivedParticipants: [DropParticipant]) {
-        nextPointsReason = "Host-Erfolg · Drop bestätigt"
+        nextPointsReason = tr("models.reason_host_success")
         // Anti-Farm: Joiner mit aktivem 12h-Cooldown rausfiltern.
         // Wenn KEIN Joiner mehr "frisch" ist (alle schon heute getroffen)
         // → kein Host-Bonus, keine Newcomer-Punkte. Drop wandert trotzdem
@@ -3028,21 +3155,37 @@ class AppStore: ObservableObject {
                 // und der Map-Pin fällt auf den "Joiner"-Default-Namen.
                 if let dropIdx = self.activeDrops.firstIndex(where: { $0.id.uuidString == dropID }),
                    !self.activeDrops[dropIdx].participants.contains(where: { $0.firebaseUID == joinerID }) {
-                    let token = String(joinerID.replacingOccurrences(of: "-", with: "").prefix(8))
-                    let joinerUser = User(
-                        id: UUID(),
-                        name: info.name ?? "Teilnehmer",
-                        emoji: info.emoji ?? "👤",
-                        isAvailable: true,
-                        statusMessage: "Unterwegs",
-                        coordinate: info.coordinate,
-                        profileImageURL: info.profileImageURL,
-                        firebaseUID: joinerID,
-                        reliabilityPoints: info.reliabilityPoints ?? 100
-                    )
-                    self.activeDrops[dropIdx].participants.append(joinerUser)
-                    self.refreshLiveActivityParticipants()
-                    print("[joiners] safety-net added \(info.name ?? joinerID) to drop.participants (was missing)")
+                    // Name ggf. aus Firebase-Profil nachladen wenn dropins-Entry keinen hat
+                    // (passiert wenn Joiner disconnect + reconnect + nur Location-Update schreibt).
+                    let addParticipant = { [weak self] (name: String, emoji: String) in
+                        guard let self else { return }
+                        guard let idx = self.activeDrops.firstIndex(where: { $0.id.uuidString == dropID }),
+                              !self.activeDrops[idx].participants.contains(where: { $0.firebaseUID == joinerID })
+                        else { return }
+                        let joinerUser = User(
+                            id: UUID(),
+                            name: name,
+                            emoji: emoji,
+                            isAvailable: true,
+                            statusMessage: "Unterwegs",
+                            coordinate: info.coordinate,
+                            profileImageURL: info.profileImageURL,
+                            firebaseUID: joinerID,
+                            reliabilityPoints: info.reliabilityPoints ?? 100
+                        )
+                        self.activeDrops[idx].participants.append(joinerUser)
+                        self.refreshLiveActivityParticipants()
+                        print("[joiners] safety-net added \(name) to drop.participants (was missing)")
+                    }
+
+                    if let name = info.name, !name.isEmpty {
+                        addParticipant(name, info.emoji ?? "👤")
+                    } else {
+                        // Profil aus Firebase nachladen (db ist private → Helper)
+                        RealtimeDBManager.shared.fetchUserBasicProfile(uid: joinerID) { name, emoji in
+                            DispatchQueue.main.async { addParticipant(name, emoji) }
+                        }
+                    }
                 }
 
                 // Live-Teilnehmerzahl auf Firebase pushen, damit andere
@@ -3185,8 +3328,8 @@ class AppStore: ObservableObject {
     /// wir auch lokal einen Hinweis als Banner.)
     private func notifyFriendRequestReceived(from name: String) {
         let content = UNMutableNotificationContent()
-        content.title = "Neue Freundschaftsanfrage"
-        content.body  = "\(name) möchte mit dir befreundet sein."
+        content.title = tr("models.new_friend_request")
+        content.body  = tr("models.friend_wants_to_be").replacingOccurrences(of: "{name}", with: name)
         content.sound = .default
         let request = UNNotificationRequest(
             identifier: "friendRequest_\(name)_\(Date().timeIntervalSince1970)",
@@ -3196,12 +3339,85 @@ class AppStore: ObservableObject {
         UNUserNotificationCenter.current().add(request)
     }
 
+    // MARK: - Name Change Request
+
+    /// Stellt eine Namensänderungsanfrage. Wird im Admin-Panel sichtbar,
+    /// der Name ändert sich erst nach Genehmigung.
+    func requestNameChange(to newName: String) {
+        guard let uid = FirebaseAuth.Auth.auth().currentUser?.uid else { return }
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines).capitalizedFirst
+        guard !trimmed.isEmpty, trimmed != currentUser.name else { return }
+        pendingNameChange = trimmed
+        saveAll()
+        RealtimeDBManager.shared.submitNameChangeRequest(
+            uid: uid, oldName: currentUser.name, newName: trimmed
+        )
+        startNameChangeResultObserver(uid: uid)
+    }
+
+    /// Zieht eine ausstehende Namensänderungsanfrage zurück (ohne "denied"-Notification).
+    func cancelNameChangeRequest() {
+        guard let uid = FirebaseAuth.Auth.auth().currentUser?.uid else { return }
+        stopNameChangeResultObserver(uid: uid)
+        pendingNameChange = nil
+        saveAll()
+        // Nur den Request löschen — kein nameChangeResult schreiben,
+        // damit der Observer keine fälschliche Ablehnungs-Notification auslöst.
+        RealtimeDBManager.shared.withdrawNameChangeRequest(uid: uid)
+    }
+
+    /// Startet den Firebase-Observer auf `users/{uid}/nameChangeResult`.
+    /// Feuert wenn Admin die Anfrage genehmigt oder ablehnt.
+    func startNameChangeResultObserver(uid: String) {
+        stopNameChangeResultObserver(uid: uid)
+        let handle = RealtimeDBManager.shared.observeNameChangeResult(uid: uid) { [weak self] result in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                switch result {
+                case "approved":
+                    // Name wurde in Firebase gesetzt — aus Profil neu laden
+                    RealtimeDBManager.shared.fetchUserBasicProfile(uid: uid) { name, _ in
+                        DispatchQueue.main.async {
+                            self.currentUser.name = name.capitalizedFirst
+                            self.pendingNameChange = nil
+                            self.lastNameChangeDate = Date()  // 14-Tage-Cooldown startet
+                            self.saveAll()
+                            Haptic.nameChangeApproved()
+                            self.showInfoToast(tr("models.name_changed").replacingOccurrences(of: "{name}", with: name.capitalizedFirst), icon: "checkmark.circle.fill")
+                            RealtimeDBManager.shared.clearNameChangeResult(uid: uid)
+                            self.stopNameChangeResultObserver(uid: uid)
+                        }
+                    }
+                case "denied":
+                    self.pendingNameChange = nil
+                    self.saveAll()
+                    Haptic.nameChangeDenied()
+                    self.showInfoToast(tr("models.name_change_rejected"), icon: "xmark.circle.fill")
+                    RealtimeDBManager.shared.clearNameChangeResult(uid: uid)
+                    self.stopNameChangeResultObserver(uid: uid)
+                default:
+                    break
+                }
+            }
+        }
+        nameChangeResultHandle = handle
+    }
+
+    /// Stoppt den nameChangeResult-Observer.
+    private func stopNameChangeResultObserver(uid: String) {
+        if let h = nameChangeResultHandle {
+            RealtimeDBManager.shared.removeNameChangeObserver(h, uid: uid)
+            nameChangeResultHandle = nil
+        }
+    }
+
     // MARK: - Friend Request Actions
 
     /// Schickt eine Freundschaftsanfrage an `theirUID`.
     /// Clientseitig kein Auto-Add mehr — der Empfänger muss annehmen.
     func sendFriendRequest(to theirUID: String) {
         guard !theirUID.isEmpty else { return }
+        Haptic.friendRequestSent()
         RealtimeDBManager.shared.sendFriendRequest(
             theirUID: theirUID,
             myName: currentUser.name,
@@ -3211,6 +3427,7 @@ class AppStore: ObservableObject {
 
     func acceptFriendRequest(fromUID: String) {
         RealtimeDBManager.shared.acceptFriendRequest(fromUID: fromUID)
+        Haptic.friendAdded()
         // Observer updated incomingFriendRequests automatisch
     }
 
@@ -3272,6 +3489,7 @@ class AppStore: ObservableObject {
                     friends[idx].reliabilityPoints = snap.reliabilityPoints
                 }
             } else {
+                Haptic.friendAdded()   // Neuer Freund via Firebase-Observer
                 friends.append(User(
                     name: snap.name,
                     emoji: "👋",
@@ -3360,6 +3578,7 @@ class AppStore: ObservableObject {
             if self.isAppActive {
                 if self.activeIncomingRequest == nil {
                     self.activeIncomingRequest = req
+                    Haptic.incomingRequest()
                 }
             } else {
                 PushNotificationManager.shared.notifyIncomingJoinRequest(
@@ -3397,7 +3616,6 @@ class AppStore: ObservableObject {
         if let dropIdx = activeDrops.firstIndex(where: { $0.id.uuidString == req.dropID }) {
             // Verhindern dass derselbe Joiner doppelt eingetragen wird.
             if !activeDrops[dropIdx].participants.contains(where: { $0.firebaseUID == req.id }) {
-                let token = String(req.id.replacingOccurrences(of: "-", with: "").prefix(8))
                 let joinerUser = User(
                     id: UUID(),
                     name: req.joinerName,
@@ -3487,6 +3705,7 @@ class AppStore: ObservableObject {
     func sendJoinRequest(to drop: MapAnnotationItem, message: String? = nil) {
         guard !isInActiveDrop else { return }
         guard !hasJoinedDrop(dropID: drop.id) else { return }
+        Haptic.joinRequestSent()
         // Service-Zone-Gate: User muss in einer der 5 Launch-Städte sein um zu joinen.
         guard !BetaConfig.cityRestrictionEnabled
                 || ServiceCities.isInside(currentUser.coordinate)
@@ -3496,6 +3715,9 @@ class AppStore: ObservableObject {
 
         myJoinRequestStatus = "pending"
         pendingJoinDropID = drop.id
+        pendingJoinRequestedAt = Date()
+        pendingJoinDropEmoji = drop.emoji
+        pendingJoinDropActivity = drop.activity
         let uid = FirebaseAuth.Auth.auth().currentUser?.uid ?? currentUser.id.uuidString
 
         // Anfrage senden — inkl. optionaler Begleit-Nachricht damit der
@@ -3512,6 +3734,26 @@ class AppStore: ObservableObject {
             message: message
         )
 
+        // Direkter Drop-Observer: feuert wenn der Host den Drop beendet
+        // oder Firebase den Pfad cleant, BEVOR der 5-Min-Timer abläuft.
+        // Sonst hängt die Pending-Pill bei „0:00" weil die Joiner-Seite
+        // gar nicht mitbekommt dass der Drop weg ist.
+        if let oldHandle = pendingDropEndHandle, let oldID = pendingDropEndDropID {
+            RealtimeDBManager.shared.removeJoinedDropEndObserver(oldHandle, dropID: oldID)
+        }
+        pendingDropEndDropID = drop.id.uuidString
+        pendingDropEndHandle = RealtimeDBManager.shared.observeJoinedDropEnd(
+            dropID: drop.id.uuidString
+        ) { [weak self] in
+            guard let self = self else { return }
+            guard self.pendingJoinDropID == drop.id else { return }
+            self.handleHostCancelledDrop(
+                dropID: drop.id,
+                dropEmoji: drop.emoji,
+                dropActivity: drop.activity
+            )
+        }
+
         // Status beobachten
         myJoinStatusObserverHandle = RealtimeDBManager.shared.observeMyJoinRequestStatus(
             dropID: drop.id.uuidString, joinerID: uid
@@ -3520,11 +3762,16 @@ class AppStore: ObservableObject {
             self.myJoinRequestStatus = status
             switch status {
             case "accepted":
+                Haptic.joinAccepted()
                 // Pending-State clearen, Auto-Accept-Watcher canceln,
                 // Push an User damit er weiß dass es jetzt läuft.
                 self.pendingJoinDropID = nil
+                self.pendingJoinRequestedAt = nil
+                self.pendingJoinDropEmoji = ""
+                self.pendingJoinDropActivity = ""
                 self.pendingAutoAcceptTask?.cancel()
                 self.pendingAutoAcceptTask = nil
+                self.removePendingDropEndObserver()
                 if !self.isAppActive {
                     PushNotificationManager.shared.notifyMyJoinAccepted(
                         hostName: drop.name, activityName: drop.activity
@@ -3533,9 +3780,14 @@ class AppStore: ObservableObject {
                 // Jetzt tatsächlich joinen
                 self.completeJoin(drop: drop)
             case "declined":
+                Haptic.joinRejected()
                 self.pendingJoinDropID = nil
+                self.pendingJoinRequestedAt = nil
+                self.pendingJoinDropEmoji = ""
+                self.pendingJoinDropActivity = ""
                 self.pendingAutoAcceptTask?.cancel()
                 self.pendingAutoAcceptTask = nil
+                self.removePendingDropEndObserver()
                 self.myJoinRequestStatus = "declined"
                 // Nach 3 Sek zurücksetzen
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
@@ -3573,6 +3825,16 @@ class AppStore: ObservableObject {
         Task { @MainActor in PushNotificationManager.shared.trackAction() }
     }
 
+    /// Räumt den direkten Drop-Observer auf, der während einer pending
+    /// Beitrittsanfrage auf dem Drop-Pfad in Firebase lauscht.
+    private func removePendingDropEndObserver() {
+        if let handle = pendingDropEndHandle, let id = pendingDropEndDropID {
+            RealtimeDBManager.shared.removeJoinedDropEndObserver(handle, dropID: id)
+        }
+        pendingDropEndHandle = nil
+        pendingDropEndDropID = nil
+    }
+
     /// Wird aufgerufen wenn Host akzeptiert hat — eigentlicher Join.
     /// Nach Accept: echte Koordinate (realCoordinate) verwenden statt fuzzy.
     private func completeJoin(drop: MapAnnotationItem) {
@@ -3604,18 +3866,23 @@ class AppStore: ObservableObject {
         // dann das Treffen bestätigt, wird confirmed = true gesetzt und
         // der Host erscheint im "Letzte Begegnungen"-Block + als
         // Kontakt-Vorschlag.
-        if let host = resolvedDrop.participants.first,
-           let hostUID = host.firebaseUID ?? resolvedDrop.hostUID,
+        // Für Stranger-Drops haben `participants` keine Einträge — direkt
+        // aus dem Annotation-Item (resolvedDrop) lesen.
+        let hostUID   = resolvedDrop.participants.first?.firebaseUID ?? resolvedDrop.hostUID
+        let hostName  = resolvedDrop.participants.first?.name        ?? resolvedDrop.name
+        let hostEmoji = resolvedDrop.participants.first?.emoji       ?? resolvedDrop.emoji
+        let hostImgURL = resolvedDrop.participants.first?.profileImageURL
+        if let hostUID,
            !encounters.contains(where: { $0.friendUID == hostUID && !$0.denied && !$0.isExpired }) {
             let encounter = Encounter(
-                friendName: host.name,
-                friendEmoji: host.emoji,
+                friendName: hostName,
+                friendEmoji: hostEmoji,
                 activityEmoji: resolvedDrop.emoji,
                 activityName: resolvedDrop.activity,
                 createdAt: Date(),
                 confirmed: false, denied: false,
                 friendUID: hostUID,
-                friendProfileImageURL: host.profileImageURL,
+                friendProfileImageURL: hostImgURL,
                 dropID: resolvedDrop.id.uuidString
             )
             encounters.insert(encounter, at: 0)
@@ -3662,6 +3929,7 @@ class AppStore: ObservableObject {
     }
 
     func setActiveJoin(_ id: UUID) {
+        PushNotificationManager.shared.cancelInactivityReminder()
         activeJoinedDropID = id
         bleConfirmedInCurrentSession = false
         joinSessionStartedAt = Date()
@@ -3672,7 +3940,37 @@ class AppStore: ObservableObject {
         // Joiner sich gegenseitig identifizieren können (siehe myBLEToken).
         bluetoothMeetup.start(userToken: myBLEToken, dropID: id, joinedAt: Date())
         bluetoothMeetup.onMeetupConfirmed = { [weak self] partnerToken in
-            self?.autoConfirmBLEMeetup(partnerToken: partnerToken)
+            guard let self else { return }
+            // Ankunfts-Push: Partner-Name aus Drop-Teilnehmern nachschlagen
+            let partnerName = self.activeDropAnnotation?.participants
+                .first(where: { $0.token == partnerToken })?.name
+            let activity = self.activeDropAnnotation?.activity ?? ""
+            if let name = partnerName, !activity.isEmpty {
+                PushNotificationManager.shared.notifyParticipantArrived(name: name, activityName: activity)
+            }
+            self.autoConfirmBLEMeetup(partnerToken: partnerToken)
+        }
+
+        // Direkt-Observer auf drops/{id} — feuert sofort wenn Host
+        // cancelDrop ausführt (active: false) oder Drop gelöscht wird.
+        // Wichtig fürs UX: ohne diesen Observer kriegt der Joiner den
+        // Cancel-Alert erst wenn observeNearbyDrops anschlägt — was im
+        // Live-Tab nicht läuft. Annotation: nutze activeDropAnnotation
+        // für Emoji/Activity falls vorhanden, sonst Fallback.
+        let dropEmoji = activeDropAnnotation?.emoji ?? "📍"
+        let dropActivity = activeDropAnnotation?.activity ?? "Drop"
+        joinedDropEndHandle = RealtimeDBManager.shared.observeJoinedDropEnd(
+            dropID: id.uuidString
+        ) { [weak self] in
+            guard let self = self else { return }
+            // Nur reagieren wenn der Drop hier noch der aktive ist
+            // (Race: leaveActiveJoin könnte schon gelaufen sein).
+            guard self.activeJoinedDropID == id else { return }
+            self.handleHostCancelledDrop(
+                dropID: id,
+                dropEmoji: dropEmoji,
+                dropActivity: dropActivity
+            )
         }
     }
 
@@ -3715,14 +4013,93 @@ class AppStore: ObservableObject {
                 // leaveDropJoin macht das gleich für den ID-spezifischen
                 // Fall — hier replizieren für den activeJoinedDropID-Pfad).
                 dropLeaveTimes[joinedID] = Date()
+
+                // Drop-End-Observer abräumen — sonst läuft er weiter und
+                // könnte beim nächsten Join (= neue ID, neuer Observer)
+                // duplicate Callbacks erzeugen.
+                if let handle = joinedDropEndHandle {
+                    RealtimeDBManager.shared.removeJoinedDropEndObserver(
+                        handle, dropID: joinedID.uuidString
+                    )
+                    joinedDropEndHandle = nil
+                }
             }
             activeJoinedDropID           = nil
             activeDropAnnotation         = nil
         }
 
+        // Encounter für zu kurze Sessions entfernen — sonst würde manuelles
+        // Bestätigen Punkte für einen 2-Min-Drop vergeben. Erst ab 15 Min
+        // sind Begegnungen sinnvoll. BLE-confirmed bleiben immer erhalten.
+        if let joinedID = activeJoinedDropID,
+           let startedAt = joinSessionStartedAt,
+           Date().timeIntervalSince(startedAt) < Self.minPaidDropDuration {
+            let dropIDStr = joinedID.uuidString
+            encounters.removeAll { $0.dropID == dropIDStr && !$0.confirmed }
+        }
+
         // Mindestzeit: erst nach 10 Min ist man "committed" genug für Score-Einfluss
         guard let startedAt = joinSessionStartedAt,
               Date().timeIntervalSince(startedAt) >= 10 * 60 else { return }
+
+        // Joiner-PastDrop erstellen — landet in "Letzte Drops" + Statistik.
+        // Nur wenn ≥ 10 min dabei war (gleicher Schwellwert wie Score-Einfluss).
+        if let annotation = activeDropAnnotation {
+            let hostParticipant = PastDropParticipant(
+                name: annotation.name,
+                emoji: annotation.emoji,
+                reliabilityScore: annotation.hostReliabilityPoints ?? 100,
+                wasHost: true,
+                didShowUp: true,
+                profileImageURL: annotation.participants.first?.profileImageURL
+            )
+            let selfParticipant = PastDropParticipant(
+                name: currentUser.name,
+                emoji: currentUser.emoji,
+                reliabilityScore: reliabilityScore.points,
+                wasHost: false,
+                didShowUp: true,
+                profileImageURL: profileImageURL
+            )
+            let past = PastDrop(
+                activityEmoji: annotation.emoji,
+                activityName: annotation.activity,
+                locationName: annotation.locationTitle.isEmpty
+                    ? annotation.activity : annotation.locationTitle,
+                date: startedAt,
+                wasHost: false,
+                participants: [hostParticipant, selfParticipant]
+            )
+            if !pastDrops.contains(where: { $0.date == past.date && $0.activityName == past.activityName }) {
+                pastDrops.insert(past, at: 0)
+                saveAll()
+            }
+        }
+
+        // Encounter auto-bestätigen — 10 min Anwesenheit reicht als Nachweis,
+        // auch ohne BLE. Damit erscheint "Hinzufügen" in „Letzte Begegnungen".
+        if let joinedID = activeJoinedDropID {
+            let dropIDStr = joinedID.uuidString
+            if let idx = encounters.firstIndex(where: {
+                $0.dropID == dropIDStr && !$0.confirmed && !$0.denied
+            }) {
+                encounters[idx].confirmed = true
+                generateFriendSuggestions(from: encounters[idx])
+                saveAll()
+            }
+        }
+
+        // Share-Card + 24h-Inactivity-Push triggern
+        if let annotation = activeDropAnnotation {
+            let emoji    = annotation.emoji
+            let activity = annotation.activity
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.dropSuccessShareData = DropSuccessShareData(
+                    activityEmoji: emoji, activityName: activity, wasHost: false
+                )
+            }
+            PushNotificationManager.shared.scheduleInactivityReminder()
+        }
 
         // Bereits per BLE bestätigt → kein No-Show nötig
         if bleConfirmedInCurrentSession { return }
@@ -3740,7 +4117,8 @@ class AppStore: ObservableObject {
 
             if dist < 50 {
                 // GPS bestätigt physische Anwesenheit → Show-up
-                nextPointsReason = "GPS-Bestätigung · Drop besucht"
+                Haptic.gpsArrival()
+                nextPointsReason = tr("models.reason_gps")
                 reliabilityScore.totalCommits += 1
                 reliabilityScore.showUps += 1
                 applyStreakBonus()
@@ -3766,6 +4144,7 @@ class AppStore: ObservableObject {
     /// Wird aufgerufen wenn BLE-Proximity eine Begegnung automatisch bestätigt hat.
     private func autoConfirmBLEMeetup(partnerToken: String) {
         bleConfirmedInCurrentSession = true   // Verhindert No-Show beim Verlassen
+        Haptic.meetupConfirmed()
 
         // Anti-Farm Layer 1+2 (Joiner-Seite):
         //   1) Drop muss seit Start ≥ 15 min laufen (sonst zu kurz für Punkte)
@@ -3790,7 +4169,7 @@ class AppStore: ObservableObject {
             }
             if !dropAgeOK {
                 let neededMins = Int(Self.minPaidDropDuration / 60)
-                showInfoToast("Drop zu kurz für Punkte (mind. \(neededMins) min)",
+                showInfoToast(tr("models.drop_too_short").replacingOccurrences(of: "{mins}", with: "\(neededMins)"),
                               icon: "hourglass")
             } else {
                 showInfoToast("Heute schon getroffen — keine Punkte (12 h Cooldown)",
@@ -3801,7 +4180,7 @@ class AppStore: ObservableObject {
         }
 
         // Offenen Encounter suchen, der zu diesem Drop passt
-        nextPointsReason = "Bluetooth-Treffen bestätigt"
+        nextPointsReason = tr("models.reason_bluetooth")
         if let idx = encounters.firstIndex(where: { !$0.confirmed && !$0.denied }) {
             encounters[idx].confirmed = true
             reliabilityScore.totalCommits += 1
@@ -3834,6 +4213,12 @@ class AppStore: ObservableObject {
             // System-Dialog, der Sheet leitet ihn dann zu den Einstellungen.
             if reliabilityScore.showUps == 1 && oldValue.showUps == 0 {
                 maybeShowPushReask()
+                // Ersten Drop abgeschlossen → Review-Prompt
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                    self?.shouldShowReviewPrompt = true
+                    UserDefaults.standard.set(Date().timeIntervalSince1970,
+                                              forKey: "ud_lastReviewRequestedAt")
+                }
             }
 
             // Notification bei Punkt-Gewinn (Show-Up = +5, etc.).
@@ -3846,7 +4231,7 @@ class AppStore: ObservableObject {
                 } else if reliabilityScore.totalCommits > oldValue.totalCommits {
                     reason = "Drop verbindlich erstellt"
                 } else {
-                    reason = "Aktivität bestätigt"
+                    reason = tr("models.reason_activity")
                 }
                 PushNotificationManager.shared.notifyPointsEarned(
                     delta: delta,
@@ -3884,6 +4269,15 @@ class AppStore: ObservableObject {
         }
     }
 
+    /// Steuert das Drop-Erfolg-Share-Sheet nach einem erfolgreichen Treffen.
+    struct DropSuccessShareData: Identifiable {
+        let id = UUID()
+        let activityEmoji: String
+        let activityName: String
+        let wasHost: Bool
+    }
+    @Published var dropSuccessShareData: DropSuccessShareData? = nil
+
     /// Steuert das First-Drop-Celebration-Sheet — Konfetti + Welcome-Text
     /// wenn der User seinen ersten Drop erstellt oder beigetreten ist.
     /// Wert: nil = nicht zeigen, "created" / "joined" für Variante.
@@ -3903,15 +4297,14 @@ class AppStore: ObservableObject {
     /// authorisiert ist. Der Trigger wird in UserDefaults persistiert, damit
     /// er pro User nur einmal erscheint — egal wie viele ShowUps folgen.
     private func maybeShowPushReask() {
-        let ud = UserDefaults.standard
-        guard !ud.bool(forKey: "ud_pushReaskShown") else { return }
+        guard !UserDefaults.standard.bool(forKey: "ud_pushReaskShown") else { return }
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             guard settings.authorizationStatus != .authorized,
                   settings.authorizationStatus != .provisional
             else { return }
             DispatchQueue.main.async {
                 self.showPushReaskSheet = true
-                ud.set(true, forKey: "ud_pushReaskShown")
+                UserDefaults.standard.set(true, forKey: "ud_pushReaskShown")
             }
         }
     }
@@ -3947,7 +4340,6 @@ class AppStore: ObservableObject {
                                                      reliabilityScore: reliabilityScore.points,
                                                      reliabilityCommits: reliabilityScore.totalCommits,
                                                      age: hostAge,
-                                                     isVerified: false,
                                                      token: myToken,
                                                      profileImageURL: profileImageURL)]
             let dropCLLoc = CLLocation(latitude: drop.location.coordinate.latitude,
@@ -3996,7 +4388,7 @@ class AppStore: ObservableObject {
                                                              firebaseUID: friend.firebaseUID))
                 }
             }
-            items.append(MapAnnotationItem(
+            var ann = MapAnnotationItem(
                 id: drop.id,
                 name: "\(drop.activity.emoji) \(drop.activity.name)",
                 emoji: drop.activity.emoji,
@@ -4010,9 +4402,10 @@ class AppStore: ObservableObject {
                 maxParticipants: drop.maxParticipants,
                 durationMinutes: drop.durationMinutes,
                 dropLocationType: drop.location.type,
-                locationTitle: drop.location.title,
-                isBoosted: drop.isBoosted
-            ))
+                locationTitle: drop.location.title
+            )
+            ann.communityID = drop.communityID
+            items.append(ann)
         }
         // Wenn keine Live-Drops da sind → lokaler Cache (kann leer sein in Production)
         // Volle Drops bleiben drin — der Umgebungstab markiert sie als „Voll".
@@ -4040,15 +4433,20 @@ class AppStore: ObservableObject {
                     let displayCoord = revealReal
                         ? drop.coordinate
                         : Self.fuzzyCoordinate(drop.coordinate, minMeters: 800, maxMeters: 1000, seed: drop.id)
-                    return MapAnnotationItem(id: stableID, name: drop.displayName, emoji: drop.emoji,
+                    let ageGroup = drop.hostAge.map { AgeGroup.group(for: $0) }
+                    var ann = MapAnnotationItem(id: stableID, name: drop.displayName, emoji: drop.emoji,
                                             activity: drop.activityName, coordinate: displayCoord,
                                             type: .stranger, scheduledTime: drop.scheduledTime,
                                             maxParticipants: drop.maxParticipants,
                                             isFuzzy: !revealReal,
-                                             realCoordinate: drop.coordinate, hostGender: drop.hostGender,
-                                             isBoosted: drop.isBoosted,
-                                             hostUID: drop.ownerID,
-                                             liveParticipantCount: drop.currentParticipants)
+                                            creatorAgeGroup: ageGroup,
+                                            creatorAge: drop.hostAge,
+                                            realCoordinate: drop.coordinate, hostGender: drop.hostGender,
+                                            hostUID: drop.ownerID,
+                                            hostReliabilityPoints: drop.hostReliabilityPoints,
+                                            liveParticipantCount: drop.currentParticipants)
+                    ann.communityID = drop.communityID
+                    return ann
                 }
         }
         // ── Joiner unterwegs (echter GPS-Standort des Users) ───────────
@@ -4252,7 +4650,12 @@ class AppStore: ObservableObject {
     /// Single-Event-Check bestätigt). Refactor aus dem Auto-Leave-Loop —
     /// damit der DB-Existenz-Check sauber strukturiert bleibt.
     private func handleHostCancelledDrop(dropID: UUID, dropEmoji: String, dropActivity: String) {
-        if self.activeJoinedDropID == dropID {
+        // Alert zeigen — auch wenn Joiner nur pending war (nicht voll dabei).
+        // Vorher nur bei activeJoinedDropID-Match → Joiner mit pending
+        // Anfrage bekam nichts mit.
+        let isRelevant = self.activeJoinedDropID == dropID
+                         || self.pendingJoinDropID == dropID
+        if isRelevant {
             self.hostCancelledDropAlert = HostCancelledAlert(
                 dropEmoji: dropEmoji,
                 activityName: dropActivity
@@ -4268,8 +4671,13 @@ class AppStore: ObservableObject {
         if self.activeJoinedDropID == dropID { self.leaveActiveJoin() }
         if self.pendingJoinDropID == dropID {
             self.pendingJoinDropID = nil
+            self.pendingJoinRequestedAt = nil
+            self.pendingJoinDropEmoji = ""
+            self.pendingJoinDropActivity = ""
             self.pendingAutoAcceptTask?.cancel()
             self.pendingAutoAcceptTask = nil
+            self.myJoinStatusObserverHandle = nil
+            self.removePendingDropEndObserver()
         }
         self.myJoinRequestStatus = ""
         DropNotificationManager.cancelReminders(for: dropID)
@@ -4536,7 +4944,12 @@ class AppStore: ObservableObject {
                     dropID: joinedDropID.uuidString,
                     joinerID: uid,
                     lat: coord.latitude,
-                    lng: coord.longitude
+                    lng: coord.longitude,
+                    name: currentUser.name,
+                    emoji: currentUser.emoji,
+                    age: userAge,
+                    profileImageURL: currentUser.profileImageURL,
+                    reliabilityPoints: reliabilityScore.points
                 )
                 lastJoinerLocPushAt = now
                 lastJoinerLocPushCoord = coord
@@ -4553,7 +4966,9 @@ class AppStore: ObservableObject {
 
         // Nearby-Drop-Notification — nur wenn kein eigener Drop aktiv
         if activeDrops.isEmpty && activeJoinedDropID == nil {
-            PushNotificationManager.shared.checkNearbyDrops(visible, userLocation: coord)
+            PushNotificationManager.shared.checkNearbyDrops(
+                visible, userLocation: coord, radius: notificationRadius
+            )
         }
 
         // Heimzone-Warnung: immer prüfen — auch wenn eigener Drop aktiv,
@@ -4591,7 +5006,7 @@ class AppStore: ObservableObject {
 
     func toggleAvailability() {
         currentUser.isAvailable.toggle()
-        currentUser.statusMessage = currentUser.isAvailable ? "Ich bin verfügbar! 🎉" : "Gerade nicht verfügbar"
+        currentUser.statusMessage = currentUser.isAvailable ? tr("models.status_available") : tr("models.status_unavailable")
     }
 
     func generateFriendSuggestions(from encounter: Encounter) {
@@ -4648,6 +5063,7 @@ class AppStore: ObservableObject {
         guard let match = allParticipants.first(where: { $0.token == token }) else { return }
 
         bleArrivedTokens.insert(token)
+        PushNotificationManager.shared.notifyParticipantArrived(name: match.name, activityName: myDrop.activity.name)
 
         // Teilnehmer aus onTheWay entfernen (falls er dort war) und zu arrived hinzufügen
         // Für die Live Activity: alle bekannten Teilnehmer als "vor Ort" behandeln
@@ -5021,14 +5437,20 @@ class AppStore: ObservableObject {
 
     func createDrop(activity: Activity, location: DropLocation,
                     description: String = "", scheduledTime: String = "Jetzt",
-                    maxParticipants: Int = 10, durationMinutes: Int = 120) {
-        let drop = DropEvent(
+                    maxParticipants: Int = 10, durationMinutes: Int = 120,
+                    communityID: String? = nil) {
+        PushNotificationManager.shared.cancelInactivityReminder()
+        // Community-Drops dürfen bis zu 100 Teilnehmer haben (Laufgruppen etc).
+        // Normale Drops bleiben auf 2-15 begrenzt.
+        let cap = communityID != nil ? 100 : 15
+        var drop = DropEvent(
             id: UUID(), host: currentUser, activity: activity, location: location,
             participants: [currentUser], createdAt: Date(),
             dropDescription: description, scheduledTime: scheduledTime,
-            maxParticipants: max(2, min(15, maxParticipants)),
+            maxParticipants: max(2, min(cap, maxParticipants)),
             durationMinutes: durationMinutes
         )
+        drop.communityID = communityID
         activeDrops.append(drop)
         // Defensives Cleanup gegen Auto-Join-Bug: falls aus irgendeinem
         // Grund Stale-Data unter joinRequests/{newID} oder dropins/{newID}
@@ -5037,13 +5459,25 @@ class AppStore: ObservableObject {
         RealtimeDBManager.shared.cleanupJoinRequests(dropID: drop.id.uuidString)
         RealtimeDBManager.shared.cleanupDropIns(dropID: drop.id.uuidString)
         print("[createDrop] new dropID=\(drop.id.uuidString) — cleared any stale join/dropin data")
+        let firebaseUID = FirebaseAuth.Auth.auth().currentUser?.uid ?? currentUser.id.uuidString
         RealtimeDBManager.shared.publishDrop(
-            dropID: drop.id.uuidString, userID: FirebaseAuth.Auth.auth().currentUser?.uid ?? currentUser.id.uuidString,
+            dropID: drop.id.uuidString, userID: firebaseUID,
             displayName: currentUser.name, emoji: activity.emoji,
             activityName: activity.name, coordinate: location.coordinate, radius: radiusFilter,
             expiresAt: drop.expiresAt, scheduledTime: scheduledTime, hostGender: userGender,
-            maxParticipants: drop.maxParticipants
+            hostAge: userAge, hostReliabilityPoints: reliabilityScore.points,
+            maxParticipants: drop.maxParticipants,
+            communityID: communityID
         )
+        // Community-Drop → automatischer Push an alle Mitglieder via
+        // communityPushQueue. Die Cloud Function fan-out'et das an die FCM-Tokens.
+        if let cid = communityID {
+            CommunityManager.shared.sendPush(
+                communityID: cid,
+                title: "\(activity.emoji) Neuer \(activity.name)-Drop",
+                body:  tr("models.community_drop_created").replacingOccurrences(of: "{name}", with: currentUser.name)
+            ) { _ in /* fire-and-forget */ }
+        }
         // KEINE Punkte mehr fürs reine Erstellen — alle Boni (creation,
         // boost, power-hour) müssen erarbeitet werden:
         //   - jemand kommt zu meinem Drop → recordHostSuccess
@@ -5061,6 +5495,7 @@ class AppStore: ObservableObject {
 
         // First-Drop-Celebration: nur beim allerersten eigenen Drop.
         maybeCelebrateFirstDrop(.created)
+        Haptic.dropCreated()
 
         // Host beobachtet eingehende DropIns (nach Accept) und neue Join-Requests
         startObservingDropIns(forDropID: drop.id.uuidString)
@@ -5165,11 +5600,17 @@ class AppStore: ObservableObject {
                     recordHostSuccess(arrivedParticipants: asDropParts)
                 } else if dropDuration < Self.minPaidDropDuration {
                     let neededMins = Int(Self.minPaidDropDuration / 60)
-                    showInfoToast("Drop zu kurz für Punkte (mind. \(neededMins) min)",
+                    showInfoToast(tr("models.drop_too_short").replacingOccurrences(of: "{mins}", with: "\(neededMins)"),
                                   icon: "hourglass")
+                    // Unbestätigte Encounters für diesen Drop entfernen —
+                    // sonst tauchen sie in „Letzte Begegnungen" auf und
+                    // manuelles Bestätigen würde Punkte für einen 2-Min-
+                    // Drop vergeben. Confirmed (BLE) bleiben erhalten.
+                    let dropIDStr = drop.id.uuidString
+                    encounters.removeAll { $0.dropID == dropIDStr && !$0.confirmed }
                 } else {
                     // Drop war lang genug, aber keiner war wirklich da
-                    showInfoToast("Keine Anwesenheit bestätigt — keine Punkte",
+                    showInfoToast(tr("models.no_presence_no_points"),
                                   icon: "person.fill.questionmark")
                 }
 
@@ -5221,6 +5662,16 @@ class AppStore: ObservableObject {
                         return joinerLiveInfos[uid] != nil
                     }
                     presentHostFeedbackPrompt(drop: drop, participants: stillThere)
+                    // Share-Card nach erfolgreichem Host-Drop (1.5s Delay damit
+                    // Feedback-Sheet zuerst erscheint)
+                    let emoji = drop.activity.emoji
+                    let name  = drop.activity.name
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        self?.dropSuccessShareData = DropSuccessShareData(
+                            activityEmoji: emoji, activityName: name, wasHost: true
+                        )
+                    }
+                    PushNotificationManager.shared.scheduleInactivityReminder()
                 }
             } else if hasOldPending {
                 // (2) Host-No-Show: jemand wartet schon ≥12 min, Host bricht ab
@@ -5234,34 +5685,17 @@ class AppStore: ObservableObject {
         }
         activeDrops.removeAll { $0.id == id }
         currentUser.isAvailable = false
-        currentUser.statusMessage = "Gerade nicht verfügbar"
+        currentUser.statusMessage = tr("models.status_unavailable")
         RealtimeDBManager.shared.cancelDrop(dropID: id.uuidString)
         DropNotificationManager.cancelReminders(for: id)
         endDropLiveActivity()
+        Haptic.dropEnded()
         bluetoothMeetup.stop()
         bleArrivedTokens.removeAll()
         saveAll()
     }
 
     // MARK: - Drops+ Boost
-
-    /// Boosted den eigenen aktiven Drop (Drops+ Feature).
-    /// Setzt isBoosted = true lokal und in Firebase.
-    func boostActiveDrop() {
-        guard isDropsPlusActive else { showDropsPlusPaywall = true; return }
-        guard let idx = activeDrops.indices.first(where: { activeDrops[$0].host.id == currentUser.id }) else { return }
-        let dropID = activeDrops[idx].id
-        activeDrops[idx].isBoosted = true
-        RealtimeDBManager.shared.boostDrop(dropID: dropID.uuidString)
-    }
-
-    /// Hebt den Boost des eigenen aktiven Drops auf.
-    func unboostActiveDrop() {
-        guard let idx = activeDrops.indices.first(where: { activeDrops[$0].host.id == currentUser.id }) else { return }
-        let dropID = activeDrops[idx].id
-        activeDrops[idx].isBoosted = false
-        RealtimeDBManager.shared.boostDrop(dropID: dropID.uuidString, active: false)
-    }
 
     func respondToAlert(id: Int, accept: Bool) {
         if let i = alerts.firstIndex(where: { $0.id == id }) {
