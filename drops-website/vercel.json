@@ -15,11 +15,11 @@
   "rewrites": [
     {
       "source": "/drop/:uuid",
-      "destination": "/drop.html"
+      "destination": "/drop"
     },
     {
       "source": "/invite/:uid",
-      "destination": "/drop.html"
+      "destination": "/drop"
     }
   ]
 }
