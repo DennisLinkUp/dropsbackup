@@ -194,31 +194,38 @@
     // (z.B. /drop/<UUID> oder /invite/<UID>) und triggere ihn beim Klick.
     (function () {
       const path = window.location.pathname;
-      const target = "https://www.drops-app.de" + path;
+      // iOS Safari öffnet keine Universal Links auf derselben Domain.
+      // drops:// Custom Scheme umgeht das Problem direkt.
+      // Beispiel: /drop/<UUID> → drops://drop/<UUID>
+      const segments = path.split("/").filter(Boolean); // ["drop", "<UUID>"]
+      const dropsSchemeUrl = segments.length >= 2
+          ? "drops://" + segments[0] + "/" + segments[1]
+          : "drops://home";
       const openBtn = document.getElementById("openApp");
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      const target = isIOS ? dropsSchemeUrl : "https://www.drops-app.de" + path;
       openBtn.href = target;
 
       // Auf iOS / Safari: nach 1.5s Fallback auf App Store wenn die App
       // den Universal Link nicht abfängt (= App nicht installiert).
       openBtn.addEventListener("click", function (e) {
-        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-        if (!isIOS) return;  // Auf Desktop: einfach Universal Link folgen lassen
+        if (!isIOS) return;  // Auf Desktop: einfach Link folgen lassen
 
-        // Auf iOS: nach 1.5s prüfen ob wir noch auf der Page sind → dann App Store
+        // Auf iOS: drops:// öffnet die App direkt. Falls App nicht installiert
+        // (Schema unbekannt), nach 1.5s auf App Store fallen.
         const fallbackTimer = setTimeout(function () {
-          window.location.href = "https://apps.apple.com/de/app/drops-triff-leute/id6762097493";
+          window.location.href = "itms-apps://apps.apple.com/de/app/drops-triff-leute/id6762097493";
         }, 1500);
 
         // Wenn die Page in den Hintergrund geht (App hat geöffnet) → Timer canceln
         document.addEventListener("visibilitychange", function () {
           if (document.hidden) clearTimeout(fallbackTimer);
-        });
+        }, { once: true });
       });
 
       // App-Store-Button: auf iOS itms-apps:// (öffnet App Store direkt,
       // kein Web-Redirect). Auf Desktop target="_blank" reicht.
       const storeBtn = document.getElementById("storeBtn");
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
       if (isIOS) {
         storeBtn.href = "itms-apps://apps.apple.com/de/app/drops-triff-leute/id6762097493";
         storeBtn.removeAttribute("target"); // kein neues Tab auf iOS nötig
