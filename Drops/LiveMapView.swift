@@ -49,8 +49,18 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBest
-        manager.requestWhenInUseAuthorization()
-        manager.startUpdatingLocation()
+        // startUpdatingLocation() NUR wenn Berechtigung bereits erteilt.
+        // iOS 17+ zeigt den Location-Dialog auch ohne explizites
+        // requestWhenInUseAuthorization() sobald startUpdatingLocation()
+        // bei Status .notDetermined aufgerufen wird — das würde den
+        // Permission-Dialog vor dem WelcomeSheet auslösen.
+        // locationManagerDidChangeAuthorization startet es automatisch
+        // sobald der User in requestAllPermissions() (nach WelcomeSheet)
+        // die Berechtigung erteilt hat.
+        let status = manager.authorizationStatus
+        if status == .authorizedWhenInUse || status == .authorizedAlways {
+            manager.startUpdatingLocation()
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
@@ -111,11 +121,86 @@ struct LiveMapView: View {
     @State private var cityPolygonsPts: [[CGPoint]] = []
     @State private var hasInitiallyZoomed = false
     @State private var selectedItem: MapAnnotationItem? = nil
-    @State private var selectedActivity = "Alle"
+    /// Drop für den der Quick-Reply-Sheet (Anfrage senden mit optionaler
+    /// Schnellantwort) aktuell offen ist. Wird gesetzt wenn User auf
+    /// dem Map-Pin-Detail-Sheet „Ich komme vorbei" tippt — geschickt
+    /// wird erst nach Quick-Chip-Auswahl + „Senden"-Tap im Sheet.
+    @State private var joinComposeItem: MapAnnotationItem? = nil
     @State private var joinedIDs: Set<UUID> = []
     @State private var showSafety = false
     @State private var mapId = UUID()
-    let activities = ["Alle", "☕️ Kaffee", "🍺 Drink", "🏃 Sport", "🍕 Essen", "🎮 Zocken"]
+    /// Angetippte Community auf der Karte — öffnet CommunityJoinSheet.
+    @State private var selectedCommunity: Community? = nil
+
+    // MARK: - Clustering
+    /// Fertige Cluster-Gruppen — werden bei Kamera-Bewegungsende neu berechnet.
+    /// Jede Gruppe enthält ≥1 MapAnnotationItem. Gruppen mit 1 Item = normaler Pin.
+    @State private var clusterGroups: [[MapAnnotationItem]] = []
+    /// Pixel-Radius innerhalb dem zwei Pins zu einem Cluster zusammengefasst werden.
+    private let clusterThreshold: CGFloat = 48
+
+    /// Bündelt `filteredAnnotations` nach Bildschirm-Nähe.
+    /// Eigene Drops (type == .myDrop) werden NIE geclustert — sie erscheinen immer einzeln.
+    /// Algorithmus: greedy O(n²), reicht für ~100 Pins problemlos.
+    func computeClusters(proxy: MapProxy) {
+        let items = filteredAnnotations
+        var groups:   [[MapAnnotationItem]] = []
+        var clustered = Set<UUID>()
+
+        for item in items {
+            guard !clustered.contains(item.id) else { continue }
+            // Eigene Drops: immer solo
+            if item.type == .myDrop {
+                groups.append([item])
+                clustered.insert(item.id)
+                continue
+            }
+            guard let pt = proxy.convert(item.coordinate, to: .local) else {
+                groups.append([item])
+                clustered.insert(item.id)
+                continue
+            }
+            var group = [item]
+            clustered.insert(item.id)
+            for other in items where !clustered.contains(other.id) && other.type != .myDrop {
+                guard let otherPt = proxy.convert(other.coordinate, to: .local) else { continue }
+                if hypot(pt.x - otherPt.x, pt.y - otherPt.y) < clusterThreshold {
+                    group.append(other)
+                    clustered.insert(other.id)
+                }
+            }
+            groups.append(group)
+        }
+        clusterGroups = groups
+    }
+
+    /// Geografischer Mittelpunkt einer Gruppe.
+    private func centroid(of group: [MapAnnotationItem]) -> CLLocationCoordinate2D {
+        let n = Double(group.count)
+        let lat = group.map { $0.coordinate.latitude  }.reduce(0, +) / n
+        let lon = group.map { $0.coordinate.longitude }.reduce(0, +) / n
+        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+    }
+
+    /// Zoomt die Kamera so, dass alle Pins im Cluster sichtbar sind.
+    private func zoomToCluster(_ group: [MapAnnotationItem]) {
+        let coords = group.map { $0.coordinate }
+        guard let minLat = coords.map({ $0.latitude  }).min(),
+              let maxLat = coords.map({ $0.latitude  }).max(),
+              let minLon = coords.map({ $0.longitude }).min(),
+              let maxLon = coords.map({ $0.longitude }).max() else { return }
+        let center = CLLocationCoordinate2D(
+            latitude:  (minLat + maxLat) / 2,
+            longitude: (minLon + maxLon) / 2
+        )
+        let span = MKCoordinateSpan(
+            latitudeDelta:  max(0.003, (maxLat - minLat) * 3.0),
+            longitudeDelta: max(0.003, (maxLon - minLon) * 3.0)
+        )
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+            mapPosition = .region(MKCoordinateRegion(center: center, span: span))
+        }
+    }
 
     /// Eigener 8-Char BLE-Token — wird explizit an DropMapPin übergeben (nicht per @EnvironmentObject,
     /// da Map-Annotation-Content nicht zuverlässig den SwiftUI-Environment erbt).
@@ -143,8 +228,11 @@ struct LiveMapView: View {
             return !ann.isFull
         }
         // Der „Nur weiblich"-Filter läuft jetzt im Umgebungs-Tab, nicht mehr hier.
-        guard selectedActivity != "Alle" else { return base }
-        return base.filter { selectedActivity.contains($0.emoji) }
+        guard !store.activityCategoryFilter.isEmpty else { return base }
+        return base.filter {
+            ActivityCategory.matches(filter: store.activityCategoryFilter,
+                                     emoji: $0.emoji, activity: $0.activity)
+        }
     }
 
     /// Konvertiert die Polygone ALLER Launch-Städte in eine flache Liste von
@@ -184,26 +272,47 @@ struct LiveMapView: View {
                             .stroke(Color.brand.opacity(0.35), lineWidth: 1)
                     }
 
-                    // Drops & Freunde
+                    // Drops & Freunde — geclustert wenn Pins sich überlappen.
+                    // clusterGroups wird bei Kamera-Stillstand neu berechnet.
+                    // Gruppen mit 1 Item → normaler Pin; ≥2 → ClusterPin.
                     // HINWEIS: @EnvironmentObject ist in Map-Annotation-Content nicht
                     // zuverlässig (MapKit eigener View-Context). Wir übergeben alles explizit.
-                    ForEach(filteredAnnotations) { item in
-                        Annotation("", coordinate: item.coordinate, anchor: .center) {
-                            DropMapPin(
-                                item: item,
-                                // Store ist Source of Truth: deckt Pending + Accepted
-                                // ab, auch nach Tab-Wechsel oder App-Restart. Der
-                                // lokale `joinedIDs`-Set ist nur für sofortige UI-
-                                // Reaktion direkt nach dem Tap auf "Ich komme vorbei".
-                                isJoined: joinedIDs.contains(item.id)
-                                    || store.hasJoinedDrop(dropID: item.id)
-                                    || store.activeJoinedDropID == item.id,
-                                onTap: { selectedItem = item },
-                                myToken: myPinToken,
-                                confirmedTokens: store.bluetoothMeetup.confirmedTokens
-                            )
+                    ForEach(clusterGroups, id: \.first?.id) { group in
+                        if group.count == 1 {
+                            let item = group[0]
+                            Annotation("", coordinate: item.coordinate, anchor: .center) {
+                                DropMapPin(
+                                    item: item,
+                                    isJoined: joinedIDs.contains(item.id)
+                                        || store.hasJoinedDrop(dropID: item.id)
+                                        || store.activeJoinedDropID == item.id,
+                                    onTap: { selectedItem = item },
+                                    myToken: myPinToken,
+                                    confirmedTokens: store.bluetoothMeetup.confirmedTokens
+                                )
+                            }
+                        } else {
+                            Annotation("", coordinate: centroid(of: group), anchor: .center) {
+                                DropClusterPin(group: group) {
+                                    zoomToCluster(group)
+                                }
+                            }
                         }
                     }
+
+                    // ── Community-Pins ────────────────────────────────────
+                    // Genehmigte Sport-Communities fix auf der Karte.
+                    // (Deaktiviert via FeatureFlags.communitiesEnabled)
+                    if FeatureFlags.communitiesEnabled {
+                        ForEach(store.nearbyCommunities) { community in
+                            Annotation("", coordinate: community.coordinate, anchor: .bottom) {
+                                CommunityMapPin(community: community) {
+                                    selectedCommunity = community
+                                }
+                            }
+                        }
+                    }
+
                 }
                 .id(mapId)
                 .ignoresSafeArea()
@@ -214,6 +323,18 @@ struct LiveMapView: View {
                     // Alle 5 Launch-Städte als Polygon-Overlay — damit man beim
                     // Rauszoomen auf Deutschland alle Service-Zones sieht.
                     cityPolygonsPts = Self.allCityPolygonsPts(proxy: proxy)
+                }
+                .onMapCameraChange(frequency: .onEnd) { _ in
+                    // Cluster neu berechnen sobald Kamera zum Stillstand kommt.
+                    // .onEnd statt .continuous: spart CPU — nur 1x nach Zoom/Pan.
+                    computeClusters(proxy: proxy)
+                }
+                .onChange(of: filteredAnnotations.count) { _, _ in
+                    // Neue Drops oder Filter-Änderung → sofort neu clustern.
+                    computeClusters(proxy: proxy)
+                }
+                .onChange(of: store.activityCategoryFilter) { _, _ in
+                    computeClusters(proxy: proxy)
                 }
                 // ── Aurora-Grenzen um alle 5 Launch-Städte ──────────────
                 .overlay {
@@ -232,6 +353,15 @@ struct LiveMapView: View {
                         hasInitiallyZoomed = true
                     }
                     store.updateUserLocation(loc)
+                }
+                // Initialcluster nach kurzem Delay — MapProxy braucht
+                // einen Render-Pass bevor convert() korrekte Werte liefert.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    // proxy ist hier nicht verfügbar — wird über .onMapCameraChange
+                    // beim ersten Kamera-Stop gesetzt. Fallback: alle als solo.
+                    if clusterGroups.isEmpty {
+                        clusterGroups = filteredAnnotations.map { [$0] }
+                    }
                 }
             }
             .onChange(of: locationManager.userLocation) { _, loc in
@@ -293,7 +423,7 @@ struct LiveMapView: View {
                             Circle()
                                 .fill(Color.onlineGreen)
                                 .frame(width: 6, height: 6)
-                            Text("\(count) \(count == 1 ? "Drop" : "Drops") in der Nähe")
+                            Text((count == 1 ? tr("map.drops_nearby_singular") : tr("map.drops_nearby_plural")).replacingOccurrences(of: "{count}", with: "\(count)"))
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundColor(.textPrimary)
                         }
@@ -308,6 +438,10 @@ struct LiveMapView: View {
                     Spacer()
                 }
                 .padding(.top, 8)
+
+                // ── Kategorie-Filter-Chips ────────────────────────────────
+                ActivityFilterChipsView()
+                    .padding(.top, 4)
 
                 // ── Power-Hour Countdown-Pille (oben) ────────────────────
                 // Auto-updates jede Minute via TimelineView. Sichtbar in
@@ -351,8 +485,8 @@ struct LiveMapView: View {
                                 Image(systemName: "bolt.fill")
                                     .font(.system(size: 13, weight: .bold))
                                 Text(store.isPowerHourActive
-                                     ? "Power-Hour · +\(store.currentBoostBonus) Pkt"
-                                     : "Boost aktiv · +\(store.currentBoostBonus) Pkt")
+                                     ? tr("map.power_hour_pts").replacingOccurrences(of: "{pts}", with: "\(store.currentBoostBonus)")
+                                     : tr("map.boost_active_pts").replacingOccurrences(of: "{pts}", with: "\(store.currentBoostBonus)"))
                                     .font(.system(size: 13, weight: .semibold))
                                     .lineLimit(1)
                                     .minimumScaleFactor(0.85)
@@ -372,7 +506,7 @@ struct LiveMapView: View {
                             .shadow(color: Color.accentOrange.opacity(0.35), radius: 10, y: 3)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Boost-Phase aktiv – Drop erstellen")
+                        .accessibilityLabel(tr("map.boost_active_create"))
                     }
 
                     Button(action: {
@@ -421,14 +555,57 @@ struct LiveMapView: View {
                         || store.hasJoinedDrop(dropID: item.id)
                         || store.activeJoinedDropID == item.id
                 ) {
-                    joinedIDs.insert(item.id)
-                    store.sendJoinRequest(to: item)   // Request ohne Message — Map-Pfad
+                    // Detail-Sheet schließen + Quick-Reply-Sheet öffnen.
+                    // User wählt einen Schnellantwort-Chip und tippt
+                    // „Senden" — erst dann geht die Anfrage raus.
+                    // Konsistent zum FeedView-Pfad (FeedDropCard).
+                    let toCompose = item
+                    selectedItem = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        joinComposeItem = toCompose
+                    }
                 }
                 .environmentObject(store)
-                .presentationDetents([.fraction(0.55)])
-                .presentationDragIndicator(.hidden)
+                // Adaptives Sizing je nach Content-Dichte:
+                //   fuzzy + keine Extras       → 0.42 (minimal: nur Header + Disclaimer + Button)
+                //   myDrop / normaler Drop      → 0.48 (kompakt: Info + Button)
+                //   mit Teilnehmern ODER Text   → 0.55 (mehr Platz für Participant-Row)
+                // Zweiter Detent = hochziehbar für mehr Details.
+                .presentationDetents({
+                    let hasExtras = !item.participants.isEmpty
+                        || (item.dropDescription.map { !$0.isEmpty } ?? false)
+                    if item.isFuzzy && !hasExtras {
+                        return [PresentationDetent.fraction(0.42), .fraction(0.60)]
+                    } else if hasExtras {
+                        return [.fraction(0.55), .fraction(0.72)]
+                    } else {
+                        return [.fraction(0.48), .fraction(0.65)]
+                    }
+                }())
+                .presentationDragIndicator(.visible)
                 .sheetBackground()
             }
+        }
+        // ── Quick-Reply-Sheet (Map-Pfad) ────────────────────────────────
+        // Wird vom DropJoinSheet ausgelöst — User wählt einen Schnell-
+        // antwort-Chip und sendet damit die Beitrittsanfrage. Identisch
+        // zum FeedView-Pfad damit beide Wege gleichen UX bieten.
+        .sheet(item: $joinComposeItem) { item in
+            JoinConfirmSheet(item: item) {
+                joinedIDs.insert(item.id)
+            }
+            .environmentObject(store)
+            .presentationDetents([.fraction(0.55)])
+            .presentationDragIndicator(.hidden)
+            .sheetBackground()
+        }
+        // Community Join Sheet — wird bei Tap auf einen Community-Map-Pin gezeigt.
+        .sheet(item: $selectedCommunity) { community in
+            CommunityJoinSheet(community: community)
+                .environmentObject(store)
+                .presentationDetents([.fraction(0.45)])
+                .presentationDragIndicator(.visible)
+                .sheetBackground()
         }
         // Hinweis: das `IncomingJoinRequestSheet` (Host-seitig) ist
         // auf MainTabView-Ebene angehängt, damit es egal in welchem
@@ -472,6 +649,16 @@ struct DropMapPin: View {
     /// BLE-bestätigte Partner-Tokens (vom Parent übergeben)
     var confirmedTokens: Set<String> = []
     @State private var pressed = false
+    @State private var freshPulse = false
+    /// Langsamer Atemeffekt auf dem Fog-Ring des Fuzzy-Pins.
+    @State private var fogPulse = false
+
+    /// Drop ist „frisch" wenn er weniger als 5 Min alt ist — bekommt
+    /// einen pulsierenden Ring als „neu hier"-Signal. Greift nicht bei
+    /// Boost-Drops (deren Gold-Ring hat Priorität).
+    private var isFresh: Bool {
+        Date().timeIntervalSince(item.createdAt) < 300
+    }
 
     /// Nur bestätigte Teilnehmer anzeigen (BLE-confirmed oder eigener Token als Host).
     var confirmedParticipants: [DropParticipant] {
@@ -481,12 +668,15 @@ struct DropMapPin: View {
     }
 
     var pinColor: Color {
+        // Community-Drops überschreiben die normale Farbe — sie erscheinen
+        // immer in Clero-Grün, egal welcher type (myDrop/stranger).
+        if item.isCommunityDrop { return .cleroGreen }
         switch item.type {
         case .friend:   return isJoined ? .onlineGreen : .brand
         case .myDrop:   return .accentOrange
         case .joiner:   return .onlineGreen
         case .stranger:
-            return item.creatorAgeGroup?.color ?? Color(hex: "06b6d4")
+            return item.creatorAgeGroup?.color ?? Color.auroraCyan
         }
     }
 
@@ -511,64 +701,104 @@ struct DropMapPin: View {
             onTap()
         }) {
             if item.isFuzzy {
-                // Ungenaue Position: großer Radius-Kreis + verschleierter Pin
-                ZStack {
-                    // Unscharfer Umkreis — zeigt "könnte hier irgendwo sein"
+                // ── Fuzzy-Pin: Aktivität sichtbar, Standort bewusst ungenau ──
+                // Konzept: User soll neugierig werden (emoji + activity) aber
+                // klar sehen: "Ort noch unbekannt — erst joinen".
+                // WICHTIG: kein .glassEffect() / liquidGlassCapsule() hier —
+                // iOS-26-Glas ist rein transparent und sieht auf der Karte grau aus.
+                // Stattdessen: thinMaterial + pinColor-Tint → Farbe bleibt sichtbar.
+                ZStack(alignment: .center) {
+
+                    // Pulsierender Fog-Halo — groß genug um auf der Karte aufzufallen
                     Circle()
-                        .fill(Color(UIColor.systemGray).opacity(0.07))
-                        .frame(width: 90, height: 90)
-                        .overlay(
-                            Circle().stroke(
-                                Color(UIColor.systemGray).opacity(0.2),
-                                style: StrokeStyle(lineWidth: 1, dash: [4, 3])
+                        .fill(
+                            RadialGradient(
+                                colors: [pinColor.opacity(fogPulse ? 0.22 : 0.12),
+                                         pinColor.opacity(0.0)],
+                                center: .center,
+                                startRadius: 8,
+                                endRadius: 44
                             )
                         )
+                        .frame(width: 88, height: 88)
+                        .scaleEffect(fogPulse ? 1.06 : 1.0)
 
-                    // Kleiner verschwommener Drop-Pin in der Mitte
-                    HStack(spacing: 4) {
+                    // Gestrichelter Rand — "ungefähre Zone"
+                    Circle()
+                        .stroke(
+                            pinColor.opacity(fogPulse ? 0.60 : 0.35),
+                            style: StrokeStyle(lineWidth: 1.8, dash: [6, 4])
+                        )
+                        .frame(width: 72, height: 72)
+                        .scaleEffect(fogPulse ? 1.06 : 1.0)
+
+                    // Der eigentliche Pin — gefärbte Material-Kapsel
+                    HStack(spacing: 6) {
                         ZStack {
                             Circle()
-                                .fill(Color(UIColor.systemGray3).opacity(0.4))
-                                .frame(width: 22, height: 22)
+                                .fill(pinColor.opacity(0.25))
+                                .frame(width: 28, height: 28)
+                            Circle()
+                                .stroke(pinColor.opacity(0.60), lineWidth: 1.5)
+                                .frame(width: 28, height: 28)
                             Text(item.emoji)
-                                .font(.system(size: 12))
-                                .blur(radius: 1.5)
+                                .font(.system(size: 15))
+
+                            // Kleines Standort-Badge — "Ort unbekannt"
+                            Image(systemName: "location.slash.fill")
+                                .font(.system(size: 6, weight: .bold))
+                                .foregroundColor(.white)
+                                .padding(2.5)
+                                .background(pinColor, in: Circle())
+                                .offset(x: 10, y: 10)
                         }
-                        Image(systemName: "lock.fill")
-                            .font(.system(size: 9))
-                            .foregroundColor(.textTertiary)
+                        .frame(width: 28, height: 28)
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.activity)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.textPrimary)
+                                .lineLimit(1)
+                            Text(tr("map.nearby"))
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(pinColor)
+                        }
                     }
-                    .padding(.vertical, 5).padding(.horizontal, 8)
-                    .background(
-                        Capsule().fill(.ultraThinMaterial)
-                    )
-                    .overlay(
-                        Capsule().stroke(Color(UIColor.systemGray4).opacity(0.5), lineWidth: 0.5)
-                    )
+                    .padding(.vertical, 7).padding(.horizontal, 10)
+                    // Tinted material: sieht auf Karte eingefärbt aus (kein reines Grau)
+                    .background {
+                        ZStack {
+                            Capsule().fill(.thinMaterial)
+                            Capsule().fill(pinColor.opacity(0.18))
+                        }
+                    }
+                    .overlay(Capsule().stroke(pinColor.opacity(0.55), lineWidth: 1.2))
+                    .shadow(color: pinColor.opacity(0.45), radius: 12, y: 2)
+                    .shadow(color: pinColor.opacity(0.20), radius: 24, y: 0)
                 }
                 .scaleEffect(pressed ? 1.06 : 1.0)
             } else {
                 // Exakter Pin (normaler Nutzer oder verifizierter Nutzer)
                 HStack(spacing: 6) {
                     ZStack {
-                        // Drops+ Boost: goldener Glow-Ring
-                        if item.isBoosted {
+                        // Frische-Pulse: Drop < 5 Min → pulsierender Ring
+                        // außen rum. scaleEffect + opacity statt frame-
+                        // Animation: am Loop-Snap ist opacity = 0, also
+                        // kein sichtbarer Sprung zurück auf den Start-
+                        // Zustand.
+                        if isFresh {
                             Circle()
-                                .stroke(
-                                    LinearGradient(
-                                        colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b"), Color(hex: "fcd34d")],
-                                        startPoint: .topLeading, endPoint: .bottomTrailing
-                                    ),
-                                    lineWidth: 2.5
-                                )
-                                .frame(width: emojiCircleSize + 8, height: emojiCircleSize + 8)
-                                .shadow(color: Color(hex: "f59e0b").opacity(0.7), radius: 6)
+                                .stroke(pinColor.opacity(0.55), lineWidth: 1.8)
+                                .frame(width: emojiCircleSize, height: emojiCircleSize)
+                                .scaleEffect(freshPulse ? 1.7 : 0.9)
+                                .opacity(freshPulse ? 0.0 : 0.8)
                         }
+
                         Circle()
-                            .fill(item.isBoosted ? Color(hex: "f59e0b").opacity(0.18) : pinColor.opacity(0.18))
+                            .fill(pinColor.opacity(0.18))
                             .frame(width: emojiCircleSize, height: emojiCircleSize)
                         Circle()
-                            .stroke(item.isBoosted ? Color(hex: "f59e0b").opacity(0.6) : pinColor.opacity(0.5), lineWidth: 1.5)
+                            .stroke(pinColor.opacity(0.5), lineWidth: 1.5)
                             .frame(width: emojiCircleSize, height: emojiCircleSize)
                         Text(item.emoji).font(.system(size: emojiFontSize))
                         if confirmedParticipants.count >= 2 {
@@ -579,15 +809,6 @@ struct DropMapPin: View {
                                 .background(pinColor, in: Circle())
                                 .offset(x: emojiCircleSize * 0.3, y: emojiCircleSize * 0.3)
                         }
-                        // Boost-Badge oben rechts
-                        if item.isBoosted {
-                            Image(systemName: "bolt.fill")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundStyle(Color(hex: "f59e0b"))
-                                .padding(3)
-                                .background(Color.black.opacity(0.6), in: Circle())
-                                .offset(x: emojiCircleSize * 0.38, y: -emojiCircleSize * 0.38)
-                        }
                     }
                     VStack(alignment: .leading, spacing: 1) {
                         Text(item.type == .myDrop ? item.activity : (item.isStranger ? item.activity : item.name))
@@ -595,13 +816,13 @@ struct DropMapPin: View {
                             .foregroundColor(.textPrimary).lineLimit(1)
                         // Alter bei Stranger-Drops
                         if item.isStranger, let age = item.creatorAge {
-                            Text("\(age) J.")
+                            Text(tr("map.years_abbrev").replacingOccurrences(of: "{age}", with: "\(age)"))
                                 .font(.system(size: 9, weight: .medium))
                                 .foregroundColor(pinColor.opacity(0.85))
                         }
                     }
                     if item.type == .myDrop {
-                        Text("· Du").font(.system(size: 10)).foregroundColor(.textSecondary)
+                        Text("· \(tr("map.you"))").font(.system(size: 10)).foregroundColor(.textSecondary)
                     } else if item.type == .joiner {
                         // Unterwegs-Indikator
                         Image(systemName: "figure.walk")
@@ -622,6 +843,91 @@ struct DropMapPin: View {
             }
         }
         .buttonStyle(.plain)
+        .onAppear {
+            // Fresh-Pin-Pulse (< 5 Min alt)
+            if isFresh {
+                withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) {
+                    freshPulse = true
+                }
+            }
+            // Fog-Ring-Atem (nur bei Fuzzy-Pins): langsamer Sinus-Loop
+            // der den gestrichelten Ring leicht skaliert + blinkt.
+            if item.isFuzzy {
+                withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
+                    fogPulse = true
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Drop Cluster Pin
+
+/// Zeigt mehrere zusammengefasste Drops als einen Cluster-Pin.
+/// Tap → zoomt rein bis alle Pins getrennt sichtbar sind.
+struct DropClusterPin: View {
+    let group:  [MapAnnotationItem]
+    let onTap:  () -> Void
+
+    /// Bis zu 3 Emojis aus der Gruppe für den visuellen Vorgeschmack.
+    private var previewEmojis: [String] {
+        Array(group.prefix(3).map { $0.emoji })
+    }
+
+    /// Alle Aktivitätsnamen — für AccessibilityLabel.
+    private var activitiesLabel: String {
+        group.prefix(5).map { $0.activity }.joined(separator: ", ")
+    }
+
+    @State private var pressed = false
+
+    var body: some View {
+        Button(action: onTap) {
+            ZStack {
+                // Äußerer Glow-Ring
+                Circle()
+                    .fill(LinearGradient.aurora.opacity(0.25))
+                    .frame(width: 58, height: 58)
+
+                // Haupt-Kreis mit Aurora-Gradient
+                Circle()
+                    .fill(LinearGradient.aurora)
+                    .frame(width: 46, height: 46)
+                    .shadow(color: Color.auroraOrange.opacity(0.45), radius: 8, x: 0, y: 3)
+
+                // Weißer Innen-Rand
+                Circle()
+                    .stroke(Color.white.opacity(0.35), lineWidth: 1.5)
+                    .frame(width: 46, height: 46)
+
+                VStack(spacing: 1) {
+                    // Emoji-Stack (max 2 übereinander, sonst Zahl)
+                    if previewEmojis.count <= 2 {
+                        HStack(spacing: -4) {
+                            ForEach(previewEmojis, id: \.self) { emoji in
+                                Text(emoji)
+                                    .font(.system(size: 14))
+                            }
+                        }
+                    }
+                    // Anzahl
+                    Text("\(group.count)")
+                        .font(.system(size: previewEmojis.count <= 2 ? 11 : 17,
+                                      weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(pressed ? 0.92 : 1.0)
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: pressed)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in pressed = true }
+                .onEnded   { _ in pressed = false }
+        )
+        .accessibilityLabel("\(group.count) Drops: \(activitiesLabel)")
+        .accessibilityHint(tr("map.tap_to_zoom"))
     }
 }
 
@@ -659,79 +965,81 @@ struct IncomingJoinRequestSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // ── Anfrage-Header ─────────────────────────────────────
-            // "Beitrittsanfrage" als Brand-Capsule statt nur grau-Text —
-            // sticht auf hellem Sheet-Background sofort raus, der User
-            // erkennt den Kontext ohne zu lesen.
-            VStack(spacing: 10) {
-                HStack(spacing: 6) {
-                    Image(systemName: "person.fill.badge.plus")
-                        .font(.system(size: 11, weight: .bold))
-                    Text("Beitrittsanfrage")
-                        .font(.system(size: 12, weight: .heavy))
-                        .tracking(0.4)
-                        .textCase(.uppercase)
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 12).padding(.vertical, 6)
-                .background(
-                    Capsule().fill(
-                        LinearGradient(
-                            colors: [Color.brand, Color.accentOrange],
-                            startPoint: .leading, endPoint: .trailing
-                        )
-                    )
-                    .shadow(color: Color.brand.opacity(0.35), radius: 8, y: 2)
-                )
 
-                Text(store.activeDrops.first?.activity.name ?? "Dein Drop")
-                    .font(.system(size: 19, weight: .bold))
-                    .foregroundColor(.textPrimary)
+            // ── Drag handle ───────────────────────────────────────
+            RoundedRectangle(cornerRadius: 2.5)
+                .fill(Color.secondary.opacity(0.3))
+                .frame(width: 36, height: 5)
+                .padding(.top, 12)
+                .padding(.bottom, 20)
 
-                // Hinweis wenn mehrere Anfragen in der Queue stehen — User
-                // weiß dann dass nach Annehmen/Ablehnen direkt das nächste
-                // Sheet kommt. Vorher: keine Visualisierung der Queue.
-                let waitingCount = max(0, store.pendingJoinRequests.count - 1)
-                if waitingCount > 0 {
-                    HStack(spacing: 5) {
-                        Image(systemName: "person.2.badge.gearshape.fill")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("Noch \(waitingCount) weitere Anfrage\(waitingCount == 1 ? "" : "n")")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .foregroundColor(.accentOrange)
-                    .padding(.horizontal, 9).padding(.vertical, 4)
-                    .background(Color.accentOrange.opacity(0.12), in: Capsule())
-                    .padding(.top, 2)
-                }
+            // ── Header-Chip ───────────────────────────────────────
+            HStack(spacing: 6) {
+                Image(systemName: "person.fill.badge.plus")
+                    .font(.system(size: 11, weight: .bold))
+                Text(store.activeDrops.first?.activity.name ?? tr("map.join_request"))
+                    .font(.system(size: 12, weight: .heavy))
+                    .tracking(0.5)
+                    .textCase(.uppercase)
             }
-            // Mehr Top-Padding — sonst landet die Brand-Capsule unter dem
-            // Sheet-Drag-Indicator und ist halb überlappt/abgeschnitten.
-            .padding(.top, 36).padding(.bottom, 24)
+            .foregroundColor(.white)
+            .padding(.horizontal, 14).padding(.vertical, 7)
+            .background(
+                Capsule().fill(
+                    LinearGradient(colors: [Color.brand, Color.accentOrange],
+                                   startPoint: .leading, endPoint: .trailing)
+                )
+                .shadow(color: Color.brand.opacity(0.30), radius: 10, y: 3)
+            )
 
-            // ── Profil ────────────────────────────────────────────
-            VStack(spacing: 12) {
-                // Avatar
+            // Mehrere Anfragen in Queue
+            let waitingCount = max(0, store.pendingJoinRequests.count - 1)
+            if waitingCount > 0 {
+                HStack(spacing: 5) {
+                    Image(systemName: "person.2.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text((waitingCount == 1 ? tr("map.more_requests_singular") : tr("map.more_requests_plural")).replacingOccurrences(of: "{count}", with: "\(waitingCount)"))
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundColor(.accentOrange)
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(Color.accentOrange.opacity(0.12), in: Capsule())
+                .padding(.top, 8)
+            }
+
+            // ── Avatar + Name ─────────────────────────────────────
+            let tierColor = ReliabilityScore.color(forPoints: request.joinerReliabilityPoints)
+            VStack(spacing: 14) {
+                // Avatar mit Tier-Ring
                 ZStack {
                     Circle()
-                        .fill(Color.white.opacity(0.1))
-                        .frame(width: 88, height: 88)
+                        .stroke(
+                            LinearGradient(
+                                colors: [tierColor.opacity(0.7), tierColor.opacity(0.2)],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 3
+                        )
+                        .frame(width: 106, height: 106)
+
                     if let urlStr = request.joinerProfileImageURL, !urlStr.isEmpty {
-                        RemoteProfileImage(url: urlStr, fallbackEmoji: request.joinerEmoji,
-                                           size: 88)
+                        RemoteProfileImage(url: urlStr, fallbackEmoji: request.joinerEmoji, size: 96)
                     } else {
-                        Text(request.joinerEmoji)
-                            .font(.system(size: 44))
+                        ZStack {
+                            Circle().fill(Color(.systemGray6)).frame(width: 96, height: 96)
+                            Text(request.joinerEmoji).font(.system(size: 48))
+                        }
                     }
                 }
-                .overlay(Circle().stroke(Color.white.opacity(0.15), lineWidth: 1.5))
+                .padding(.top, 20)
 
+                // Name + Alter
                 HStack(spacing: 6) {
                     Text(request.joinerName)
-                        .font(.system(size: 22, weight: .bold))
+                        .font(.system(size: 24, weight: .bold))
                     if let age = request.joinerAge {
                         Text("\(age)")
-                            .font(.system(size: 22, weight: .semibold))
+                            .font(.system(size: 24, weight: .light))
                             .foregroundColor(.textSecondary)
                     }
                     if request.joinerIsPlus {
@@ -742,16 +1050,15 @@ struct IncomingJoinRequestSheet: View {
                         .foregroundStyle(Color(hex: "7a4e05"))
                         .padding(.horizontal, 7).padding(.vertical, 3)
                         .background(
-                            LinearGradient(colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                            LinearGradient(colors: [Color.auroraGoldLight, Color.auroraGoldDark],
                                            startPoint: .topLeading, endPoint: .bottomTrailing),
                             in: Capsule()
                         )
                     }
                 }
 
-                // Tier + Entfernung in einer Zeile
-                HStack(spacing: 10) {
-                    let tierColor = ReliabilityScore.color(forPoints: request.joinerReliabilityPoints)
+                // Tier-Badge + Entfernung
+                HStack(spacing: 8) {
                     HStack(spacing: 4) {
                         Image(systemName: ReliabilityScore.badgeIcon(forPoints: request.joinerReliabilityPoints))
                             .font(.system(size: 11, weight: .semibold))
@@ -759,88 +1066,112 @@ struct IncomingJoinRequestSheet: View {
                             .font(.system(size: 12, weight: .semibold))
                     }
                     .foregroundColor(tierColor)
-                    .padding(.horizontal, 9).padding(.vertical, 4)
-                    .background(tierColor.opacity(0.14), in: Capsule())
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(tierColor.opacity(0.12), in: Capsule())
 
                     if let meters = joinerDistanceMeters {
                         HStack(spacing: 4) {
                             Image(systemName: "location.fill").font(.system(size: 10))
                             Text(formatDistance(meters))
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.system(size: 12, weight: .medium))
                         }
-                        .foregroundColor(.textSecondary)
-                        .padding(.horizontal, 9).padding(.vertical, 4)
-                        .background(Color.textSecondary.opacity(0.10), in: Capsule())
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(Color(.systemGray5), in: Capsule())
                     }
-                }
-                .padding(.top, 4)
-
-                // Auto-Accept Countdown
-                if timeLeft > 0 {
-                    HStack(spacing: 5) {
-                        Image(systemName: "clock")
-                            .font(.system(size: 11))
-                        Text("Automatisch bestätigt in \(timeLeft / 60):\(String(format: "%02d", timeLeft % 60))")
-                            .font(.system(size: 12))
-                    }
-                    .foregroundStyle(.secondary)
-                }
-
-                // Joiner-Nachricht — optional, in Sprechblasen-Stil damit
-                // der Host sofort sieht dass es Original-Worte vom Joiner sind.
-                if let msg = request.joinerMessage,
-                   !msg.trimmingCharacters(in: .whitespaces).isEmpty {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "quote.bubble.fill")
-                            .font(.system(size: 12))
-                            .foregroundColor(.brand)
-                            .padding(.top, 2)
-                        Text(msg)
-                            .font(.system(size: 13))
-                            .foregroundColor(.textPrimary)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 12).padding(.vertical, 10)
-                    .background(Color.brand.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-                    .padding(.horizontal, 24)
-                    .padding(.top, 12)
                 }
             }
-            .padding(.bottom, 32)
+
+            // ── Nachricht ─────────────────────────────────────────
+            if let msg = request.joinerMessage,
+               !msg.trimmingCharacters(in: .whitespaces).isEmpty {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "bubble.left.fill")
+                        .font(.system(size: 13))
+                        .foregroundColor(.brand)
+                        .padding(.top, 1)
+                    Text(msg)
+                        .font(.system(size: 14))
+                        .foregroundColor(.textPrimary)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 12)
+                .background(Color.brand.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
+                .padding(.horizontal, 24)
+                .padding(.top, 18)
+            }
+
+            // ── Auto-Accept Timer ─────────────────────────────────
+            if timeLeft > 0 {
+                let total  = max(1, Double(Int(request.autoAcceptAt.timeIntervalSince1970
+                    - request.autoAcceptAt.timeIntervalSinceNow + Double(timeLeft))))
+                let progress = Double(timeLeft) / total
+
+                HStack(spacing: 8) {
+                    ZStack {
+                        Circle()
+                            .stroke(Color.secondary.opacity(0.15), lineWidth: 2.5)
+                            .frame(width: 22, height: 22)
+                        Circle()
+                            .trim(from: 0, to: progress)
+                            .stroke(Color.accentOrange, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                            .frame(width: 22, height: 22)
+                            .rotationEffect(.degrees(-90))
+                            .animation(.linear(duration: 1), value: timeLeft)
+                    }
+                    Text(tr("map.auto_confirmed_in").replacingOccurrences(of: "{time}", with: "\(timeLeft / 60):\(String(format: "%02d", timeLeft % 60))"))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 16)
+            }
+
+            Spacer(minLength: 20)
 
             // ── Buttons ───────────────────────────────────────────
-            HStack(spacing: 14) {
-                // Ablehnen
+            HStack(spacing: 12) {
                 Button {
                     store.declineJoinRequest(request)
                     dismiss()
                 } label: {
-                    Label("Ablehnen", systemImage: "xmark")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.red)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
-                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.red.opacity(0.3), lineWidth: 1))
+                    HStack(spacing: 6) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .bold))
+                        Text(tr("map.reject"))
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 15)
+                    .background(Color.red.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.red.opacity(0.25), lineWidth: 1))
                 }
 
-                // Bestätigen
                 Button {
                     store.acceptJoinRequest(request)
                     dismiss()
                 } label: {
-                    Label("Bestätigen", systemImage: "checkmark")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(Color.green.opacity(0.8), in: RoundedRectangle(cornerRadius: 14))
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 14, weight: .bold))
+                        Text(tr("map.confirm"))
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 15)
+                    .background(
+                        LinearGradient(colors: [Color.brand, Color.brand.opacity(0.80)],
+                                       startPoint: .topLeading, endPoint: .bottomTrailing),
+                        in: RoundedRectangle(cornerRadius: 16)
+                    )
+                    .shadow(color: Color.brand.opacity(0.30), radius: 8, y: 3)
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.bottom, 24)
+            .padding(.bottom, 32)
         }
         .onReceive(timer) { _ in
             timeLeft = autoAcceptSeconds
@@ -887,10 +1218,12 @@ struct DropJoinSheet: View {
     private var activeSince: String {
         let elapsed = Int(now.timeIntervalSince(item.createdAt) / 60)
         if elapsed < 1 { return tr("drop.just_started") }
-        if elapsed < 60 { return "Seit \(elapsed) Min aktiv" }
+        if elapsed < 60 { return tr("map.active_since_mins").replacingOccurrences(of: "{mins}", with: "\(elapsed)") }
         let h = elapsed / 60
         let m = elapsed % 60
-        return m > 0 ? "Seit \(h)h \(m)min aktiv" : "Seit \(h)h aktiv"
+        return m > 0
+            ? tr("map.active_since_hm").replacingOccurrences(of: "{h}", with: "\(h)").replacingOccurrences(of: "{m}", with: "\(m)")
+            : tr("map.active_since_h").replacingOccurrences(of: "{h}", with: "\(h)")
     }
 
     private var startTimeString: String {
@@ -904,22 +1237,18 @@ struct DropJoinSheet: View {
         switch item.type {
         case .myDrop:   return .accentOrange
         case .joiner:   return .onlineGreen
-        case .stranger: return item.creatorAgeGroup?.color ?? Color(hex: "06b6d4")
+        case .stranger: return item.creatorAgeGroup?.color ?? Color.auroraCyan
         default:        return .brand
         }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Drag handle + Share Button
-            ZStack {
-                Capsule().fill(Color(UIColor.systemGray4))
-                    .frame(width: 36, height: 4)
-                HStack {
-                    Spacer()
-                    DropShareButton(item: item)
-                        .padding(.trailing, 16)
-                }
+            // Share Button — System-DragIndicator übernimmt den Strich oben
+            HStack {
+                Spacer()
+                DropShareButton(item: item)
+                    .padding(.trailing, 16)
             }
             .padding(.top, 10).padding(.bottom, 16)
 
@@ -991,14 +1320,16 @@ struct DropJoinSheet: View {
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(.accentOrange)
                     }
-                    // ETA + Distanz
+                    // ETA + Distanz — immer auf echtem Standort (effectiveCoordinate).
+                    // Fuzzy-Drops: realCoordinate ist gesetzt → korrekte Walk-Time statt
+                    // verfälschtem Wert durch den Karten-Versatz (800-1000m).
                     if item.type != .myDrop {
                         HStack(spacing: 10) {
-                            Label(store.etaString(to: item.coordinate) + " Weg",
+                            Label(store.etaString(to: item.effectiveCoordinate) + " Weg",
                                   systemImage: "figure.walk")
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundColor(accentColor)
-                            Label(store.distanceString(to: item.coordinate),
+                            Label(store.distanceString(to: item.effectiveCoordinate),
                                   systemImage: "mappin.circle.fill")
                                 .font(.system(size: 12))
                                 .foregroundColor(.textSecondary)
@@ -1023,11 +1354,6 @@ struct DropJoinSheet: View {
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundColor(.textPrimary)
                                     .lineLimit(1)
-                                if p.isVerified {
-                                    Image(systemName: "checkmark.seal.fill")
-                                        .font(.system(size: 10))
-                                        .foregroundColor(Color(hex: "3b82f6"))
-                                }
                                 if isSelfParticipant(p) && store.qualifiesForBetaBadge {
                                     BetaBadge()
                                 }
@@ -1042,7 +1368,7 @@ struct DropJoinSheet: View {
                                 Circle()
                                     .fill(Color.textTertiary)
                                     .frame(width: 2, height: 2)
-                                Text("Ist bereits vor Ort")
+                                Text(tr("map.already_on_site"))
                                     .font(.system(size: 11))
                                     .foregroundColor(.textSecondary)
                             }
@@ -1051,7 +1377,7 @@ struct DropJoinSheet: View {
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(.textPrimary)
                                 .lineLimit(1)
-                            Text("Sind bereits vor Ort")
+                            Text(tr("map.are_already_on_site"))
                                 .font(.system(size: 11))
                                 .foregroundColor(.textSecondary)
                         }
@@ -1069,8 +1395,8 @@ struct DropJoinSheet: View {
                         .font(.system(size: 11))
                         .foregroundColor(.textTertiary)
                     Text(onTheWayCount == 1
-                         ? "1 Person ist unterwegs"
-                         : "\(onTheWayCount) Personen sind unterwegs")
+                         ? tr("map.one_on_way")
+                         : tr("map.x_on_way").replacingOccurrences(of: "{count}", with: "\(onTheWayCount)"))
                         .font(.system(size: 11))
                         .foregroundColor(.textTertiary)
                 }
@@ -1078,8 +1404,24 @@ struct DropJoinSheet: View {
                 .padding(.top, onTheWayCount > 0 && confirmedParticipants.isEmpty ? 12 : 4)
             }
 
-            // Adresse (Reverse Geocoding)
-            if let address = resolvedAddress {
+            // Adresse / Fuzzy-Hinweis
+            if item.isFuzzy {
+                // Kein Reverse-Geocoding bei Fuzzy-Drops — die fuzzy Koordinate
+                // liefert eine falsche Adresse, die echte würde den Host verraten.
+                // Stattdessen: Hinweis dass der Drop näher ist als auf der Karte.
+                HStack(spacing: 8) {
+                    Image(systemName: "location.slash.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(accentColor.opacity(0.75))
+                    Text(tr("map.fuzzy_pos_info"))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 10)
+            } else if let address = resolvedAddress {
                 HStack(spacing: 8) {
                     Image(systemName: "mappin.and.ellipse")
                         .font(.system(size: 12))
@@ -1116,7 +1458,7 @@ struct DropJoinSheet: View {
                         HStack(spacing: 8) {
                             Image(systemName: "clock.fill")
                                 .font(.system(size: 12)).foregroundColor(.brand)
-                            Text(time).font(.system(size: 13, weight: .medium)).foregroundColor(.textPrimary)
+                            Text(trScheduledTime(time)).font(.system(size: 13, weight: .medium)).foregroundColor(.textPrimary)
                             Spacer()
                         }
                     }
@@ -1148,64 +1490,6 @@ struct DropJoinSheet: View {
                             .font(.system(size: 13)).foregroundColor(.textSecondary)
                     }
 
-                    // ── Drops+ Boost Button — Premium-Light Gold ────────
-                    // Aus für den initialen Launch (FeatureFlags.dropsPlusEnabled).
-                    if FeatureFlags.dropsPlusEnabled {
-                        Button {
-                            if item.isBoosted {
-                                store.unboostActiveDrop()
-                            } else {
-                                store.boostActiveDrop()
-                            }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: item.isBoosted ? "bolt.circle.fill" : "bolt.fill")
-                                    .font(.system(size: 16, weight: .semibold))
-                                Text(item.isBoosted ? "Boost aktiv" : "Drop boosten")
-                                    .font(.system(size: 15, weight: .semibold))
-                                if !store.isPlusUser {
-                                    Text("Drops+")
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundStyle(Color(hex: "7a4e05"))
-                                        .padding(.horizontal, 6).padding(.vertical, 2)
-                                        .background(Color.white.opacity(0.35), in: Capsule())
-                                }
-                            }
-                            .foregroundColor(item.isBoosted ? Color(hex: "a87408") : .white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                            .background(
-                                Group {
-                                    if item.isBoosted {
-                                        Color(hex: "d4a017").opacity(0.15)
-                                    } else {
-                                        LinearGradient(
-                                            colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                    }
-                                }
-                                .clipShape(RoundedRectangle(cornerRadius: 16))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .stroke(
-                                        item.isBoosted
-                                            ? Color(hex: "d4a017").opacity(0.5)
-                                            : Color.white.opacity(0.20),
-                                        lineWidth: 1
-                                    )
-                            )
-                            .shadow(color: Color(hex: "a87408").opacity(item.isBoosted ? 0 : 0.25),
-                                    radius: 8, y: 3)
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 18)
-                        .sheet(isPresented: $store.showDropsPlusPaywall) {
-                            DropsPlusView()
-                        }
-                    }
 
                     Button {
                         showCancelAlert = true
@@ -1217,7 +1501,7 @@ struct DropJoinSheet: View {
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(Color.accentRed, in: RoundedRectangle(cornerRadius: 16))
+                        .background(Color.accentRed, in: RoundedRectangle(cornerRadius: Radius.lg))
                         .shadow(color: Color.accentRed.opacity(0.3), radius: 8, y: 4)
                     }
                     .buttonStyle(.plain)
@@ -1249,15 +1533,15 @@ struct DropJoinSheet: View {
                     .interactiveDismissDisabled()
                     .sheetBackground()
                 }
-                .alert("Live Activity deaktiviert", isPresented: $store.showLiveActivitySettingsHint) {
-                    Button("Einstellungen öffnen") {
+                .alert(tr("map.live_activity_disabled"), isPresented: $store.showLiveActivitySettingsHint) {
+                    Button(tr("map.open_settings")) {
                         if let url = URL(string: UIApplication.openSettingsURLString) {
                             UIApplication.shared.open(url)
                         }
                     }
                     Button("OK", role: .cancel) {}
                 } message: {
-                    Text("Dynamic Island und Sperrbildschirm-Anzeige sind für Drops deaktiviert. Aktiviere sie unter Einstellungen → Drops → Live Activities.")
+                    Text(tr("map.live_activities_info"))
                 }
             } else if blockedByOtherDrop {
                 // Bereits in einem anderen Drop aktiv
@@ -1311,21 +1595,21 @@ struct DropJoinSheet: View {
                                 let mins = Int(cooldown / 60) + 1
                                 HStack(spacing: 8) {
                                     Image(systemName: "clock.fill").font(.system(size: 15))
-                                    Text("Noch \(mins) Min Cooldown")
+                                    Text(tr("map.cooldown_mins").replacingOccurrences(of: "{mins}", with: "\(mins)"))
                                         .font(.system(size: 15, weight: .semibold))
                                 }
                                 .foregroundColor(.white.opacity(0.9))
                             } else if joining || isPending {
                                 HStack(spacing: 8) {
-                                    ProgressView().tint(.white).scaleEffect(0.85)
-                                    Text(isPending ? "Warte auf Bestätigung…" : "")
+                                    ProgressView().tint(.white)
+                                    Text(isPending ? tr("map.waiting_confirmation") : "")
                                         .font(.system(size: 14, weight: .medium))
                                         .foregroundColor(.white.opacity(0.85))
                                 }
                             } else if isDeclined {
                                 HStack(spacing: 8) {
                                     Image(systemName: "xmark.circle.fill").font(.system(size: 17))
-                                    Text("Nicht bestätigt").font(.system(size: 16, weight: .bold))
+                                    Text(tr("map.not_confirmed")).font(.system(size: 16, weight: .bold))
                                 }
                                 .foregroundColor(.white)
                             } else if isJoined {
@@ -1373,39 +1657,42 @@ struct DropJoinSheet: View {
             store.viewDrop(item)
         }
         .sheet(isPresented: $showCreatorProfile) {
-            if let creator = item.participants.first {
-                if #available(iOS 16.4, *) {
-                    MiniProfileSheet(
-                        name: creator.name,
-                        emoji: creator.emoji,
-                        selfie: creator.selfie,
-                        profileImageURL: creator.profileImageURL,
-                        reliabilityScore: creator.reliabilityScore,
-                        accentColor: accentColor,
-                        isVerified: creator.isVerified,
-                        userUID: creator.firebaseUID,
-                        canBlock: true
-                    ) { dismiss() }
-                    .environmentObject(store)
-                    .presentationDetents([.height(360)])
-                    .presentationDragIndicator(.hidden)
-                    .sheetBackground()
-                } else {
-                    MiniProfileSheet(
-                        name: creator.name,
-                        emoji: creator.emoji,
-                        selfie: creator.selfie,
-                        profileImageURL: creator.profileImageURL,
-                        reliabilityScore: creator.reliabilityScore,
-                        accentColor: accentColor,
-                        isVerified: creator.isVerified,
-                        userUID: creator.firebaseUID,
-                        canBlock: true
-                    ) { dismiss() }
-                    .environmentObject(store)
-                    .presentationDetents([.height(360)])
-                    .presentationDragIndicator(.hidden)
-                }
+            // Fallback auf item-Felder wenn participants leer (Fuzzy/Stranger-Drops
+            // aus Firebase haben keine participants-Liste befüllt — nur hostUID/name/emoji).
+            let creator = item.participants.first
+            let profileName  = creator?.name           ?? item.name
+            let profileEmoji = creator?.emoji          ?? item.emoji
+            let profileUID   = creator?.firebaseUID    ?? item.hostUID
+            let profileScore = creator?.reliabilityScore ?? item.hostReliabilityPoints ?? ReliabilityScore.startingPoints
+            if #available(iOS 16.4, *) {
+                MiniProfileSheet(
+                    name: profileName,
+                    emoji: profileEmoji,
+                    selfie: creator?.selfie,
+                    profileImageURL: creator?.profileImageURL,
+                    reliabilityScore: profileScore,
+                    accentColor: accentColor,
+                    userUID: profileUID,
+                    canBlock: true
+                ) { dismiss() }
+                .environmentObject(store)
+                .presentationDetents([.height(360)])
+                .presentationDragIndicator(.hidden)
+                .sheetBackground()
+            } else {
+                MiniProfileSheet(
+                    name: profileName,
+                    emoji: profileEmoji,
+                    selfie: creator?.selfie,
+                    profileImageURL: creator?.profileImageURL,
+                    reliabilityScore: profileScore,
+                    accentColor: accentColor,
+                    userUID: profileUID,
+                    canBlock: true
+                ) { dismiss() }
+                .environmentObject(store)
+                .presentationDetents([.height(360)])
+                .presentationDragIndicator(.hidden)
             }
         }
     }
@@ -1420,7 +1707,7 @@ struct DropJoinSheet: View {
         case 3: return "\(names[0]), \(names[1]) & \(names[2])"
         default:
             let visible = names.prefix(2).joined(separator: ", ")
-            return "\(visible) & \(names.count - 2) weitere"
+            return tr("map.and_more").replacingOccurrences(of: "{names}", with: visible).replacingOccurrences(of: "{count}", with: "\(names.count - 2)")
         }
     }
 
@@ -1442,6 +1729,11 @@ struct DropJoinSheet: View {
     // MARK: - Reverse Geocoding
 
     private func geocodeAddress() {
+        // Fuzzy-Drops: kein Geocoding.
+        // • fuzzy coord → liefert falsche Adresse (800-1000m daneben)
+        // • real  coord → würde den Host-Standort verraten
+        // Der Fuzzy-Hinweis-Row ersetzt die Adresszeile im UI.
+        guard !item.isFuzzy else { return }
         let geocoder = CLGeocoder()
         let loc = CLLocation(latitude: item.coordinate.latitude, longitude: item.coordinate.longitude)
         geocoder.reverseGeocodeLocation(loc) { placemarks, _ in
@@ -1496,12 +1788,12 @@ struct InAppRouteSheet: View {
                 if isLoading {
                     Color.black.opacity(0.08)
                     VStack(spacing: 10) {
-                        ProgressView().tint(accentColor)
+                        ProgressView().tint(.brand)
                         Text(tr("map.calculating_route"))
                             .font(.system(size: 13)).foregroundColor(.textSecondary)
                     }
                     .padding(20)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Radius.lg))
                 }
             }
             .frame(maxHeight: .infinity)
@@ -1517,7 +1809,7 @@ struct InAppRouteSheet: View {
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundColor(.textSecondary)
                                 .textCase(.uppercase)
-                            Text("~\(max(1, Int(route.expectedTravelTime / 60))) Min")
+                            Text(tr("map.walk_minutes").replacingOccurrences(of: "{mins}", with: "\(max(1, Int(route.expectedTravelTime / 60)))"))
                                 .font(.system(size: 28, weight: .bold))
                                 .foregroundColor(.textPrimary)
                         }
@@ -1555,7 +1847,7 @@ struct InAppRouteSheet: View {
                         .foregroundColor(accentColor)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
+                        .background(accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: Radius.lg))
                 }
                 .buttonStyle(.plain)
 
@@ -1703,18 +1995,12 @@ struct ActiveDropTabView: View {
     @State private var showRouteSheet = false
     @State private var lastExtendedAt: Date? = nil
     @State private var lastExtendCooldownSecs: Int = 0  // Hälfte der gewählten Verlängerung
+    /// Sheet-State im Parent — überlebt Firebase-Updates ohne zu resetten.
+    @State private var selectedProfileParticipant: DropParticipant? = nil
 
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     // MARK: - Adaptive Farben
-    private var isDark: Bool { colorScheme == .dark }
-    private var textPrimary:   Color { isDark ? .white                  : Color(hex: "111827") }
-    private var textSecondary: Color { isDark ? .white.opacity(0.65)    : Color(hex: "374151") }
-    private var textTertiary:  Color { isDark ? .white.opacity(0.42)    : Color(hex: "6b7280") }
-    private var cardFill:      Color { isDark ? Color(hex: "1c1f28")    : Color.white.opacity(0.88) }
-    private var cardStroke:    Color { isDark ? Color.white.opacity(0.09) : Color.black.opacity(0.07) }
-    private var rowFill:       Color { isDark ? Color(hex: "1e2430")    : Color.white.opacity(0.72) }
-    private var scrimOpacity:  Double { isDark ? 0.68 : 0.0 }
 
     var isOwnDrop: Bool { item.type == .myDrop }
 
@@ -1782,9 +2068,10 @@ struct ActiveDropTabView: View {
     /// der Joiner kurz nach Beitritt fälschlich auf „vor Ort", obwohl
     /// er noch unterwegs war.
     var confirmedHere: [DropParticipant] {
+        var result: [DropParticipant]
         if item.participants.isEmpty && !isOwnDrop {
             // Host ist immer vor Ort — ggf. weitere BLE-bestätigte einfügen
-            var result = [syntheticHost]
+            result = [syntheticHost]
             let bleConfirmed = store.bluetoothMeetup.confirmedTokens
             if !bleConfirmed.isEmpty {
                 let extra = bleConfirmed.map { token in
@@ -1792,40 +2079,80 @@ struct ActiveDropTabView: View {
                 }
                 result.append(contentsOf: extra)
             }
-            return result
+        } else {
+            result = item.participants.filter { p in
+                // Self: nur wenn physisch angekommen (GPS ≤ 20 m oder BLE).
+                // Andere Teilnehmer: nur wenn BLE bestätigt hat.
+                if p.token == myToken { return isArrived }
+                return store.bluetoothMeetup.confirmedTokens.contains(p.token)
+            }
         }
-        return item.participants.filter { p in
-            // Self: nur wenn physisch angekommen (GPS ≤ 20 m oder BLE).
-            // Andere Teilnehmer: nur wenn BLE bestätigt hat.
-            if p.token == myToken { return isArrived }
-            return store.bluetoothMeetup.confirmedTokens.contains(p.token)
+
+        // Fail-safe: wenn User im aktiven Drop ist UND als „vor Ort" gilt
+        // (isArrived) aber Self fehlt in der Liste (Firebase-Sync-Lag o.ä.),
+        // dann Self explizit anhängen. Sonst sieht der User sich selbst nicht
+        // in seinem eigenen Drop — extrem irritierend.
+        if isArrived && store.isInActiveDrop
+           && !result.contains(where: { $0.token == myToken }) {
+            result.append(DropParticipant(
+                name: store.currentUser.name,
+                emoji: store.currentUser.emoji,
+                reliabilityScore: store.reliabilityScore.points,
+                reliabilityCommits: store.reliabilityScore.totalCommits,
+                age: store.userAge,
+                token: myToken,
+                profileImageURL: store.profileImageURL
+            ))
         }
+
+        return result
     }
 
     /// Unterwegs (beigetreten, aber noch nicht per BLE bestätigt).
     /// Self landet hier solange `isArrived` false ist — auch der Host,
     /// wenn er einen Pin-Drop fern vom aktuellen Standort erstellt hat.
     var onTheWay: [DropParticipant] {
+        var result: [DropParticipant]
         if item.participants.isEmpty && !isOwnDrop {
             // Aktueller User ist unterwegs bis BLE bestätigt
             guard !isArrived else { return [] }
             return [DropParticipant(name: store.currentUser.name,
                                     emoji: store.currentUser.emoji,
                                     token: myToken)]
+        } else {
+            result = item.participants.filter { p in
+                // Self: in „Unterwegs" wenn noch nicht angekommen.
+                // Andere: in „Unterwegs" wenn BLE noch nicht bestätigt hat.
+                if p.token == myToken { return !isArrived }
+                return !store.bluetoothMeetup.confirmedTokens.contains(p.token)
+            }
         }
-        return item.participants.filter { p in
-            // Self: in „Unterwegs" wenn noch nicht angekommen.
-            // Andere: in „Unterwegs" wenn BLE noch nicht bestätigt hat.
-            if p.token == myToken { return !isArrived }
-            return !store.bluetoothMeetup.confirmedTokens.contains(p.token)
+
+        // Fail-safe: wenn User im aktiven Drop ist UND noch nicht „vor Ort"
+        // ist (isArrived == false) UND Self fehlt in der Liste, Self in
+        // „Unterwegs" anzeigen — sonst landet der Joiner zwischen den Stühlen
+        // (weder in Vor Ort noch Unterwegs sichtbar).
+        if !isArrived && store.isInActiveDrop
+           && !result.contains(where: { $0.token == myToken }) {
+            result.append(DropParticipant(
+                name: store.currentUser.name,
+                emoji: store.currentUser.emoji,
+                reliabilityScore: store.reliabilityScore.points,
+                reliabilityCommits: store.reliabilityScore.totalCommits,
+                age: store.userAge,
+                token: myToken,
+                profileImageURL: store.profileImageURL
+            ))
         }
+
+        return result
     }
 
     var accentColor: Color {
         switch item.type {
         case .myDrop:   return .accentOrange
         case .joiner:   return .onlineGreen
-        case .stranger: return item.creatorAgeGroup?.color ?? Color(hex: "06b6d4")
+        case .stranger: return item.creatorAgeGroup?.color ?? Color.auroraCyan
         default:        return .brand
         }
     }
@@ -1833,9 +2160,11 @@ struct ActiveDropTabView: View {
     var activeSince: String {
         let e = Int(now.timeIntervalSince(item.createdAt) / 60)
         if e < 1 { return tr("drop.just_started") }
-        if e < 60 { return "Seit \(e) Min" }
+        if e < 60 { return tr("map.since_mins").replacingOccurrences(of: "{mins}", with: "\(e)") }
         let h = e / 60; let m = e % 60
-        return m > 0 ? "Seit \(h)h \(m)min" : "Seit \(h)h"
+        return m > 0
+            ? tr("map.since_hm").replacingOccurrences(of: "{h}", with: "\(h)").replacingOccurrences(of: "{m}", with: "\(m)")
+            : tr("map.since_h").replacingOccurrences(of: "{h}", with: "\(h)")
     }
 
     // Kompakter Header-Emoji: kleiner wenn Unterwegs-Personen da sind
@@ -1850,11 +2179,11 @@ struct ActiveDropTabView: View {
             AppAuroraBackground()
 
             // Scrim: im Dark-Mode abdunkeln, im Light-Mode nix
-            Color.black.opacity(scrimOpacity)
+            Color.black.opacity((colorScheme == .dark ? 0.68 : 0.0))
 
             // Dezenter Akzent-Glow in Drop-Farbe
             RadialGradient(
-                colors: [accentColor.opacity(isDark ? 0.22 : 0.15), Color.clear],
+                colors: [accentColor.opacity(colorScheme == .dark ? 0.22 : 0.15), Color.clear],
                 center: UnitPoint(x: 0.5, y: 0.15),
                 startRadius: 0, endRadius: 380
             )
@@ -1945,9 +2274,9 @@ struct ActiveDropTabView: View {
                 Image(systemName: "clock.badge.xmark")
                     .font(.system(size: 13))
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Drop nicht mehr sichtbar")
+                    Text(tr("map.drop_no_longer_visible"))
                         .font(.system(size: 12, weight: .semibold))
-                    Text("Neue Leute können nicht mehr beitreten")
+                    Text(tr("map.no_new_joiners"))
                         .font(.system(size: 11))
                         .opacity(0.7)
                 }
@@ -1956,7 +2285,7 @@ struct ActiveDropTabView: View {
             .foregroundColor(.accentOrange)
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(Color.accentOrange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+            .background(Color.accentOrange.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.md))
             .padding(.horizontal, 20)
             .padding(.top, 12)
         }
@@ -1976,23 +2305,23 @@ struct ActiveDropTabView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(item.activity)
                     .font(.system(size: hasParticipants ? 20 : 24, weight: .bold))
-                    .foregroundColor(textPrimary)
+                    .foregroundColor(Color.textPrimary)
                 HStack(spacing: 5) {
-                    Circle().fill(Color(hex: "3b82f6")).frame(width: 6, height: 6)
+                    Circle().fill(Color.auroraBlue).frame(width: 6, height: 6)
                     Text(isOwnDrop ? tr("drop.my_drop_active") : (isArrived ? tr("drop.arrived") : tr("drop.on_the_way")))
-                        .font(.system(size: 12, weight: .semibold)).foregroundColor(Color(hex: "3b82f6"))
-                    Text("· \(activeSince)").font(.system(size: 12)).foregroundColor(textSecondary)
+                        .font(.system(size: 12, weight: .semibold)).foregroundColor(Color.auroraBlue)
+                    Text("· \(activeSince)").font(.system(size: 12)).foregroundColor(Color.textSecondary)
                 }
                 // Teilnehmer-Slots
                 HStack(spacing: 4) {
-                    Image(systemName: "person.2.fill").font(.system(size: 9)).foregroundColor(textTertiary)
+                    Image(systemName: "person.2.fill").font(.system(size: 9)).foregroundColor(Color.textTertiary)
                     // Bei fremden Drops: mind. 1 (der Host), sonst echte Anzahl
                     let joined = isOwnDrop ? item.participants.count : max(1, confirmedHere.count + (isArrived ? 0 : 1))
                     let maxP   = item.maxParticipants
-                    Text("\(joined)/\(maxP) Teilnehmer")
-                        .font(.system(size: 11)).foregroundColor(textTertiary)
+                    Text(tr("map.participants").replacingOccurrences(of: "{joined}", with: "\(joined)").replacingOccurrences(of: "{max}", with: "\(maxP)"))
+                        .font(.system(size: 11)).foregroundColor(Color.textTertiary)
                     if joined >= maxP {
-                        Text("· Voll").font(.system(size: 11, weight: .semibold)).foregroundColor(.accentOrange)
+                        Text("· \(tr("map.full"))").font(.system(size: 11, weight: .semibold)).foregroundColor(.accentOrange)
                     }
                 }
 
@@ -2012,12 +2341,12 @@ struct ActiveDropTabView: View {
         }
         .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(cardFill)
+            RoundedRectangle(cornerRadius: Radius.lg, style: .continuous)
+                .fill(Color.bgSecondary)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(cardStroke, lineWidth: 1)
+            RoundedRectangle(cornerRadius: Radius.lg, style: .continuous)
+                .stroke(Color.glassBorder, lineWidth: 1)
         )
         .padding(.horizontal, 16)
         .padding(.top, 8)
@@ -2034,9 +2363,9 @@ struct ActiveDropTabView: View {
         sectionCard {
             if isLoadingRoute {
                 HStack(spacing: 10) {
-                    ProgressView().tint(accentColor).scaleEffect(0.85)
+                    ProgressView().tint(.brand).scaleEffect(0.9)
                     Text(tr("map.calculating_route"))
-                        .font(.system(size: 14)).foregroundColor(textSecondary)
+                        .font(.system(size: 14)).foregroundColor(Color.textSecondary)
                 }
             } else if let r = route {
                 // Gehzeit kommt aus MKRoute (einmal berechnet, genauer weil
@@ -2044,21 +2373,21 @@ struct ActiveDropTabView: View {
                 // updated während man geht, nicht nur beim Tab-Switch.
                 HStack(spacing: 0) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("~\(liveWalkMinutes ?? max(1, Int(r.expectedTravelTime / 60))) Min zu Fuß")
-                            .font(.system(size: 17, weight: .bold)).foregroundColor(textPrimary)
+                        Text(tr("map.walking_minutes").replacingOccurrences(of: "{mins}", with: "\(liveWalkMinutes ?? max(1, Int(r.expectedTravelTime / 60)))"))
+                            .font(.system(size: 17, weight: .bold)).foregroundColor(Color.textPrimary)
                         Text({
                             let dist = liveDistanceMeters ?? r.distance
                             return dist < 1000
                                 ? "\(Int(dist)) m entfernt"
                                 : String(format: "%.1f km entfernt", dist / 1000)
                         }())
-                            .font(.system(size: 13)).foregroundColor(textSecondary)
+                            .font(.system(size: 13)).foregroundColor(Color.textSecondary)
                             .contentTransition(.numericText())
                             .animation(.easeInOut(duration: 0.3), value: liveDistanceMeters)
                         if let addr = resolvedAddress {
                             HStack(spacing: 3) {
-                                Image(systemName: "mappin").font(.system(size: 9)).foregroundColor(textTertiary)
-                                Text(addr).font(.system(size: 11)).foregroundColor(textTertiary).lineLimit(1)
+                                Image(systemName: "mappin").font(.system(size: 9)).foregroundColor(Color.textTertiary)
+                                Text(addr).font(.system(size: 11)).foregroundColor(Color.textTertiary).lineLimit(1)
                             }
                         }
                     }
@@ -2089,16 +2418,16 @@ struct ActiveDropTabView: View {
                     HStack(spacing: 4) {
                         Text(item.name)
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(textPrimary)
+                            .foregroundColor(Color.textPrimary)
                         if let age = item.creatorAge {
                             Text("\(age)")
                                 .font(.system(size: 15))
-                                .foregroundColor(textSecondary)
+                                .foregroundColor(Color.textSecondary)
                         }
                     }
-                    Text("Dein Host")
+                    Text(tr("map.your_host"))
                         .font(.system(size: 11))
-                        .foregroundColor(textTertiary)
+                        .foregroundColor(Color.textTertiary)
                 }
                 Spacer()
                 Image(systemName: "person.fill")
@@ -2111,15 +2440,15 @@ struct ActiveDropTabView: View {
         sectionCard {
             HStack(spacing: 12) {
                 ZStack {
-                    Circle().fill(textTertiary.opacity(0.18)).frame(width: 40, height: 40)
+                    Circle().fill(Color.textTertiary.opacity(0.18)).frame(width: 40, height: 40)
                     Image(systemName: "lock.fill")
-                        .font(.system(size: 15)).foregroundColor(textTertiary)
+                        .font(.system(size: 15)).foregroundColor(Color.textTertiary)
                 }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(tr("drop.details_locked"))
-                        .font(.system(size: 13, weight: .semibold)).foregroundColor(textPrimary)
+                        .font(.system(size: 13, weight: .semibold)).foregroundColor(Color.textPrimary)
                     Text(tr("drop.arrive_for_unlock"))
-                        .font(.system(size: 11)).foregroundColor(textTertiary)
+                        .font(.system(size: 11)).foregroundColor(Color.textTertiary)
                 }
                 Spacer()
             }
@@ -2132,8 +2461,8 @@ struct ActiveDropTabView: View {
                     if !onTheWay.isEmpty {
                         HStack(spacing: 4) {
                             PulsingLiveDot()
-                            Text("\(onTheWay.count) unterwegs")
-                                .font(.system(size: 12, weight: .medium)).foregroundColor(textTertiary)
+                            Text(tr("map.on_the_way_count").replacingOccurrences(of: "{count}", with: "\(onTheWay.count)"))
+                                .font(.system(size: 12, weight: .medium)).foregroundColor(Color.textTertiary)
                         }
                     }
                     Spacer()
@@ -2166,23 +2495,23 @@ struct ActiveDropTabView: View {
                     PulsingLiveDot()
                 }
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Du bist unterwegs")
+                    Text(tr("map.you_on_the_way"))
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(textPrimary)
+                        .foregroundColor(Color.textPrimary)
                     HStack(spacing: 6) {
                         if let dist = liveDistanceMeters {
                             Text(dist < 1000
-                                 ? "\(Int(dist)) m entfernt"
-                                 : String(format: "%.1f km entfernt", dist / 1000))
+                                 ? tr("map.meters_away").replacingOccurrences(of: "{meters}", with: "\(Int(dist))")
+                                 : tr("map.km_away").replacingOccurrences(of: "{km}", with: String(format: "%.1f", dist / 1000)))
                                 .font(.system(size: 12))
-                                .foregroundColor(textSecondary)
+                                .foregroundColor(Color.textSecondary)
                                 .contentTransition(.numericText())
                                 .animation(.easeInOut(duration: 0.3), value: liveDistanceMeters)
                         }
                         if let mins = liveWalkMinutes {
-                            Text("· ~\(mins) Min")
+                            Text("· ~\(mins) \(tr("map.min_short"))")
                                 .font(.system(size: 12))
-                                .foregroundColor(textTertiary)
+                                .foregroundColor(Color.textTertiary)
                         }
                     }
                 }
@@ -2237,11 +2566,12 @@ struct ActiveDropTabView: View {
                                     .font(.system(size: 12, weight: .bold)).foregroundColor(.onlineGreen)
                                 Spacer()
                                 Text("\(confirmedHere.count) Person\(confirmedHere.count == 1 ? "" : "en")")
-                                    .font(.system(size: 11)).foregroundColor(textTertiary)
+                                    .font(.system(size: 11)).foregroundColor(Color.textTertiary)
                             }
                             ForEach(confirmedHere) { p in
                                 ParticipantDetailRow(participant: p, isArrived: true,
-                                                    dropCoordinate: item.coordinate)
+                                                    dropCoordinate: item.coordinate,
+                                                    onTapProfile: { selectedProfileParticipant = $0 })
                                     .transition(.asymmetric(
                                         insertion: .move(edge: .top).combined(with: .opacity),
                                         removal: .opacity))
@@ -2258,16 +2588,17 @@ struct ActiveDropTabView: View {
                             HStack(spacing: 6) {
                                 PulsingLiveDot()
                                 Text(tr("drop.on_the_way"))
-                                    .font(.system(size: 12, weight: .bold)).foregroundColor(textSecondary)
-                                Text("· Live").font(.system(size: 11, weight: .semibold))
-                                    .foregroundColor(Color(hex: "3b82f6"))
+                                    .font(.system(size: 12, weight: .bold)).foregroundColor(Color.textSecondary)
+                                Text("· \(tr("map.live"))").font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(Color.auroraBlue)
                                 Spacer()
                                 Text("\(onTheWay.count) Person\(onTheWay.count == 1 ? "" : "en")")
-                                    .font(.system(size: 11)).foregroundColor(textTertiary)
+                                    .font(.system(size: 11)).foregroundColor(Color.textTertiary)
                             }
                             ForEach(onTheWay) { p in
                                 ParticipantDetailRow(participant: p, isArrived: false,
-                                                    dropCoordinate: item.coordinate)
+                                                    dropCoordinate: item.coordinate,
+                                                    onTapProfile: { selectedProfileParticipant = $0 })
                             }
                         }
                     }
@@ -2295,11 +2626,12 @@ struct ActiveDropTabView: View {
                                     .font(.system(size: 12, weight: .bold)).foregroundColor(.onlineGreen)
                                 Spacer()
                                 Text("\(confirmedHere.count) Person\(confirmedHere.count == 1 ? "" : "en")")
-                                    .font(.system(size: 11)).foregroundColor(textTertiary)
+                                    .font(.system(size: 11)).foregroundColor(Color.textTertiary)
                             }
                             ForEach(confirmedHere) { p in
                                 ParticipantDetailRow(participant: p, isArrived: true,
-                                                    dropCoordinate: item.coordinate)
+                                                    dropCoordinate: item.coordinate,
+                                                    onTapProfile: { selectedProfileParticipant = $0 })
                             }
                         }
                     }
@@ -2311,12 +2643,13 @@ struct ActiveDropTabView: View {
                             HStack(spacing: 6) {
                                 PulsingLiveDot()
                                 Text(tr("drop.on_the_way"))
-                                    .font(.system(size: 12, weight: .bold)).foregroundColor(textSecondary)
+                                    .font(.system(size: 12, weight: .bold)).foregroundColor(Color.textSecondary)
                                 Spacer()
                             }
                             ForEach(onTheWay) { p in
                                 ParticipantDetailRow(participant: p, isArrived: false,
-                                                    dropCoordinate: item.coordinate)
+                                                    dropCoordinate: item.coordinate,
+                                                    onTapProfile: { selectedProfileParticipant = $0 })
                             }
                         }
                     }
@@ -2347,7 +2680,7 @@ struct ActiveDropTabView: View {
                                 .foregroundColor(accentColor)
                             Text(addr)
                                 .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(textPrimary)
+                                .foregroundColor(Color.textPrimary)
                                 .lineLimit(2)
                             Spacer()
                         }
@@ -2358,7 +2691,7 @@ struct ActiveDropTabView: View {
                         }
                         Text(item.dropDescription ?? "")
                             .font(.system(size: 13))
-                            .foregroundColor(textSecondary)
+                            .foregroundColor(Color.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -2378,12 +2711,12 @@ struct ActiveDropTabView: View {
                 HStack {
                     HStack(spacing: 4) {
                         Image(systemName: "person.2.fill")
-                            .font(.system(size: 11)).foregroundColor(textTertiary)
-                        Text("\(used) von \(total) Teilnehmern")
-                            .font(.system(size: 13, weight: .semibold)).foregroundColor(textPrimary)
+                            .font(.system(size: 11)).foregroundColor(Color.textTertiary)
+                        Text(tr("map.x_of_y_participants").replacingOccurrences(of: "{used}", with: "\(used)").replacingOccurrences(of: "{total}", with: "\(total)"))
+                            .font(.system(size: 13, weight: .semibold)).foregroundColor(Color.textPrimary)
                     }
                     Spacer()
-                    Text(free == 0 ? "Voll 🔴" : "\(free) \(free == 1 ? "Platz" : "Plätze") frei")
+                    Text(free == 0 ? tr("map.full_red") : (free == 1 ? tr("map.spots_free_singular") : tr("map.spots_free_plural")).replacingOccurrences(of: "{count}", with: "\(free)"))
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(free == 0 ? .accentOrange : .onlineGreen)
                 }
@@ -2419,15 +2752,15 @@ struct ActiveDropTabView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "eye.fill")
                             .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(Color(hex: "f59e0b"))
+                            .foregroundColor(Color.auroraAmber)
                         Text("\(viewers.count) \(viewers.count == 1 ? "Person hat" : "Personen haben") geschaut")
                             .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(textPrimary)
+                            .foregroundColor(Color.textPrimary)
                         Spacer()
                         if !store.isDropsPlusActive {
                             Image(systemName: "lock.fill")
                                 .font(.system(size: 10))
-                                .foregroundColor(textTertiary)
+                                .foregroundColor(Color.textTertiary)
                         }
                     }
 
@@ -2446,24 +2779,24 @@ struct ActiveDropTabView: View {
                                         HStack(spacing: 4) {
                                             Text(viewer.name)
                                                 .font(.system(size: 14, weight: .semibold))
-                                                .foregroundColor(textPrimary)
+                                                .foregroundColor(Color.textPrimary)
                                             if let age = viewer.age {
                                                 Text(", \(age)")
                                                     .font(.system(size: 13))
-                                                    .foregroundColor(textSecondary)
+                                                    .foregroundColor(Color.textSecondary)
                                             }
                                         }
                                         Text(relativeTimeLabel(viewer.viewedAt))
                                             .font(.system(size: 11))
-                                            .foregroundColor(textTertiary)
+                                            .foregroundColor(Color.textTertiary)
                                     }
                                     Spacer()
                                 }
                             }
                             if viewers.count > 8 {
-                                Text("+ \(viewers.count - 8) weitere")
+                                Text(tr("map.more_count").replacingOccurrences(of: "{count}", with: "\(viewers.count - 8)"))
                                     .font(.system(size: 11))
-                                    .foregroundColor(textTertiary)
+                                    .foregroundColor(Color.textTertiary)
                             }
                         }
                     } else {
@@ -2489,7 +2822,7 @@ struct ActiveDropTabView: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "bolt.fill")
                                     .font(.system(size: 11, weight: .bold))
-                                Text("Mit Drops+ aufdecken")
+                                Text(tr("map.unlock_with_plus"))
                                     .font(.system(size: 13, weight: .semibold))
                             }
                             .foregroundStyle(.black)
@@ -2497,10 +2830,10 @@ struct ActiveDropTabView: View {
                             .padding(.vertical, 10)
                             .background(
                                 LinearGradient(
-                                    colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
+                                    colors: [Color.auroraAmber, Color.auroraAmber],
                                     startPoint: .leading, endPoint: .trailing
                                 ),
-                                in: RoundedRectangle(cornerRadius: 10)
+                                in: RoundedRectangle(cornerRadius: Radius.md)
                             )
                         }
                         .buttonStyle(.plain)
@@ -2512,10 +2845,10 @@ struct ActiveDropTabView: View {
 
     private func relativeTimeLabel(_ date: Date) -> String {
         let elapsed = Int(Date().timeIntervalSince(date))
-        if elapsed < 60 { return "gerade eben" }
-        if elapsed < 3600 { return "vor \(elapsed / 60) Min" }
-        if elapsed < 86400 { return "vor \(elapsed / 3600) Std" }
-        return "vor \(elapsed / 86400) Tagen"
+        if elapsed < 60 { return tr("map.just_now") }
+        if elapsed < 3600 { return tr("map.ago_mins").replacingOccurrences(of: "{mins}", with: "\(elapsed / 60)") }
+        if elapsed < 86400 { return tr("map.ago_hours").replacingOccurrences(of: "{hours}", with: "\(elapsed / 3600)") }
+        return tr("map.ago_days").replacingOccurrences(of: "{days}", with: "\(elapsed / 86400)")
     }
 
     // MARK: - Einladungs-Button (immer sichtbar)
@@ -2526,7 +2859,7 @@ struct ActiveDropTabView: View {
                 HStack(spacing: 10) {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 15, weight: .semibold))
-                    Text("Freunde einladen")
+                    Text(tr("map.invite_friends"))
                         .font(.system(size: 15, weight: .semibold))
                     Spacer()
                     Image(systemName: "chevron.right")
@@ -2544,8 +2877,8 @@ struct ActiveDropTabView: View {
             // registriert, also gleich autoritativ.
             let dropLink = URL(string: "https://www.drops-app.de/drop/\(item.id.uuidString)")!
             let location = item.locationTitle.isEmpty ? "" : " · \(item.locationTitle)"
-            let text = "\(item.emoji) \(item.activity)\(location) — komm vorbei. 📍"
-            ShareSheet(items: [text, dropLink])
+            let subject = "\(item.emoji) \(item.activity)\(location) — komm vorbei. 📍"
+            ShareSheet(items: [dropLink], subject: subject)
         }
     }
 
@@ -2560,14 +2893,14 @@ struct ActiveDropTabView: View {
                 HStack {
                     HStack(spacing: 4) {
                         Image(systemName: "clock")
-                            .font(.system(size: 11)).foregroundColor(textTertiary)
-                        Text("Restzeit")
-                            .font(.system(size: 13, weight: .semibold)).foregroundColor(textPrimary)
+                            .font(.system(size: 11)).foregroundColor(Color.textTertiary)
+                        Text(tr("map.time_left"))
+                            .font(.system(size: 13, weight: .semibold)).foregroundColor(Color.textPrimary)
                     }
                     Spacer()
                     Text(item.timeRemainingString)
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(ratio > 0.85 ? .accentOrange : textSecondary)
+                        .foregroundColor(ratio > 0.85 ? .accentOrange : Color.textSecondary)
                         .contentTransition(.numericText())
                 }
                 GeometryReader { geo in
@@ -2600,9 +2933,9 @@ struct ActiveDropTabView: View {
                     }
                     VStack(alignment: .leading, spacing: 2) {
                         Text(tr("drop.waiting_title"))
-                            .font(.system(size: 13, weight: .semibold)).foregroundColor(textPrimary)
+                            .font(.system(size: 13, weight: .semibold)).foregroundColor(Color.textPrimary)
                         Text(tr("drop.waiting_description"))
-                            .font(.system(size: 11)).foregroundColor(textSecondary)
+                            .font(.system(size: 11)).foregroundColor(Color.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 0)
@@ -2623,10 +2956,12 @@ struct ActiveDropTabView: View {
     }
 
     private func formatCooldown(_ secs: Int) -> String {
-        if secs < 60 { return "noch \(secs)s" }
+        if secs < 60 { return tr("map.cooldown_s").replacingOccurrences(of: "{s}", with: "\(secs)") }
         let m = secs / 60
         let s = secs % 60
-        return s > 0 ? "noch \(m)m \(s)s" : "noch \(m) Min"
+        return s > 0
+            ? tr("map.cooldown_ms").replacingOccurrences(of: "{m}", with: "\(m)").replacingOccurrences(of: "{s}", with: "\(s)")
+            : tr("map.cooldown_m").replacingOccurrences(of: "{m}", with: "\(m)")
     }
 
     @ViewBuilder
@@ -2641,11 +2976,11 @@ struct ActiveDropTabView: View {
                     Image(systemName: onCooldown ? "clock" : "clock.arrow.circlepath")
                         .font(.system(size: 14))
                     if let secs = extendCooldownRemaining {
-                        Text("Verlängern (\(formatCooldown(secs)))")
+                        Text(tr("map.extend_cooldown").replacingOccurrences(of: "{time}", with: formatCooldown(secs)))
                             .font(.system(size: 14, weight: .semibold))
                             .contentTransition(.numericText())
                     } else {
-                        Text("Verlängern")
+                        Text(tr("map.extend"))
                             .font(.system(size: 14, weight: .semibold))
                     }
                 }
@@ -2656,10 +2991,10 @@ struct ActiveDropTabView: View {
                     onCooldown
                         ? Color(UIColor.systemGray5)
                         : Color.brand.opacity(0.12),
-                    in: RoundedRectangle(cornerRadius: 14)
+                    in: RoundedRectangle(cornerRadius: Radius.card)
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 14)
+                    RoundedRectangle(cornerRadius: Radius.card)
                         .stroke(
                             onCooldown ? Color.clear : Color.brand.opacity(0.25),
                             lineWidth: 1
@@ -2699,7 +3034,7 @@ struct ActiveDropTabView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
                 .background(isOwnDrop ? Color.accentRed : Color.accentOrange,
-                            in: RoundedRectangle(cornerRadius: 16))
+                            in: RoundedRectangle(cornerRadius: Radius.lg))
                 .shadow(color: (isOwnDrop ? Color.accentRed : Color.accentOrange).opacity(0.3), radius: 8, y: 4)
             }
             .buttonStyle(.plain)
@@ -2712,7 +3047,7 @@ struct ActiveDropTabView: View {
                     Text(item.timeRemainingString)
                         .font(.system(size: 11))
                 }
-                .foregroundColor(textTertiary)
+                .foregroundColor(Color.textTertiary)
                 .padding(.top, 6)
             }
         }
@@ -2742,6 +3077,29 @@ struct ActiveDropTabView: View {
             .presentationDragIndicator(.hidden)
             .interactiveDismissDisabled()
             .sheetBackground()
+        }
+        // ── MiniProfile für Teilnehmer — im Parent damit Firebase-Updates
+        // den @State in ParticipantDetailRow nicht resetten.
+        .sheet(item: $selectedProfileParticipant) { p in
+            let agePart = p.age.map { ", \($0)" } ?? ""
+            let subtitle = p.statusMessage.isEmpty
+                ? "\(tr("map.drops_user"))\(agePart)"
+                : "\(p.statusMessage)\(agePart)"
+            MiniProfileSheet(
+                name: p.name,
+                emoji: p.emoji,
+                selfie: p.selfie,
+                profileImageURL: p.profileImageURL,
+                reliabilityScore: p.reliabilityScore,
+                totalCommits: p.reliabilityCommits,
+                subtitle: subtitle,
+                accentColor: ReliabilityScore.color(forPoints: p.reliabilityScore),
+                userUID: p.firebaseUID,
+                canBlock: true,
+                onBlock: {}
+            )
+            .environmentObject(store)
+            .presentationDetents([.medium])
         }
     }
 
@@ -2779,17 +3137,15 @@ struct ParticipantDetailRow: View {
     let isArrived: Bool
     /// Standort des Drops — für die Live-Karte der unterwegs-Person
     let dropCoordinate: CLLocationCoordinate2D
+    /// Callback zum Parent — Sheet wird dort verwaltet, damit Firebase-Updates
+    /// den @State nicht zurücksetzen und das Sheet nicht schließen.
+    var onTapProfile: ((DropParticipant) -> Void)? = nil
     @EnvironmentObject var store: AppStore
     @Environment(\.colorScheme) var colorScheme
-    @State private var showProfile = false
     @State private var showLiveLocation = false
 
-    private var isDark: Bool { colorScheme == .dark }
-    private var rowText:  Color { isDark ? .white                : Color(hex: "111827") }
-    private var rowSub:   Color { isDark ? .white.opacity(0.55)  : Color(hex: "6b7280") }
-    private var rowBg:    Color { isDark ? Color(hex: "1e2430")  : Color.white.opacity(0.72) }
-    private var avatarBg: Color { isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.06) }
-    private var avatarStroke: Color { isDark ? Color.white.opacity(0.18) : Color.black.opacity(0.10) }
+    private var avatarBg: Color { colorScheme == .dark ? Color.white.opacity(0.12) : Color.black.opacity(0.06) }
+    private var avatarStroke: Color { colorScheme == .dark ? Color.white.opacity(0.18) : Color.black.opacity(0.10) }
 
     // MARK: Helpers
 
@@ -2850,7 +3206,7 @@ struct ParticipantDetailRow: View {
             if !isArrived && participant.liveCoordinate != nil {
                 showLiveLocation = true
             } else {
-                showProfile = true
+                onTapProfile?(participant)
             }
         } label: {
             if isArrived {
@@ -2881,11 +3237,7 @@ struct ParticipantDetailRow: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 5) {
                             Text(nameLabel)
-                                .font(.system(size: 14, weight: .semibold)).foregroundColor(rowText).lineLimit(1)
-                            if participant.isVerified {
-                                Image(systemName: "checkmark.seal.fill")
-                                    .font(.system(size: 11)).foregroundColor(Color(hex: "3b82f6"))
-                            }
+                                .font(.system(size: 14, weight: .semibold)).foregroundColor(Color.textPrimary).lineLimit(1)
                             if participantQualifiesForBetaBadge {
                                 BetaBadge()
                             }
@@ -2893,7 +3245,7 @@ struct ParticipantDetailRow: View {
                         HStack(spacing: 7) {
                             GeometryReader { geo in
                                 ZStack(alignment: .leading) {
-                                    RoundedRectangle(cornerRadius: 3).fill(rowSub.opacity(0.3))
+                                    RoundedRectangle(cornerRadius: 3).fill(Color.textSecondary.opacity(0.3))
                                     RoundedRectangle(cornerRadius: 3).fill(displayColor)
                                         // Tier-Progress geclampt auf 0–1, damit
                                         // die Bar nicht über den 52pt-Frame
@@ -2909,7 +3261,7 @@ struct ParticipantDetailRow: View {
                             Image(systemName: displayBadgeIcon)
                                 .font(.system(size: 9, weight: .semibold))
                                 .foregroundColor(displayColor)
-                            Text(displayBadge).font(.system(size: 10)).foregroundColor(rowSub)
+                            Text(displayBadge).font(.system(size: 10)).foregroundColor(Color.textSecondary)
                         }
                     }
 
@@ -2920,7 +3272,7 @@ struct ParticipantDetailRow: View {
                     }
                 }
                 .padding(.horizontal, 14).padding(.vertical, 12)
-                .background(RoundedRectangle(cornerRadius: 18).fill(rowBg))
+                .background(RoundedRectangle(cornerRadius: 18).fill(Color.bgSecondary))
                 .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.onlineGreen.opacity(0.30), lineWidth: 1))
 
             } else {
@@ -2952,7 +3304,7 @@ struct ParticipantDetailRow: View {
                     // Name
                     Text(nameLabel)
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(rowText)
+                        .foregroundColor(Color.textPrimary)
                         .lineLimit(1)
 
                     Spacer(minLength: 4)
@@ -2964,50 +3316,28 @@ struct ParticipantDetailRow: View {
                                 Image(systemName: "figure.walk").font(.system(size: 9, weight: .medium))
                                 Text(dist).font(.system(size: 11, weight: .medium))
                             }
-                            .foregroundColor(rowSub)
+                            .foregroundColor(Color.textSecondary)
                         }
                         if let mins = etaMinutes {
                             HStack(spacing: 3) {
                                 Image(systemName: "clock").font(.system(size: 9))
-                                Text("~\(mins) Min").font(.system(size: 11))
+                                Text(tr("map.walk_minutes").replacingOccurrences(of: "{mins}", with: "\(mins)")).font(.system(size: 11))
                             }
-                            .foregroundColor(rowSub)
+                            .foregroundColor(Color.textSecondary)
                         } else if distanceLabel == nil {
-                            Text(tr("drop.on_the_way")).font(.system(size: 11)).foregroundColor(rowSub)
+                            Text(tr("drop.on_the_way")).font(.system(size: 11)).foregroundColor(Color.textSecondary)
                         }
                     }
 
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(rowSub.opacity(0.5))
+                        .foregroundColor(Color.textSecondary.opacity(0.5))
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8)
-                .background(RoundedRectangle(cornerRadius: 12).fill(rowBg))
+                .background(RoundedRectangle(cornerRadius: Radius.md).fill(Color.bgSecondary))
             }
         }
         .buttonStyle(.plain)
-        .sheet(isPresented: $showProfile) {
-            let agePart = participant.age.map { ", \($0)" } ?? ""
-            let subtitle = participant.statusMessage.isEmpty
-                ? "Drops-Nutzer\(agePart)"
-                : "\(participant.statusMessage)\(agePart)"
-            MiniProfileSheet(
-                name: participant.name,
-                emoji: participant.emoji,
-                selfie: participant.selfie,
-                profileImageURL: participant.profileImageURL,
-                reliabilityScore: participant.reliabilityScore,
-                totalCommits: participant.reliabilityCommits,
-                subtitle: subtitle,
-                accentColor: displayColor,
-                isVerified: participant.isVerified,
-                userUID: participant.firebaseUID,
-                canBlock: true,
-                onBlock: {}
-            )
-            .environmentObject(store)
-            .presentationDetents([.medium])
-        }
         // Live-Standort-Sheet für Unterwegs-Personen
         .sheet(isPresented: $showLiveLocation) {
             ParticipantLiveLocationSheet(
@@ -3155,10 +3485,10 @@ struct ParticipantLiveLocationSheet: View {
                 // ETA
                 VStack(spacing: 4) {
                     if let mins = etaMinutes {
-                        Text("~\(mins) Min")
+                        Text(tr("map.mins").replacingOccurrences(of: "{mins}", with: "\(mins)"))
                             .font(.system(size: 22, weight: .bold))
                             .foregroundColor(.textPrimary)
-                        Text("Ankunft ca.")
+                        Text(tr("map.arrival_approx"))
                             .font(.system(size: 11))
                             .foregroundColor(.textTertiary)
                     } else {
@@ -3174,10 +3504,10 @@ struct ParticipantLiveLocationSheet: View {
                 // Uhrzeit
                 VStack(spacing: 4) {
                     if let clock = etaClockString {
-                        Text(clock + " Uhr")
+                        Text(clock + tr("map.oclock_suffix"))
                             .font(.system(size: 22, weight: .bold))
                             .foregroundColor(.textPrimary)
-                        Text("Voraussichtlich")
+                        Text(tr("map.expected"))
                             .font(.system(size: 11))
                             .foregroundColor(.textTertiary)
                     } else {
@@ -3192,7 +3522,7 @@ struct ParticipantLiveLocationSheet: View {
 
                 // Score
                 VStack(spacing: 4) {
-                    Text("\(participant.reliabilityScore)%")
+                    Text(tr("map.points_abbrev").replacingOccurrences(of: "{points}", with: "\(participant.reliabilityScore)"))
                         .font(.system(size: 22, weight: .bold))
                         .foregroundColor(scoreColor)
                     Text(tr("profile.reliability"))
@@ -3214,8 +3544,8 @@ struct ParticipantLiveLocationSheet: View {
 
     private var scoreColor: Color {
         switch participant.reliabilityScore {
-        case 90...100: return .onlineGreen
-        case 70..<90:  return .accentOrange
+        case 200...: return .onlineGreen
+        case 50..<200: return .accentOrange
         default:       return .accentRed
         }
     }
@@ -3347,8 +3677,7 @@ struct MiniProfileSheet: View {
     var reliabilityScore: Int = 85
     var totalCommits: Int = 0
     var subtitle: String = "Drops-Nutzer"
-    var accentColor: Color = Color(hex: "06b6d4")
-    var isVerified: Bool = false
+    var accentColor: Color = Color.auroraCyan
     var isPlus: Bool = false
     /// Wenn gesetzt, wird der Drops+ Status live aus Firebase nachgezogen — dadurch
     /// zeigt das Sheet auch bei Freunden / Teilnehmern korrekt das Plus-Badge.
@@ -3410,15 +3739,15 @@ struct MiniProfileSheet: View {
         let months = comps.month ?? 0
         let days = comps.day ?? 0
         if years >= 1 {
-            return years == 1 ? "Dabei seit 1 Jahr" : "Dabei seit \(years) Jahren"
+            return years == 1 ? tr("map.member_since_1y") : tr("map.member_since_y").replacingOccurrences(of: "{years}", with: "\(years)")
         }
         if months >= 1 {
-            return months == 1 ? "Dabei seit 1 Monat" : "Dabei seit \(months) Monaten"
+            return months == 1 ? tr("map.member_since_1m") : tr("map.member_since_m").replacingOccurrences(of: "{months}", with: "\(months)")
         }
         if days >= 1 {
-            return days == 1 ? "Seit gestern dabei" : "Seit \(days) Tagen dabei"
+            return days == 1 ? tr("map.member_since_yesterday") : tr("map.member_since_d").replacingOccurrences(of: "{days}", with: "\(days)")
         }
-        return "Heute dabei"
+        return tr("map.member_today")
     }
 
     /// Kompakte Info-Zeile innerhalb der Stats-Card.
@@ -3457,8 +3786,8 @@ struct MiniProfileSheet: View {
                 Circle()
                     .fill(
                         LinearGradient(
-                            colors: [Color(hex: "E48C3A").opacity(0.20),
-                                     Color(hex: "5FA937").opacity(0.16)],
+                            colors: [Color.auroraOrange.opacity(0.20),
+                                     Color.auroraGreen.opacity(0.16)],
                             startPoint: .topLeading, endPoint: .bottomTrailing
                         )
                     )
@@ -3469,7 +3798,7 @@ struct MiniProfileSheet: View {
                 Circle()
                     .stroke(
                         LinearGradient(
-                            colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                            colors: [Color.auroraOrange, Color.auroraGreen],
                             startPoint: .topLeading, endPoint: .bottomTrailing
                         ),
                         lineWidth: 2.5
@@ -3488,8 +3817,8 @@ struct MiniProfileSheet: View {
                     Circle()
                         .fill(
                             LinearGradient(
-                                colors: [Color(hex: "E48C3A").opacity(0.14),
-                                         Color(hex: "5FA937").opacity(0.10)],
+                                colors: [Color.auroraOrange.opacity(0.14),
+                                         Color.auroraGreen.opacity(0.10)],
                                 startPoint: .topLeading, endPoint: .bottomTrailing
                             )
                         )
@@ -3504,15 +3833,15 @@ struct MiniProfileSheet: View {
                 Text(name)
                     .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundColor(.textPrimary)
-                if isVerified {
-                    // Verified-Check jetzt Sunset-Orange statt Brand-Grün
-                    Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color(hex: "E48C3A"))
-                }
                 // Beta-Badge nur für Early-Adopter (registriert vor 04.05.2026)
                 if qualifiesForBetaBadge {
                     BetaBadge()
+                }
+                // Community-Creator-Badge — wenn dieser User eine Community hat
+                if FeatureFlags.communitiesEnabled,
+                   let uid = userUID,
+                   let community = store.communityForCreator(uid: uid) {
+                    CommunityCreatorBadge(community: community, compact: true)
                 }
                 if isPlus || fetchedPlus {
                     HStack(spacing: 3) {
@@ -3522,7 +3851,7 @@ struct MiniProfileSheet: View {
                     .foregroundStyle(Color(hex: "7a4e05"))
                     .padding(.horizontal, 7).padding(.vertical, 3)
                     .background(
-                        LinearGradient(colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                        LinearGradient(colors: [Color.auroraGoldLight, Color.auroraGoldDark],
                                        startPoint: .topLeading, endPoint: .bottomTrailing),
                         in: Capsule()
                     )
@@ -3568,7 +3897,9 @@ struct MiniProfileSheet: View {
                         Text(tierLabel)
                             .font(.system(size: 15, weight: .bold))
                             .foregroundColor(.textPrimary)
-                        Text("\(reliabilityScore) Pkt\(totalCommits > 0 ? " · \(totalCommits) Drops" : "")")
+                        Text(totalCommits > 0
+                             ? tr("map.points_drops").replacingOccurrences(of: "{points}", with: "\(reliabilityScore)").replacingOccurrences(of: "{drops}", with: "\(totalCommits)")
+                             : tr("map.points_only").replacingOccurrences(of: "{points}", with: "\(reliabilityScore)"))
                             .font(.system(size: 12))
                             .foregroundColor(.textSecondary)
                     }
@@ -3583,7 +3914,7 @@ struct MiniProfileSheet: View {
                     Divider().padding(.leading, 52)
                     miniInfoRow(
                         icon: "sparkle",
-                        tint: Color(hex: "5FA937"),
+                        tint: Color.auroraGreen,
                         text: memberSince
                     )
                 }
@@ -3591,8 +3922,8 @@ struct MiniProfileSheet: View {
                     Divider().padding(.leading, 52)
                     miniInfoRow(
                         icon: "person.2.wave.2.fill",
-                        tint: Color(hex: "E48C3A"),
-                        text: "Schon \(priorEncountersCount)× getroffen"
+                        tint: Color.auroraOrange,
+                        text: tr("map.met_count").replacingOccurrences(of: "{count}", with: "\(priorEncountersCount)")
                     )
                 }
             }
@@ -3620,7 +3951,7 @@ struct MiniProfileSheet: View {
                         HStack(spacing: 8) {
                             Image(systemName: inviteSent ? "checkmark.circle.fill" : "paperplane.fill")
                                 .font(.system(size: 15, weight: .semibold))
-                            Text(inviteSent ? "Einladung gesendet" : "Zu meinem Drop einladen")
+                            Text(inviteSent ? tr("map.invitation_sent") : tr("map.invite_to_my_drop"))
                                 .font(.system(size: 15, weight: .bold, design: .rounded))
                         }
                         .foregroundColor(.white)
@@ -3631,12 +3962,12 @@ struct MiniProfileSheet: View {
                                 inviteSent
                                 ? AnyShapeStyle(Color.onlineGreen)
                                 : AnyShapeStyle(LinearGradient(
-                                    colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                                    colors: [Color.auroraOrange, Color.auroraGreen],
                                     startPoint: .leading, endPoint: .trailing
                                 ))
                             )
                         )
-                        .shadow(color: Color(hex: "E48C3A").opacity(inviteSent ? 0 : 0.35),
+                        .shadow(color: Color.auroraOrange.opacity(inviteSent ? 0 : 0.35),
                                 radius: 12, y: 5)
                     }
                     .buttonStyle(.plain)
@@ -3649,14 +3980,14 @@ struct MiniProfileSheet: View {
                         HStack(spacing: 6) {
                             Image(systemName: "person.badge.minus")
                                 .font(.system(size: 13))
-                            Text("Freund entfernen")
+                            Text(tr("map.remove_friend"))
                                 .font(.system(size: 14, weight: .semibold))
                         }
                         .foregroundColor(.accentRed)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 13)
                         .liquidGlass(cornerRadius: 14)
-                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.accentRed.opacity(0.25), lineWidth: 1))
+                        .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Color.accentRed.opacity(0.25), lineWidth: 1))
                     }
                     .buttonStyle(.plain)
                     .padding(.horizontal, 20)
@@ -3666,26 +3997,26 @@ struct MiniProfileSheet: View {
                         Button { showReportSheet = true } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: "flag.fill").font(.system(size: 13))
-                                Text("Melden").font(.system(size: 14, weight: .semibold))
+                                Text(tr("map.report")).font(.system(size: 14, weight: .semibold))
                             }
                             .foregroundColor(.accentOrange)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 13)
                             .liquidGlass(cornerRadius: 14)
-                            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.accentOrange.opacity(0.25), lineWidth: 1))
+                            .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Color.accentOrange.opacity(0.25), lineWidth: 1))
                         }
                         .buttonStyle(.plain)
 
                         Button { showBlockAlert = true } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: "hand.raised.fill").font(.system(size: 13))
-                                Text("Blockieren").font(.system(size: 14, weight: .semibold))
+                                Text(tr("map.block")).font(.system(size: 14, weight: .semibold))
                             }
                             .foregroundColor(.accentRed)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 13)
                             .liquidGlass(cornerRadius: 14)
-                            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.accentRed.opacity(0.25), lineWidth: 1))
+                            .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Color.accentRed.opacity(0.25), lineWidth: 1))
                         }
                         .buttonStyle(.plain)
                     }
@@ -3701,7 +4032,7 @@ struct MiniProfileSheet: View {
         .background(.ultraThinMaterial)
         .alert(tr("profile.confirm_block_title"), isPresented: $showBlockAlert) {
             Button(tr("common.cancel"), role: .cancel) {}
-            Button("Blockieren", role: .destructive) {
+            Button(tr("map.block"), role: .destructive) {
                 store.blockUser(name: name)
                 dismiss()
                 onBlock()
@@ -3709,16 +4040,16 @@ struct MiniProfileSheet: View {
         } message: {
             Text(tr("profile.block_message").replacingOccurrences(of: "{name}", with: name))
         }
-        .alert("Freund entfernen?", isPresented: $showRemoveFriendAlert) {
+        .alert(tr("map.remove_friend_q"), isPresented: $showRemoveFriendAlert) {
             Button(tr("common.cancel"), role: .cancel) {}
-            Button("Entfernen", role: .destructive) {
+            Button(tr("map.remove"), role: .destructive) {
                 if let uid = userUID, !uid.isEmpty {
                     store.removeFriend(theirUID: uid)
                 }
                 dismiss()
             }
         } message: {
-            Text("\(name) wird aus deiner Freundesliste entfernt. Ihr seht eure Drops nicht mehr gegenseitig.")
+            Text(tr("map.unfriend_message").replacingOccurrences(of: "{name}", with: name))
         }
         .sheet(isPresented: $showReportSheet) {
             ReportUserSheet(reportedName: name, reportedUID: userUID) {
@@ -3950,12 +4281,12 @@ struct PulsingLiveDot: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(Color(hex: "3b82f6").opacity(0.25))
+                .fill(Color.auroraBlue.opacity(0.25))
                 .frame(width: 12, height: 12)
                 .scaleEffect(pulsing ? 1.8 : 1.0)
                 .opacity(pulsing ? 0 : 0.6)
             Circle()
-                .fill(Color(hex: "3b82f6"))
+                .fill(Color.auroraBlue)
                 .frame(width: 7, height: 7)
         }
         .onAppear {
@@ -3970,8 +4301,11 @@ struct PulsingLiveDot: View {
 
 struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]
+    var subject: String = ""
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
+        let vc = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        if !subject.isEmpty { vc.setValue(subject, forKey: "subject") }
+        return vc
     }
     func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
 }
@@ -4052,10 +4386,10 @@ struct MapBoostCard: View {
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Boost-Phase aktiv")
+                    Text(tr("map.boost_phase_active"))
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(.textPrimary)
-                    Text("+15 Punkte für jeden Drop, den du jetzt erstellst oder triffst.")
+                    Text(tr("map.boost_phase_msg"))
                         .font(.system(size: 11.5))
                         .foregroundColor(.textPrimary.opacity(0.72))
                         .lineLimit(2)
@@ -4092,17 +4426,17 @@ private struct ExtendDropSheet: View {
                 .frame(width: 36, height: 4)
                 .padding(.top, 12)
 
-            Text("Drop verlängern")
+            Text(tr("map.extend_drop"))
                 .font(.system(size: 17, weight: .semibold))
 
-            Text("Um wie viel Zeit soll der Drop verlängert werden?")
+            Text(tr("map.extend_drop_msg"))
                 .font(.system(size: 13))
                 .foregroundColor(.textSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
 
             let options: [(String, Int)] = [
-                ("+30 Min", 30), ("+1 Std", 60), ("+2 Std", 120), ("+4 Std", 240)
+                (tr("map.extend_30min"), 30), (tr("map.extend_1h"), 60), (tr("map.extend_2h"), 120), (tr("map.extend_4h"), 240)
             ]
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                 ForEach(options, id: \.1) { label, minutes in
@@ -4117,7 +4451,7 @@ private struct ExtendDropSheet: View {
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
-                            .background(Color.brand, in: RoundedRectangle(cornerRadius: 14))
+                            .background(Color.brand, in: RoundedRectangle(cornerRadius: Radius.card))
                             .shadow(color: Color.brand.opacity(0.3), radius: 6, y: 3)
                     }
                     .buttonStyle(.plain)
@@ -4125,7 +4459,7 @@ private struct ExtendDropSheet: View {
             }
             .padding(.horizontal, 20)
 
-            Button("Abbrechen") { dismiss() }
+            Button(tr("map.cancel")) { dismiss() }
                 .font(.system(size: 14))
                 .foregroundColor(.textSecondary)
                 .padding(.bottom, 12)
@@ -4154,14 +4488,16 @@ struct ReportUserSheet: View {
     @State private var submitted: Bool = false
     @Environment(\.dismiss) private var dismiss
 
-    private let reasons: [String] = [
-        "Belästigung / Bedrohung",
-        "Fake-Profil / Identitätsklau",
-        "Spam / Werbung",
-        "Anstößige Inhalte",
-        "Minderjährig",
-        "Sonstiges"
-    ]
+    private var reasons: [String] {
+        [
+            tr("map.report_reason_harassment"),
+            tr("map.report_reason_fake"),
+            tr("map.report_reason_spam"),
+            tr("map.report_reason_offensive"),
+            tr("map.report_reason_minor"),
+            tr("map.report_reason_misc")
+        ]
+    }
 
     var body: some View {
         NavigationStack {
@@ -4173,7 +4509,7 @@ struct ReportUserSheet: View {
                         Text(reportedName).font(.system(size: 15, weight: .semibold))
                     }
                 } header: {
-                    Text("Gemeldeter Nutzer")
+                    Text(tr("map.reported_user"))
                 }
 
                 if submitted {
@@ -4181,7 +4517,7 @@ struct ReportUserSheet: View {
                         HStack(spacing: 10) {
                             Image(systemName: "checkmark.seal.fill")
                                 .foregroundColor(.brand)
-                            Text("Meldung erhalten — wir prüfen sie innerhalb von 24 Stunden.")
+                            Text(tr("map.report_received"))
                                 .font(.system(size: 14))
                         }
                     }
@@ -4201,29 +4537,29 @@ struct ReportUserSheet: View {
                             }
                         }
                     } header: {
-                        Text("Grund")
+                        Text(tr("map.reason"))
                     }
 
                     Section {
-                        TextField("Optional: weitere Infos", text: $details, axis: .vertical)
+                        TextField(tr("map.optional_more_info"), text: $details, axis: .vertical)
                             .lineLimit(3...6)
                     } header: {
-                        Text("Details (optional)")
+                        Text(tr("map.details_optional"))
                     }
                 }
             }
-            .navigationTitle("Nutzer melden")
+            .navigationTitle(tr("map.report_user"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Abbrechen") { dismiss(); onDismiss() }
+                    Button(tr("map.cancel")) { dismiss(); onDismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if submitted {
-                        Button("Fertig") { dismiss(); onDismiss() }
+                        Button(tr("map.done")) { dismiss(); onDismiss() }
                             .fontWeight(.semibold)
                     } else {
-                        Button("Senden") {
+                        Button(tr("map.send")) {
                             RealtimeDBManager.shared.submitReport(
                                 reportedUID: reportedUID,
                                 reportedName: reportedName,
@@ -4317,7 +4653,7 @@ struct JoinerLiveInfoSheet: View {
                     }
                     HStack(spacing: 5) {
                         PulsingLiveDot()
-                        Text("Auf dem Weg zu deinem Drop")
+                        Text(tr("map.on_the_way_to_drop"))
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(.textSecondary)
                     }
@@ -4341,15 +4677,15 @@ struct JoinerLiveInfoSheet: View {
                 HStack(spacing: 0) {
                     statBlock(
                         icon: "figure.walk",
-                        value: "\(eta) Min",
-                        label: "Weg",
+                        value: tr("map.mins_short").replacingOccurrences(of: "{mins}", with: "\(eta)"),
+                        label: tr("map.way"),
                         color: .brand
                     )
                     Divider().frame(height: 36)
                     statBlock(
                         icon: "location.fill",
                         value: String(format: "%.1f km", km),
-                        label: "Entfernt",
+                        label: tr("map.distance_short"),
                         color: .onlineGreen
                     )
                 }
@@ -4361,7 +4697,7 @@ struct JoinerLiveInfoSheet: View {
             // Schließen-Button — kein CTA, weil keine Aktion nötig ist.
             // Der Host beobachtet einfach wie der Joiner näher kommt.
             Button { dismiss() } label: {
-                Text("Schließen")
+                Text(tr("map.close"))
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.textPrimary)
                     .frame(maxWidth: .infinity)
