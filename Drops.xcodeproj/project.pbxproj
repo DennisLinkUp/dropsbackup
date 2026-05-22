@@ -9,14 +9,18 @@
 /* Begin PBXBuildFile section */
 		13B2973FA52749D888CC45A1 /* FeedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0F5F8C8062A41CBB0CD013D /* FeedView.swift */; };
 		13CF507DAAB3456EB4F37CCF /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AC45B58BF74488B93149C4 /* OnboardingView.swift */; };
+		68F466417E1B49C886649416 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B72E3A391A6F47C4B228969A /* Assets.xcassets */; };
+		6A0A7DB0FF7C4E41989E5705 /* DropTips.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57BF6787B87E4920855E711E /* DropTips.swift */; };
 		89042F9CF58F49A7AAC76CBA /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 327F542C69C2450EB363BF7F /* Preview Assets.xcassets */; };
 		945C33D97EC74398844A2F5C /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A070BC7CF7824527992379F9 /* MainTabView.swift */; };
 		951A8B132FAE762E0003DFC3 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 951A8B122FAE762E0003DFC3 /* AppIcon.icon */; };
+		95F6EDC42FC0284C000ECEDD /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 95F6EDC32FC0284C000ECEDD /* GoogleSignIn */; };
 		98D1213810614C4BA718BC7A /* ProfileAndAlertsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C6AE0EAF293496FAAB1180D /* ProfileAndAlertsView.swift */; };
 		AB5D31427FAF496F81E12038 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 872B2889154249B48B39C338 /* DesignSystem.swift */; };
 		B3BB3982DE3946A7B973E3C5 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ABB1429B0CC45F69697DFFE /* Models.swift */; };
 		B88A3AA80FF24A3E972ED64F /* LiveMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F2B6D895C04241A50D2A18 /* LiveMapView.swift */; };
 		BB3BC38B666E419AAC69B477 /* LinkUpApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 157A9023A3B644239FDAF68F /* LinkUpApp.swift */; };
+		CC001FDC00AA4B00BC001FDC /* FirstDropCoachView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC001FDB00AA4B00BC001FDB /* FirstDropCoachView.swift */; };
 		DA00100B00000000000100B /* DropLiveActivity.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = DA001001000000000001001 /* DropLiveActivity.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		DA002002000000000002002 /* DropLiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA002001000000000002001 /* DropLiveActivityWidget.swift */; };
 		DA002004000000000002004 /* DropLiveActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA002003000000000002003 /* DropLiveActivityAttributes.swift */; };
@@ -30,6 +34,7 @@
 		E4FFB3322F952A3E004E687A /* DropsPlusView 2.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4FFB3312F952A3E004E687A /* DropsPlusView 2.swift */; };
 		E4FFB3352F9749B4004E687A /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = E4FFB3342F9749B4004E687A /* FirebaseCrashlytics */; };
 		FA001AA12F900000001AA121 /* FirebaseAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA001AA02F900000001AA120 /* FirebaseAuthManager.swift */; };
+		FA001CC12F900000001CC121 /* GoogleSignInManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA001CC02F900000001CC120 /* GoogleSignInManager.swift */; };
 		FA002BB12F900000002BB121 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA002BB02F900000002BB120 /* AppDelegate.swift */; };
 		FA004DD12F900000004DD121 /* FirebaseDatabase in Frameworks */ = {isa = PBXBuildFile; productRef = FA004DD02F900000004DD120 /* FirebaseDatabase */; };
 		FA005EE12F900000005EE121 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = FA005EE02F900000005EE120 /* FirebaseMessaging */; };
@@ -46,6 +51,7 @@
 		FA014NN12F90000000ENN121 /* AdminPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA014NN02F90000000ENN120 /* AdminPanelView.swift */; };
 		FA015OO12F90000000FOO121 /* ImagePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA015OO02F90000000FOO120 /* ImagePickerView.swift */; };
 		FA016CF12F90000000FCF121 /* ContentFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA016CF02F90000000FCF120 /* ContentFilter.swift */; };
+		FA019JJ12F90000000JJJ121 /* Communities.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA019JJ02F90000000JJJ120 /* Communities.swift */; };
 		FAPRIVACY1000000010000001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = FAPRIVACY0000000010000000 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
@@ -78,6 +84,7 @@
 		157A9023A3B644239FDAF68F /* LinkUpApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkUpApp.swift; sourceTree = "<group>"; };
 		327F542C69C2450EB363BF7F /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		49AC45B58BF74488B93149C4 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		57BF6787B87E4920855E711E /* DropTips.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropTips.swift; sourceTree = "<group>"; };
 		5ABB1429B0CC45F69697DFFE /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		60F2B6D895C04241A50D2A18 /* LiveMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveMapView.swift; sourceTree = "<group>"; };
 		872B2889154249B48B39C338 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
@@ -85,7 +92,9 @@
 		9C6AE0EAF293496FAAB1180D /* ProfileAndAlertsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileAndAlertsView.swift; sourceTree = "<group>"; };
 		A070BC7CF7824527992379F9 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
 		AA000008000000000000008 /* Drops.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Drops.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B72E3A391A6F47C4B228969A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C0F5F8C8062A41CBB0CD013D /* FeedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedView.swift; sourceTree = "<group>"; };
+		CC001FDB00AA4B00BC001FDB /* FirstDropCoachView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirstDropCoachView.swift; sourceTree = "<group>"; };
 		DA001001000000000001001 /* DropLiveActivity.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = DropLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		DA002001000000000002001 /* DropLiveActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropLiveActivityWidget.swift; sourceTree = "<group>"; };
 		DA002003000000000002003 /* DropLiveActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropLiveActivityAttributes.swift; sourceTree = "<group>"; };
@@ -96,6 +105,7 @@
 		E4FFB32F2F95298B004E687A /* DropsStoreManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropsStoreManager.swift; sourceTree = "<group>"; };
 		E4FFB3312F952A3E004E687A /* DropsPlusView 2.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DropsPlusView 2.swift"; sourceTree = "<group>"; };
 		FA001AA02F900000001AA120 /* FirebaseAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirebaseAuthManager.swift; sourceTree = "<group>"; };
+		FA001CC02F900000001CC120 /* GoogleSignInManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleSignInManager.swift; sourceTree = "<group>"; };
 		FA002BB02F900000002BB120 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		FA003CC02F900000003CC120 /* Drops.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Drops.entitlements; sourceTree = "<group>"; };
 		FA006FF02F900000006FF120 /* RealtimeDBManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeDBManager.swift; sourceTree = "<group>"; };
@@ -109,6 +119,7 @@
 		FA014NN02F90000000ENN120 /* AdminPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminPanelView.swift; sourceTree = "<group>"; };
 		FA015OO02F90000000FOO120 /* ImagePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePickerView.swift; sourceTree = "<group>"; };
 		FA016CF02F90000000FCF120 /* ContentFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentFilter.swift; sourceTree = "<group>"; };
+		FA019JJ02F90000000JJJ120 /* Communities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Communities.swift; sourceTree = "<group>"; };
 		FAPRIVACY0000000010000000 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -118,6 +129,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E4315F862F814CE100E60F54 /* FirebaseCore in Frameworks */,
+				95F6EDC42FC0284C000ECEDD /* GoogleSignIn in Frameworks */,
 				E4315F842F814CE100E60F54 /* FirebaseAuth in Frameworks */,
 				FA004DD12F900000004DD121 /* FirebaseDatabase in Frameworks */,
 				E4FFB3352F9749B4004E687A /* FirebaseCrashlytics in Frameworks */,
@@ -171,10 +183,14 @@
 				C0F5F8C8062A41CBB0CD013D /* FeedView.swift */,
 				9C6AE0EAF293496FAAB1180D /* ProfileAndAlertsView.swift */,
 				E4155E9D2F810EC3006A5368 /* CreateDropView.swift */,
+				57BF6787B87E4920855E711E /* DropTips.swift */,
+				CC001FDB00AA4B00BC001FDB /* FirstDropCoachView.swift */,
+				B72E3A391A6F47C4B228969A /* Assets.xcassets */,
 				951A8B122FAE762E0003DFC3 /* AppIcon.icon */,
 				1206E5CD6A2641AF8F3B9AFE /* Info.plist */,
 				E4315F872F814CEA00E60F54 /* GoogleService-Info.plist */,
 				FA001AA02F900000001AA120 /* FirebaseAuthManager.swift */,
+				FA001CC02F900000001CC120 /* GoogleSignInManager.swift */,
 				FA002BB02F900000002BB120 /* AppDelegate.swift */,
 				FAPRIVACY0000000010000000 /* PrivacyInfo.xcprivacy */,
 				FA003CC02F900000003CC120 /* Drops.entitlements */,
@@ -188,6 +204,7 @@
 				FA013MM02F90000000DMM120 /* Localization.swift */,
 				FA014NN02F90000000ENN120 /* AdminPanelView.swift */,
 				FA016CF02F90000000FCF120 /* ContentFilter.swift */,
+				FA019JJ02F90000000JJJ120 /* Communities.swift */,
 				AA000016000000000000016 /* Preview Content */,
 				E4FFB3312F952A3E004E687A /* DropsPlusView 2.swift */,
 			);
@@ -255,6 +272,7 @@
 				FA00C3E12F900000C3E10120 /* FirebaseStorage */,
 				FA00F5012F900000F5010120 /* FirebaseFirestore */,
 				E4FFB3342F9749B4004E687A /* FirebaseCrashlytics */,
+				95F6EDC32FC0284C000ECEDD /* GoogleSignIn */,
 			);
 			productName = LinkUp;
 			productReference = AA000008000000000000008 /* Drops.app */;
@@ -306,6 +324,7 @@
 			mainGroup = AA000004000000000000004;
 			packageReferences = (
 				E4315F822F814CE100E60F54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				95F6EDC22FC0284C000ECEDD /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 			);
 			productRefGroup = AA000003000000000000003 /* Products */;
 			projectDirPath = "";
@@ -324,6 +343,7 @@
 			files = (
 				89042F9CF58F49A7AAC76CBA /* Preview Assets.xcassets in Resources */,
 				951A8B132FAE762E0003DFC3 /* AppIcon.icon in Resources */,
+				68F466417E1B49C886649416 /* Assets.xcassets in Resources */,
 				E4315F882F814CEA00E60F54 /* GoogleService-Info.plist in Resources */,
 				FAPRIVACY1000000010000001 /* PrivacyInfo.xcprivacy in Resources */,
 			);
@@ -389,6 +409,7 @@
 			files = (
 				BB3BC38B666E419AAC69B477 /* LinkUpApp.swift in Sources */,
 				FA001AA12F900000001AA121 /* FirebaseAuthManager.swift in Sources */,
+				FA001CC12F900000001CC121 /* GoogleSignInManager.swift in Sources */,
 				E4FFB3302F95298B004E687A /* DropsStoreManager.swift in Sources */,
 				FA002BB12F900000002BB121 /* AppDelegate.swift in Sources */,
 				FA006FF12F900000006FF121 /* RealtimeDBManager.swift in Sources */,
@@ -406,10 +427,13 @@
 				13B2973FA52749D888CC45A1 /* FeedView.swift in Sources */,
 				98D1213810614C4BA718BC7A /* ProfileAndAlertsView.swift in Sources */,
 				E4155E9E2F810ED9006A5368 /* CreateDropView.swift in Sources */,
+				6A0A7DB0FF7C4E41989E5705 /* DropTips.swift in Sources */,
+				CC001FDC00AA4B00BC001FDC /* FirstDropCoachView.swift in Sources */,
 				FA013MM12F90000000DMM121 /* Localization.swift in Sources */,
 				FA014NN12F90000000ENN121 /* AdminPanelView.swift in Sources */,
 				FA015OO12F90000000FOO121 /* ImagePickerView.swift in Sources */,
 				FA016CF12F90000000FCF121 /* ContentFilter.swift in Sources */,
+				FA019JJ12F90000000JJJ121 /* Communities.swift in Sources */,
 				DA002004000000000002004 /* DropLiveActivityAttributes.swift in Sources */,
 				E4FFB3322F952A3E004E687A /* DropsPlusView 2.swift in Sources */,
 			);
@@ -579,7 +603,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
 				LE_SWIFT_VERSION = 5.0;
-				MARKETING_VERSION = 1.0.4;
+				MARKETING_VERSION = 1.0.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dennis.drops;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -614,7 +638,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
 				LE_SWIFT_VERSION = 5.0;
-				MARKETING_VERSION = 1.0.4;
+				MARKETING_VERSION = 1.0.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dennis.drops;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -642,7 +666,7 @@
 				INFOPLIST_FILE = DropLiveActivity/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
 				LE_SWIFT_VERSION = 5.0;
-				MARKETING_VERSION = 1.0.4;
+				MARKETING_VERSION = 1.0.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dennis.drops.DropLiveActivity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -668,7 +692,7 @@
 				INFOPLIST_FILE = DropLiveActivity/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
 				LE_SWIFT_VERSION = 5.0;
-				MARKETING_VERSION = 1.0.4;
+				MARKETING_VERSION = 1.0.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dennis.drops.DropLiveActivity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -714,6 +738,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		95F6EDC22FC0284C000ECEDD /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 9.1.0;
+			};
+		};
 		E4315F822F814CE100E60F54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
@@ -725,6 +757,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		95F6EDC32FC0284C000ECEDD /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 95F6EDC22FC0284C000ECEDD /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
+		};
 		E4315F832F814CE100E60F54 /* FirebaseAuth */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = E4315F822F814CE100E60F54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;

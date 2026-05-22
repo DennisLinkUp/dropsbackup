@@ -1,6 +1,7 @@
 import SwiftUI
 import MapKit
 import CoreLocation
+import TipKit
 
 // Makes the sheet truly transparent by clearing every UIKit layer
 // between UIHostingController.view and the window.
@@ -191,6 +192,30 @@ struct CreateDropView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("appLanguage") private var appLanguage = "de"
 
+    /// Falls aus dem Community-Dashboard geöffnet — markiert den entstehenden
+    /// Drop als Community-Drop und triggert automatischen Push an Mitglieder.
+    var communityID: String? = nil
+    /// Pre-Fill für die Aktivität (Name + Emoji). Wird vom Community-Dashboard
+    /// gesetzt, damit der Tennis-Creator nicht jedes Mal Tennis selber tippen muss.
+    var prefilledActivityName: String? = nil
+    var prefilledActivityEmoji: String? = nil
+    /// Max-Teilnehmer-Cap. Default 15 für normale Drops; Community-Drops
+    /// können auf 100 hochgesetzt werden (z.B. Laufgruppen).
+    var maxParticipantsLimit: Int = 15
+    /// Wenn true: First-Drop-Coach-Overlay wird angezeigt (kommt vom WelcomeSheet-CTA).
+    var isWalkthrough: Bool = false
+
+    // ── First-Drop Coach-Mark Overlay ──────────────────────────────────────
+    @State private var coachStep: CoachStep? = nil
+    @State private var coachHighlightFrame: CGRect = .zero
+    @AppStorage("hasCompletedFirstDropWalkthrough") private var walkthroughDone = false
+
+    // Coach-Mark Tips — TipKit zeigt jeden genau einmal (MaxDisplayCount 1),
+    // danach werden sie automatisch als gesehen markiert.
+    @State private var activityTip = ActivityTip()
+    @State private var timeTip    = TimeTip()
+    @State private var startTip   = StartDropTip()
+
     @State private var activityName: String = ""
     @State private var selectedEmoji: String = ""
     @State private var emojiLockedByUser = false
@@ -219,34 +244,45 @@ struct CreateDropView: View {
 
     var locationSubtitle: String {
         switch selectedLocationType {
-        case .current:  return "Aktueller Standort"
-        case .searched: return selectedLocationResult?.title ?? "Ort suchen…"
-        case .pin:      return pinnedCoordinate != nil ? "Pin gesetzt ✓" : "Auf Karte tippen"
+        case .current:  return tr("create.current_location")
+        case .searched: return selectedLocationResult?.title ?? tr("create.search_place")
+        case .pin:      return pinnedCoordinate != nil ? tr("create.pin_set") : tr("create.tap_on_map_caps")
         }
     }
 
     var body: some View {
-        ZStack {
-            // Vollflächiger App-Hintergrund
-            AppAuroraBackground().ignoresSafeArea()
+        let isCommunityDrop = communityID != nil
+        return ZStack {
+            // Vollflächiger App-Hintergrund — bei Community-Drop in Clero-Grün-Tint,
+            // sonst der normale Aurora-Background.
+            if isCommunityDrop {
+                LinearGradient(
+                    colors: [
+                        Color.cleroGreen.opacity(0.35),
+                        Color.cleroGreen.opacity(0.18),
+                        Color(UIColor.systemBackground)
+                    ],
+                    startPoint: .top, endPoint: .bottom
+                )
+                .ignoresSafeArea()
+            } else {
+                AppAuroraBackground().ignoresSafeArea()
+            }
 
-            // Aurora-Akzent — neue Icon-Sunset-Palette: Orange dominant,
-            // Rose für die Sunset-Wärme, Lavender als kühler Counterpoint.
-            // Vorher: brand-grün/violet/teal — jetzt konsistent zu den
-            // anderen Tab-Headern und dem globalen AppAuroraBackground.
+            // Aurora-Akzent — bei Community-Drop in Clero-Grün, sonst Sunset-Orange.
             ZStack {
                 Circle()
-                    .fill(Color(hex: "E48C3A").opacity(0.24))
+                    .fill((isCommunityDrop ? Color.cleroGreen : Color.auroraOrange).opacity(0.24))
                     .frame(width: 300, height: 300)
                     .blur(radius: 80)
                     .offset(x: sheetPulse ? 40 : -30, y: sheetPulse ? -70 : 10)
                 Circle()
-                    .fill(Color(hex: "F08FA3").opacity(0.18))
+                    .fill((isCommunityDrop ? Color.brand : Color.auroraPink).opacity(0.18))
                     .frame(width: 260, height: 260)
                     .blur(radius: 70)
                     .offset(x: sheetPulse ? -60 : 35, y: sheetPulse ? 10 : -50)
                 Circle()
-                    .fill(Color(hex: "B49BE0").opacity(0.14))
+                    .fill((isCommunityDrop ? Color.cleroGreen : Color.auroraViolet).opacity(0.14))
                     .frame(width: 220, height: 220)
                     .blur(radius: 65)
                     .offset(x: sheetPulse ? 50 : -45, y: sheetPulse ? 40 : -20)
@@ -267,12 +303,14 @@ struct CreateDropView: View {
                 // liegenden AppAuroraBackground absetzen und unschön
                 // aussehen.
                 HStack {
-                    Text("Drop erstellen")
+                    Text(isCommunityDrop ? tr("create.community_drop") : tr("create.drop"))
                         .font(.system(size: 28, weight: .bold, design: .rounded))
                         .foregroundColor(.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                     Spacer()
                     Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        Haptic.selection()
                         dismiss()
                     } label: {
                         Image(systemName: "xmark")
@@ -287,6 +325,7 @@ struct CreateDropView: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 10)
 
+                ScrollViewReader { proxy in
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 8) {
                     // ── Quick-Templates: dynamisch aus Interests + Past Drops
@@ -295,14 +334,21 @@ struct CreateDropView: View {
                             activityName = tpl.name
                             selectedEmoji = tpl.emoji
                             emojiLockedByUser = true
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            Haptic.selection()
                         }
                         .padding(.horizontal, 4)
                         .padding(.bottom, 4)
                     }
 
                     // ── Aktivität ──────────────────────────────────────────
-                    createSection(label: "Was macht ihr?", aurora: true) {
+                    createSection(label: tr("create.what_section"), aurora: true) {
+                        // TipKit nur zeigen wenn kein Walkthrough aktiv
+                        if !isWalkthrough {
+                            TipView(activityTip, arrowEdge: .top)
+                                .tipBackground(.ultraThinMaterial)
+                                .padding(.horizontal, 4)
+                                .padding(.bottom, 4)
+                        }
                         // Emoji + Textfeld
                         HStack(spacing: 14) {
                             // Tappbarer Emoji-Kreis: öffnet manuellen Picker.
@@ -329,7 +375,7 @@ struct CreateDropView: View {
                             }
                             .buttonStyle(.plain)
 
-                            TextField("z.B. Fußball, Kaffee, Wandern…", text: $activityName)
+                            TextField(tr("create.activity_field_placeholder"), text: $activityName)
                                 .font(.system(size: 15))
                                 .foregroundColor(.textPrimary)
                                 .onChange(of: activityName) { _, _ in
@@ -357,8 +403,8 @@ struct CreateDropView: View {
                                                 let isActive = selectedEmoji == emoji
                                                 Text(emoji).font(.system(size: 22))
                                                     .frame(width: 42, height: 42)
-                                                    .background(isActive ? Color.brand.opacity(0.18) : Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-                                                    .overlay(RoundedRectangle(cornerRadius: 10)
+                                                    .background(isActive ? Color.brand.opacity(0.18) : Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: Radius.md))
+                                                    .overlay(RoundedRectangle(cornerRadius: Radius.md)
                                                         .stroke(isActive ? Color.brand.opacity(0.5) : Color.clear, lineWidth: 1.5))
                                             }
                                             .buttonStyle(.plain)
@@ -370,7 +416,7 @@ struct CreateDropView: View {
                                                 .font(.system(size: 16, weight: .semibold))
                                                 .foregroundColor(.textSecondary)
                                                 .frame(width: 42, height: 42)
-                                                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                                                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: Radius.md))
                                         }
                                         .buttonStyle(.plain)
                                     }
@@ -384,7 +430,7 @@ struct CreateDropView: View {
                                     HStack(spacing: 8) {
                                         Image(systemName: "face.smiling")
                                             .font(.system(size: 14, weight: .medium))
-                                        Text("Emoji wählen")
+                                        Text(tr("create.pick_emoji"))
                                             .font(.system(size: 13, weight: .medium))
                                     }
                                     .foregroundColor(.brand)
@@ -395,9 +441,17 @@ struct CreateDropView: View {
                             }
                         }
                     }
+                    .id(CoachStep.activity.scrollID)
+                    .coachHighlight(active: coachStep == .activity)
 
                     // ── Wann ──────────────────────────────────────────────
-                    createSection(label: "Wann?") {
+                    createSection(label: tr("create.when_section")) {
+                        if !isWalkthrough {
+                            TipView(timeTip, arrowEdge: .top)
+                                .tipBackground(.ultraThinMaterial)
+                                .padding(.horizontal, 4)
+                                .padding(.bottom, 4)
+                        }
                         // Quick-Chips
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
@@ -405,11 +459,11 @@ struct CreateDropView: View {
                                 let nowLabel = "Jetzt"
                                 let isJetzt = scheduledTime == nowLabel && !showCustomTimePicker
                                 Button(action: {
-                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    Haptic.selection()
                                     scheduledTime = nowLabel
                                     showCustomTimePicker = false
                                 }) {
-                                    Text(nowLabel)
+                                    Text(tr("shared.now"))
                                         .font(.system(size: 13, weight: .medium))
                                         .foregroundColor(isJetzt ? .white : .textPrimary)
                                         .padding(.horizontal, 14).padding(.vertical, 9)
@@ -435,14 +489,14 @@ struct CreateDropView: View {
 
                                 // Uhrzeit-Chip direkt neben Jetzt
                                 Button(action: {
-                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    Haptic.selection()
                                     withAnimation(.spring(response: 0.3)) { showCustomTimePicker.toggle() }
                                 }) {
                                     HStack(spacing: 5) {
                                         Image(systemName: "clock").font(.system(size: 12))
                                         Text(showCustomTimePicker
                                              ? customDate.formatted(date: .omitted, time: .shortened)
-                                             : "Uhrzeit")
+                                             : tr("create.time"))
                                             .font(.system(size: 13, weight: .medium))
                                     }
                                     .foregroundColor(showCustomTimePicker ? .white : .textPrimary)
@@ -467,39 +521,6 @@ struct CreateDropView: View {
                                 .buttonStyle(.plain)
                                 .animation(.spring(response: 0.25, dampingFraction: 0.7), value: showCustomTimePicker)
 
-                                // Restliche Zeit-Chips
-                                let timeOptions = ["In 30 Min", "In 1 Std"]
-                                ForEach(timeOptions, id: \.self) { t in
-                                    let isActive = scheduledTime == t && !showCustomTimePicker
-                                    Button(action: {
-                                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                        scheduledTime = t
-                                        showCustomTimePicker = false
-                                    }) {
-                                        Text(t)
-                                            .font(.system(size: 13, weight: .medium))
-                                            .foregroundColor(isActive ? .white : .textPrimary)
-                                            .padding(.horizontal, 14).padding(.vertical, 9)
-                                            .background {
-                                                if isActive {
-                                                    Capsule().fill(Color.brand)
-                                                        .shadow(color: Color.brand.opacity(0.35), radius: 8, y: 3)
-                                                } else {
-                                                    ZStack {
-                                                        Capsule().fill(.thinMaterial)
-                                                        Capsule().fill(Color.brand.opacity(0.04))
-                                                    }
-                                                    .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 3)
-                                                    .overlay(Capsule().stroke(
-                                                        LinearGradient(colors: [Color.brand.opacity(0.2), .white.opacity(0.06)],
-                                                                       startPoint: .topLeading, endPoint: .bottomTrailing),
-                                                        lineWidth: 0.8))
-                                                }
-                                            }
-                                    }
-                                    .buttonStyle(.plain)
-                                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isActive)
-                                }
                             }
                             .padding(.horizontal, 16).padding(.vertical, 8)
                         }
@@ -508,7 +529,7 @@ struct CreateDropView: View {
                         if showCustomTimePicker {
                             Divider().padding(.leading, 16)
                             HStack {
-                                Text("Uhrzeit")
+                                Text(tr("create.time"))
                                     .font(.system(size: 14))
                                     .foregroundColor(.textSecondary)
                                 Spacer()
@@ -523,7 +544,8 @@ struct CreateDropView: View {
                                 .tint(.brand)
                                 .onChange(of: customDate) { _, _ in
                                     let f = DateFormatter()
-                                    f.dateFormat = "HH:mm 'Uhr'"
+                                    let lang = UserDefaults.standard.string(forKey: "appLanguage") ?? "de"
+                                    f.dateFormat = lang == "de" ? "HH:mm 'Uhr'" : "h:mm a"
                                     scheduledTime = f.string(from: customDate)
                                 }
                             }
@@ -533,16 +555,16 @@ struct CreateDropView: View {
                     }
 
                     // ── Dauer ──────────────────────────────────────────────
-                    createSection(label: "Dauer") {
+                    createSection(label: tr("create.duration_section")) {
                         let durationOptions: [(String, Int)] = [
-                            ("30 Min", 30), ("1 Std", 60), ("2 Std", 120),
-                            ("4 Std", 240), ("Kein Limit", 0)
+                            (tr("create.dur_30min"), 30), (tr("create.dur_1h"), 60), (tr("create.dur_2h"), 120),
+                            (tr("create.duration_4h"), 240), (tr("create.no_limit"), 0)
                         ]
                         HStack(spacing: 6) {
                             ForEach(durationOptions, id: \.1) { label, value in
                                 let isActive = durationMinutes == value
                                 Button {
-                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    Haptic.selection()
                                     durationMinutes = value
                                 } label: {
                                     Text(label)
@@ -576,7 +598,7 @@ struct CreateDropView: View {
                         if durationMinutes > 0 {
                             HStack(spacing: 4) {
                                 Image(systemName: "info.circle").font(.system(size: 11))
-                                Text("Endet nach \(durationMinutes < 60 ? "\(durationMinutes) Min" : "\(durationMinutes / 60) Std") · jederzeit verlängerbar")
+                                Text(tr("create.ends_after").replacingOccurrences(of: "{duration}", with: durationMinutes < 60 ? tr("create.duration_min").replacingOccurrences(of: "{n}", with: "\(durationMinutes)") : tr("create.duration_hours").replacingOccurrences(of: "{n}", with: "\(durationMinutes / 60)")))
                                     .font(.system(size: 11))
                                     .lineLimit(1)
                             }
@@ -587,7 +609,7 @@ struct CreateDropView: View {
                     }
 
                     // ── Max. Teilnehmer ────────────────────────────────────
-                    createSection(label: "Max. Teilnehmer") {
+                    createSection(label: tr("create.max_section")) {
                         VStack(spacing: 2) {
                             HStack {
                                 Text("\(maxParticipants)")
@@ -595,7 +617,7 @@ struct CreateDropView: View {
                                     .foregroundColor(.textPrimary)
                                     .monospacedDigit()
                                     .contentTransition(.numericText())
-                                Text("Personen")
+                                Text(tr("create.people"))
                                     .font(.system(size: 13)).foregroundColor(.textSecondary.opacity(0.85))
                                 Spacer()
                             }
@@ -608,11 +630,11 @@ struct CreateDropView: View {
                                         let new = Int(v.rounded())
                                         if new != maxParticipants {
                                             maxParticipants = new
-                                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                            Haptic.selection()
                                         }
                                     }
                                 ),
-                                in: 2...15, step: 1
+                                in: 2...Double(maxParticipantsLimit), step: 1
                             )
                             .tint(Color.brand)
                             .padding(.horizontal, 16)
@@ -622,15 +644,15 @@ struct CreateDropView: View {
                     }
 
                     // ── Ort ────────────────────────────────────────────────
-                    createSection(label: "Ort") {
+                    createSection(label: tr("create.location_section")) {
                         let locStatus = CLLocationManager().authorizationStatus
                         let locationAllowed = locStatus == .authorizedWhenInUse || locStatus == .authorizedAlways
 
                         if locationAllowed {
                             locationOptionRow(
                                 icon: "location.fill",
-                                title: "Aktueller Standort",
-                                subtitle: "Dein jetziger Standort",
+                                title: tr("create.current_location"),
+                                subtitle: tr("create.current_location_subtitle"),
                                 isSelected: selectedLocationType == .current
                             ) {
                                 selectedLocationType = .current
@@ -641,8 +663,8 @@ struct CreateDropView: View {
 
                         locationOptionRow(
                             icon: "magnifyingglass",
-                            title: "Ort suchen",
-                            subtitle: selectedLocationResult?.title ?? "Restaurant, Bar, Café…",
+                            title: tr("create.search_place_title"),
+                            subtitle: selectedLocationResult?.title ?? tr("create.search_place_subtitle"),
                             isSelected: selectedLocationType == .searched
                         ) {
                             withAnimation(.spring(response: 0.3)) {
@@ -658,7 +680,7 @@ struct CreateDropView: View {
                                     Image(systemName: "magnifyingglass")
                                         .font(.system(size: 14))
                                         .foregroundColor(Color.brand)
-                                    TextField("Café, Bar, Park, Adresse…", text: $searchVM.searchText)
+                                    TextField(tr("create.location_search_full"), text: $searchVM.searchText)
                                         .font(.system(size: 14))
                                         .foregroundColor(.textPrimary)
                                         .onChange(of: searchVM.searchText) { _, newValue in searchVM.search(newValue) }
@@ -676,7 +698,7 @@ struct CreateDropView: View {
                                     Divider()
                                     ForEach(Array(searchVM.results.prefix(5).enumerated()), id: \.element.title) { idx, result in
                                         Button(action: {
-                                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                            Haptic.selection()
                                             searchVM.selectResult(result) { loc in
                                                 if let loc = loc {
                                                     selectedLocationResult = loc
@@ -714,7 +736,7 @@ struct CreateDropView: View {
                                     HStack(spacing: 8) {
                                         Image(systemName: "text.magnifyingglass")
                                             .foregroundColor(.textTertiary)
-                                        Text("Tippe um einen Ort zu suchen")
+                                        Text(tr("create.tap_to_search"))
                                             .font(.system(size: 13))
                                             .foregroundColor(.textTertiary)
                                     }
@@ -728,11 +750,13 @@ struct CreateDropView: View {
 
                         locationOptionRow(
                             icon: "mappin",
-                            title: "Pin setzen",
-                            subtitle: pinnedCoordinate != nil ? "Pin gesetzt ✓" : "Manuell auf der Karte",
+                            title: tr("create.set_pin"),
+                            subtitle: pinnedCoordinate != nil ? tr("create.pin_set") : tr("create.set_pin_subtitle"),
                             isSelected: selectedLocationType == .pin
                         ) { selectedLocationType = .pin; showPinMap = true }
                     }
+                    .id(CoachStep.location.scrollID)
+                    .coachHighlight(active: coachStep == .location)
 
                     // ── Drops+ Upsell (nur für Free-User, vor CTA) ──────────
                     // Aus für den Launch (FeatureFlags.dropsPlusEnabled).
@@ -746,17 +770,20 @@ struct CreateDropView: View {
                     if created {
                         HStack(spacing: 10) {
                             Image(systemName: "checkmark.circle.fill").foregroundColor(.onlineGreen)
-                            Text("Drop ist live! Freunde in der Nähe werden benachrichtigt.")
+                            Text(tr("create.drop_live_msg"))
                                 .font(.system(size: 14, weight: .medium)).foregroundColor(.onlineGreen)
                         }
                         .padding(14).frame(maxWidth: .infinity)
                         .liquidGlass(cornerRadius: 14)
-                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.onlineGreen.opacity(0.3), lineWidth: 1))
+                        .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Color.onlineGreen.opacity(0.3), lineWidth: 1))
                         .padding(.horizontal, 16)
                         .transition(.scale.combined(with: .opacity))
                     } else {
                         // Validierung: Aktivitätsname + München-Grenze
-                        let isValid = !activityName.trimmingCharacters(in: .whitespaces).isEmpty
+                        let locationSelected = selectedLocationType == .current
+                            || (selectedLocationType == .searched && selectedLocationResult != nil)
+                            || (selectedLocationType == .pin && pinnedCoordinate != nil)
+                        let isValid = !activityName.trimmingCharacters(in: .whitespaces).isEmpty && locationSelected
                         let dropCoordPreview: CLLocationCoordinate2D = {
                             switch selectedLocationType {
                             case .current:  return store.currentUser.coordinate
@@ -781,8 +808,14 @@ struct CreateDropView: View {
                             }
                         }
                         .padding(.horizontal, 16)
+                        // Coach-Mark Schritt 3: Drop starten
+                        .popoverTip(startTip, arrowEdge: .bottom)
+                        .id(CoachStep.start.scrollID)
+                        .coachHighlight(active: coachStep == .start)
                         if !isValid {
-                            Text("Gib zuerst an, was ihr macht.")
+                            Text(activityName.trimmingCharacters(in: .whitespaces).isEmpty
+                                 ? tr("create.enter_activity_first")
+                                 : tr("create.select_location"))
                                 .font(.system(size: 12))
                                 .foregroundColor(.textTertiary)
                                 .frame(maxWidth: .infinity, alignment: .center)
@@ -792,22 +825,65 @@ struct CreateDropView: View {
                             HStack(spacing: 5) {
                                 Image(systemName: "mappin.slash")
                                     .font(.system(size: 11))
-                                Text("Drops nur in Berlin, Hamburg, München, Köln oder Frankfurt.")
+                                Text(tr("create.cities_only"))
                                     .font(.system(size: 12))
                             }
-                            .foregroundColor(Color(hex: "f59e0b"))
+                            .foregroundColor(Color.auroraAmber)
                             .frame(maxWidth: .infinity, alignment: .center)
                             .padding(.horizontal, 16)
                             .transition(.opacity)
                         }
                     }
                     Spacer(minLength: 20)
+                    // Walkthrough-Puffer: damit auch der CTA-Button (letztes Element)
+                    // per scrollTo(anchor:.top) über die Coach-Karte gescrollt werden
+                    // kann. Ohne diesen Spacer reicht der Scroll nicht weit genug.
+                    if coachStep != nil {
+                        Spacer().frame(height: 360)
+                    }
                 }
                 }
                 .scrollContentBackground(.hidden)
                 .background(Color.clear)
                 .scrollDismissesKeyboard(.immediately)
+                .scrollDisabled(coachStep != nil)
+                // ── Coach-Scroll: beim Step-Wechsel zum Anker scrollen ──
+                .onChange(of: coachStep) { _, newStep in
+                    guard let newStep else { return }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) {
+                            proxy.scrollTo(newStep.scrollID, anchor: .top)
+                        }
+                    }
+                }
+            } // ScrollViewReader
+            } // VStack(spacing: 0)
+
+            // ── First-Drop Coach-Mark Overlay ──────────────────────────────
+            // Liegt im ZStack über dem gesamten Inhalt (inkl. Sticky-Header).
+            if coachStep != nil {
+                FirstDropCoachOverlay(
+                    step: $coachStep,
+                    highlightFrame: coachHighlightFrame,
+                    scrollTo: { _ in }, // Scroll via onChange in ScrollViewReader
+                    onDone: {
+                        coachStep = nil
+                        walkthroughDone = true
+                    },
+                    onSkip: {
+                        coachStep = nil
+                        walkthroughDone = true
+                    }
+                )
+                .zIndex(100)
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.2), value: coachStep == nil)
             }
+        } // ZStack
+        // Frame der aktiven Coach-Section einsammeln (kommt per Preference
+        // aus CoachHighlightModifier via GeometryReader in global coordinates).
+        .onPreferenceChange(CoachSpotlightFrameKey.self) { frame in
+            coachHighlightFrame = frame
         }
         .sheet(isPresented: $showEmojiPicker) {
             EmojiPickerSheet(selected: selectedEmoji) { emoji in
@@ -852,7 +928,7 @@ struct CreateDropView: View {
             ZStack(alignment: .bottom) {
                 InteractivePinMapView(pinnedCoordinate: $pinnedCoordinate, initialCenter: pinnedCoordinate ?? store.currentUser.coordinate)
                 VStack(spacing: 10) {
-                    PrimaryButton(title: pinnedCoordinate != nil ? "Pin bestätigen ✓" : "Tippe auf die Karte") {
+                    PrimaryButton(title: pinnedCoordinate != nil ? tr("create.confirm_pin") : tr("create.tap_on_map")) {
                         if pinnedCoordinate != nil { showPinMap = false }
                     }
                     .disabled(pinnedCoordinate == nil)
@@ -873,6 +949,31 @@ struct CreateDropView: View {
             withAnimation(.easeInOut(duration: 4).repeatForever(autoreverses: true)) {
                 sheetPulse = true
             }
+            // First-Drop Walkthrough — kurze Verzögerung damit Sheet erst
+            // vollständig eingefahren ist bevor die Coach-Karte erscheint.
+            if isWalkthrough && !walkthroughDone {
+                // TipKit-Tips unterdrücken: würden sich sonst mit dem
+                // Coach-Overlay überlagern und verwirren.
+                activityTip.invalidate(reason: .actionPerformed)
+                timeTip.invalidate(reason: .actionPerformed)
+                startTip.invalidate(reason: .actionPerformed)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                    coachStep = .activity
+                }
+            }
+            // Pre-Fill aus Community-Kontext — Aktivität + Emoji + sinnvoller
+            // Default für Teilnehmerzahl (Community-Drops sind oft Gruppen-Events).
+            if let name = prefilledActivityName, activityName.isEmpty {
+                activityName = name
+            }
+            if let emoji = prefilledActivityEmoji, selectedEmoji.isEmpty {
+                selectedEmoji = emoji
+                emojiLockedByUser = true   // verhindert dass das Auto-Pick es überschreibt
+            }
+            // Community-Drops bekommen 25 als Default (mehr als 10, weniger als max).
+            if communityID != nil && maxParticipants == 10 {
+                maxParticipants = min(25, maxParticipantsLimit)
+            }
         }
     }
 
@@ -890,7 +991,7 @@ struct CreateDropView: View {
                 .liquidGlass(cornerRadius: 16)
                 .overlay {
                     if aurora {
-                        AuroraCardBorder(cornerRadius: 16)
+                        AuroraCardBorder(cornerRadius: Radius.lg)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -902,7 +1003,7 @@ struct CreateDropView: View {
         Button(action: action) {
             HStack(spacing: 14) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: Radius.sm)
                         .fill(isSelected ? Color.brand.opacity(0.18) : Color.white.opacity(0.08))
                         .frame(width: 36, height: 36)
                     Image(systemName: icon)
@@ -948,7 +1049,7 @@ struct CreateDropView: View {
                     Circle()
                         .fill(
                             RadialGradient(
-                                colors: [Color(hex: "f59e0b").opacity(0.35), .clear],
+                                colors: [Color.auroraAmber.opacity(0.35), .clear],
                                 center: .center,
                                 startRadius: 0, endRadius: 22
                             )
@@ -958,16 +1059,16 @@ struct CreateDropView: View {
                         .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(
                             LinearGradient(
-                                colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
+                                colors: [Color.auroraAmber, Color.auroraAmber],
                                 startPoint: .topLeading, endPoint: .bottomTrailing
                             )
                         )
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Mehr Leute erreichen mit Drops+")
+                    Text(tr("create.reach_more_plus"))
                         .font(.system(size: 13, weight: .bold))
                         .foregroundColor(.textPrimary)
-                    Text("Boost auf der Karte · größerer Suchradius · sieh wer geschaut hat")
+                    Text(tr("create.plus_features"))
                         .font(.system(size: 11))
                         .foregroundColor(.textSecondary)
                         .lineLimit(2)
@@ -976,18 +1077,18 @@ struct CreateDropView: View {
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(Color(hex: "f59e0b"))
+                    .foregroundColor(Color.auroraAmber)
             }
             .padding(12)
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color(hex: "f59e0b").opacity(0.08))
+                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                    .fill(Color.auroraAmber.opacity(0.08))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                     .stroke(
                         LinearGradient(
-                            colors: [Color(hex: "f59e0b").opacity(0.55), Color(hex: "f59e0b").opacity(0.15)],
+                            colors: [Color.auroraAmber.opacity(0.55), Color.auroraAmber.opacity(0.15)],
                             startPoint: .topLeading, endPoint: .bottomTrailing
                         ),
                         lineWidth: 1
@@ -1009,7 +1110,7 @@ struct CreateDropView: View {
             description: dropDescription
         ) {
             store.showInfoToast(
-                "Dein Drop enthält nicht erlaubte Wörter (\"\(match.word)\"). Bitte umformulieren.",
+                tr("create.blocked_words").replacingOccurrences(of: "{word}", with: match.word),
                 icon: "exclamationmark.shield.fill"
             )
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
@@ -1037,9 +1138,10 @@ struct CreateDropView: View {
             store.createDrop(activity: finalActivity, location: loc,
                              description: dropDescription, scheduledTime: scheduledTime,
                              maxParticipants: maxParticipants,
-                             durationMinutes: durationMinutes)
+                             durationMinutes: durationMinutes,
+                             communityID: communityID)
             isCreating = false
-            withAnimation(.spring()) { created = true }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { created = true }
             // Kurz die Erfolgsmeldung zeigen, dann zum Aktiv-Tab wechseln
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                 dismiss()
@@ -1078,9 +1180,9 @@ struct DropLocationRowContent: View {
             }
         }
         .padding(12)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: Radius.card)
                 .stroke(isSelected ? Color.brand.opacity(0.5) : Color.white.opacity(0.18), lineWidth: 1)
         )
     }
@@ -1102,7 +1204,7 @@ struct DropLocationSearchSheet: View {
 
                 HStack(spacing: 10) {
                     Image(systemName: "magnifyingglass").foregroundColor(.textTertiary)
-                    TextField("Café, Bar, Park…", text: $searchVM.searchText)
+                    TextField(tr("create.location_search_short"), text: $searchVM.searchText)
                         .font(.system(size: 16)).foregroundColor(.textPrimary)
                         .onChange(of: searchVM.searchText) { _, newValue in searchVM.search(newValue) }
                     if !searchVM.searchText.isEmpty {
@@ -1112,8 +1214,8 @@ struct DropLocationSearchSheet: View {
                     }
                 }
                 .padding(14)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.2), lineWidth: 1))
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Color.white.opacity(0.2), lineWidth: 1))
                 .padding(.horizontal, 16).padding(.bottom, 12)
 
                 ScrollView(showsIndicators: false) {
@@ -1137,8 +1239,8 @@ struct DropLocationSearchSheet: View {
                                     Spacer()
                                 }
                                 .padding(12)
-                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.15), lineWidth: 0.8))
+                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: Radius.md).stroke(Color.white.opacity(0.15), lineWidth: 0.8))
                             }
                             .buttonStyle(.plain)
                         }
@@ -1176,7 +1278,7 @@ struct InteractivePinMapView: View {
                 VStack(spacing: 6) {
                     Image(systemName: "hand.tap.fill").font(.system(size: 28))
                         .foregroundColor(.textPrimary)
-                    Text("Tippe auf die Karte")
+                    Text(tr("create.tap_on_map"))
                         .font(.system(size: 13, weight: .medium)).foregroundColor(.textSecondary)
                         .padding(.horizontal, 12).padding(.vertical, 6)
                         .background(.regularMaterial, in: Capsule())
@@ -1297,17 +1399,7 @@ struct DropQuickTemplatesBar: View {
             if list.count >= 4 { break }
         }
 
-        // 2. Interest-Mappings auffüllen
-        for interest in store.userInterests {
-            guard let tpl = DropTemplate.fromInterest(interest) else { continue }
-            let k = key(tpl)
-            if seen.contains(k) { continue }
-            seen.insert(k)
-            list.append(tpl)
-            if list.count >= 8 { break }
-        }
-
-        // 3. Fallback wenn weder Past-Drops noch Interests
+        // 2. Fallback wenn keine Past-Drops
         if list.isEmpty { return DropTemplate.universalDefaults }
         return list
     }
@@ -1318,7 +1410,7 @@ struct DropQuickTemplatesBar: View {
             // stärkere Farbe. Vorher wirkten Header + Chips gemeinsam
             // „ausgegraut" auf dem Aurora-Background — beides sah aus
             // wie blasse Sektionslabels.
-            Text(store.pastDrops.isEmpty ? "Für dich" : "Vorlagen")
+            Text(store.pastDrops.isEmpty ? tr("create.popular") : tr("create.templates"))
                 .font(.system(size: 12, weight: .heavy))
                 .tracking(0.6)
                 .textCase(.uppercase)
@@ -1344,12 +1436,12 @@ struct DropQuickTemplatesBar: View {
                             .background(
                                 Capsule().fill(
                                     LinearGradient(
-                                        colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                                        colors: [Color.auroraOrange, Color.auroraGreen],
                                         startPoint: .leading, endPoint: .trailing
                                     )
                                 )
                             )
-                            .shadow(color: Color(hex: "E48C3A").opacity(0.30), radius: 8, y: 3)
+                            .shadow(color: Color.auroraOrange.opacity(0.30), radius: 8, y: 3)
                         }
                         .buttonStyle(.plain)
                     }

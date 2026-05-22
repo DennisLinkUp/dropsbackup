@@ -1,21 +1,27 @@
 import SwiftUI
+import CoreLocation
+import UserNotifications
 
 struct MainTabView: View {
     @EnvironmentObject var store: AppStore
     @State private var showCreateSheet = false
+    /// Hält den CLLocationManager am Leben bis der Permission-Dialog bestätigt ist.
+    @State private var permLocManager: CLLocationManager? = nil
+    @State private var isWalkthroughCreate = false
     @StateObject private var cityGate = CityGateChecker()
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
     @AppStorage("appLanguage") private var appLanguage = "de"
     @State private var showWelcomeSheet = false
+    /// Wird im WelcomeSheet-CTA gesetzt; CreateDropView öffnet sich erst im
+    /// onDismiss-Callback des Sheets — damit ist die Dismiss-Animation
+    /// garantiert fertig und kein UIKit-Presentation-Conflict entsteht.
+    @State private var pendingWalkthrough = false
 
     var body: some View {
         ZStack(alignment: .top) {
         TabView(selection: $store.selectedTab) {
             LiveMapView()
                 .tabItem { Label(tr("tab.map"), systemImage: "map.fill") }
-                // Badge wenn unbestätigte Beitrittsanfragen für meinen
-                // Drop offen sind — User sieht die Zahl auch wenn das
-                // Sheet vorher dismissed wurde (oder Push verpasst).
                 .badge(store.pendingJoinRequests.count)
                 .tag(AppStore.Tab.map)
 
@@ -42,9 +48,6 @@ struct MainTabView: View {
 
             FreundeView()
                 .tabItem { Label(tr("tab.friends"), systemImage: "person.fill") }
-                // Badge zeigt Summe aus eingehenden Freundschaftsanfragen
-                // + unbestätigten Encounters (BLE-Begegnungen die manuell
-                // bestätigt werden müssen). Beide brauchen User-Aktion.
                 .badge(store.incomingFriendRequests.count + store.pendingEncounters.count)
                 .tag(AppStore.Tab.alerts)
 
@@ -52,7 +55,6 @@ struct MainTabView: View {
                 .tabItem { Label(tr("tab.settings"), systemImage: "gearshape.fill") }
                 .tag(AppStore.Tab.profile)
         }
-        // iOS 26: tint statt accentColor für das neue Glass Tab Bar
         .tint(.brand)
         .onChange(of: store.selectedTab) { _, tab in
             if tab == .create && !store.isInActiveDrop {
@@ -65,13 +67,14 @@ struct MainTabView: View {
                 store.selectedTab = .map
             }
         }
-        .fullScreenCover(isPresented: $showCreateSheet) {
-            CreateDropView()
+        .fullScreenCover(isPresented: $showCreateSheet, onDismiss: {
+            // Walkthrough abgeschlossen → jetzt Permissions anfragen
+            if isWalkthroughCreate { requestAllPermissions() }
+            isWalkthroughCreate = false
+        }) {
+            CreateDropView(isWalkthrough: isWalkthroughCreate)
                 .environmentObject(store)
         }
-        // Quick Actions — konsumiert pending-Shortcut vom Store.
-        // Wird ausgelöst beim ersten onAppear (Cold-Start, nach Auth) +
-        // sobald sich pendingQuickAction ändert (Background→Foreground).
         .onAppear {
             consumePendingQuickAction()
         }
@@ -82,6 +85,9 @@ struct MainTabView: View {
             DropsPlusSuccessView()
                 .environmentObject(store)
         }
+
+        // ── Offline-Banner ────────────────────────────────────────────────
+        OfflineBanner()
 
         } // ZStack
         // ── App-Version-Gate (Hard-Force) ─────────────────────────────────
@@ -133,6 +139,20 @@ struct MainTabView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             OfflineBanner()
         }
+        // ── Pending-Join-Request Pill ─────────────────────────────────────
+        // Floating-Pill oben mit Countdown wenn der User eine Anfrage gestellt
+        // hat und auf Host-Reaktion wartet. Schwebt über allem (Sheets, Tab-Bar)
+        // damit der Wartestatus immer sichtbar ist.
+        .overlay(alignment: .top) {
+            PendingJoinRequestPill()
+                .environmentObject(store)
+                .padding(.top, 4)
+                .allowsHitTesting(false)
+        }
+        .animation(.spring(response: 0.45, dampingFraction: 0.85),
+                   value: store.myJoinRequestStatus)
+        .animation(.spring(response: 0.45, dampingFraction: 0.85),
+                   value: store.pendingJoinDropID)
         // Stadtsperre als Vollbild-Gate ist entfernt: User außerhalb der 5
         // Service-Städte können sich registrieren und die App nutzen, dürfen
         // aber keine Drops erstellen oder joinen (Guards in CreateDropView/AppStore).
@@ -146,12 +166,43 @@ struct MainTabView: View {
                     showWelcomeSheet = true
                 }
             }
+            // Profilbild-Erinnerung planen falls kein Bild hinterlegt ist
+            let hasPic = !(store.profileImageURL?.isEmpty ?? true)
+            PushNotificationManager.shared.scheduleProfilePictureReminderIfNeeded(
+                hasProfileImage: hasPic
+            )
         }
-        .sheet(isPresented: $showWelcomeSheet) {
-            WelcomeSheet {
-                hasSeenWelcome = true
-                showWelcomeSheet = false
+        .onChange(of: store.profileImageURL) { _, newURL in
+            // Sobald ein Bild gesetzt wird, ausstehende Erinnerung abbrechen
+            let hasPic = !(newURL?.isEmpty ?? true)
+            if hasPic {
+                PushNotificationManager.shared.cancelProfilePictureReminder()
             }
+        }
+        .sheet(isPresented: $showWelcomeSheet, onDismiss: {
+            if pendingWalkthrough {
+                // "Ersten Drop erstellen"-Pfad: Walkthrough öffnen.
+                // Permissions kommen nach Walkthrough-Sheet-Dismiss.
+                pendingWalkthrough = false
+                store.selectedTab = .map
+                isWalkthroughCreate = true
+                showCreateSheet = true
+            } else {
+                // Direkt überspringen: Permissions jetzt anfragen.
+                requestAllPermissions()
+            }
+        }) {
+            WelcomeSheet(
+                onDismiss: {
+                    hasSeenWelcome = true
+                    showWelcomeSheet = false
+                },
+                onStartFirstDrop: {
+                    hasSeenWelcome = true
+                    pendingWalkthrough = true   // Merker setzen
+                    showWelcomeSheet = false     // Sheet dismisst → onDismiss öffnet CreateDrop
+                }
+            )
             .presentationDetents([.large])
             .presentationDragIndicator(.hidden)
             .interactiveDismissDisabled()
@@ -191,9 +242,9 @@ struct MainTabView: View {
         // MainTabView, sodass es egal ist in welchem Tab er gerade ist.
         .alert(item: $store.hostCancelledDropAlert) { alert in
             Alert(
-                title: Text("\(alert.dropEmoji) Drop beendet"),
-                message: Text("Der Host hat \"\(alert.activityName)\" beendet. Du bist nicht mehr dabei."),
-                dismissButton: .default(Text("Verstanden"))
+                title: Text(tr("push.host_cancel_title").replacingOccurrences(of: "{emoji}", with: alert.dropEmoji)),
+                message: Text(tr("push.host_cancel_body").replacingOccurrences(of: "{activity}", with: alert.activityName)),
+                dismissButton: .default(Text(tr("tab.understood")))
             )
         }
         // ── Eingehende Drop-Einladung von einem Freund ────────────────────
@@ -202,12 +253,12 @@ struct MainTabView: View {
         // die Karte und fokussiert den Drop (nutzt pendingDropID-Mechanismus).
         .alert(item: $store.incomingDropInvitation) { invite in
             Alert(
-                title: Text("\(invite.hostEmoji) Einladung von \(invite.hostName)"),
-                message: Text("\(invite.hostName) lädt dich zu seinem Drop \"\(invite.dropEmoji) \(invite.dropActivity)\" ein."),
-                primaryButton: .default(Text("Drop ansehen")) {
+                title: Text(tr("push.invite_title").replacingOccurrences(of: "{emoji}", with: invite.hostEmoji).replacingOccurrences(of: "{host}", with: invite.hostName)),
+                message: Text(tr("tab.invite_msg").replacingOccurrences(of: "{host}", with: invite.hostName).replacingOccurrences(of: "{emoji}", with: invite.dropEmoji).replacingOccurrences(of: "{activity}", with: invite.dropActivity)),
+                primaryButton: .default(Text(tr("tab.view_drop"))) {
                     store.acceptIncomingDropInvitation()
                 },
-                secondaryButton: .cancel(Text("Später")) {
+                secondaryButton: .cancel(Text(tr("tab.later"))) {
                     store.dismissIncomingDropInvitation()
                 }
             )
@@ -225,6 +276,11 @@ struct MainTabView: View {
         }
         .fullScreenCover(item: $store.firstDropCelebrationKind) { kind in
             FirstDropCelebrationSheet(kind: kind)
+        }
+        .sheet(item: $store.dropSuccessShareData) { data in
+            DropSuccessShareSheet(data: data)
+                .presentationDetents([.height(480)])
+                .presentationDragIndicator(.visible)
         }
     }
 
@@ -250,6 +306,40 @@ struct MainTabView: View {
             break
         }
     }
+
+    // MARK: - Permissions
+
+    /// Push + Standort + Bluetooth anfragen — mit Stagger damit iOS die Dialoge
+    /// nicht aufeinanderstapelt. Wird erst nach WelcomeSheet / Walkthrough
+    /// aufgerufen, damit der User den Kontext versteht.
+    private func requestAllPermissions() {
+        // 1. Push Notifications
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            guard settings.authorizationStatus == .notDetermined else { return }
+            UNUserNotificationCenter.current().requestAuthorization(
+                options: [.alert, .badge, .sound]
+            ) { granted, _ in
+                if granted {
+                    DispatchQueue.main.async {
+                        UIApplication.shared.registerForRemoteNotifications()
+                    }
+                }
+            }
+        }
+        // 2. Standort — 0.5s Versatz damit Push-Dialog zuerst erscheint
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let mgr = CLLocationManager()
+            permLocManager = mgr   // ARC-Referenz halten
+            if mgr.authorizationStatus == .notDetermined {
+                mgr.requestWhenInUseAuthorization()
+            }
+        }
+        // 3. Bluetooth — 1.1s Versatz nach Push
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
+            store.bluetoothMeetup.warmUpForPermissionPrompt()
+        }
+    }
+
 }
 
 // MARK: - First Drop Celebration
@@ -266,22 +356,22 @@ struct FirstDropCelebrationSheet: View {
     /// Marketing-Copy — kürzer, punchier, hook-driven.
     private var headline: String {
         switch kind {
-        case .created: return "Drop ist live."
-        case .joined:  return "Du bist dabei."
+        case .created: return tr("tab.drop_live")
+        case .joined:  return tr("tab.you_in")
         }
     }
 
     private var subline: String {
         switch kind {
         case .created:
-            return "Deine Stadt sieht dich jetzt auf der Karte. Wer Bock hat, kommt einfach vorbei — kein Smalltalk, kein \"lass mal\"."
+            return tr("tab.created_subline")
         case .joined:
-            return "Hingehen, Bluetooth bestätigt automatisch. Kein Check-In, kein Chat. Drops einfach gemacht."
+            return tr("tab.bluetooth_explainer")
         }
     }
 
     private var cta: String {
-        kind == .created ? "Jetzt geht's los" : "Auf zum Drop"
+        kind == .created ? tr("tab.lets_start") : tr("tab.to_the_drop")
     }
 
     var body: some View {
@@ -490,26 +580,19 @@ struct PushReaskSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Spacer().frame(height: 32)
+            Spacer().frame(height: 8)
 
-            ZStack {
-                Circle()
-                    .fill(Color.brand.opacity(0.12))
-                    .frame(width: 84, height: 84)
-                Image(systemName: "bell.badge.fill")
-                    .font(.system(size: 36, weight: .semibold))
-                    .foregroundColor(.brand)
-            }
+            RadarPulseHero(icon: "bell.badge.fill")
 
-            Spacer().frame(height: 22)
+            Spacer().frame(height: 4)
 
             VStack(spacing: 10) {
-                Text("Verpass keinen Drop mehr")
+                Text(tr("tab.push_on_title"))
                     .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundColor(.textPrimary)
                     .multilineTextAlignment(.center)
 
-                Text("Du warst gerade bei deinem ersten Drop dabei — top! 🎉\n\nMit Push-Nachrichten erfährst du sofort wenn jemand zu deinem Drop kommt oder Freunde in der Nähe einen starten.")
+                Text(tr("tab.push_on_body"))
                     .font(.system(size: 15))
                     .foregroundColor(.textSecondary)
                     .multilineTextAlignment(.center)
@@ -526,7 +609,7 @@ struct PushReaskSheet: View {
                     }
                     dismiss()
                 } label: {
-                    Text("Push aktivieren")
+                    Text(tr("tab.enable_push"))
                         .font(.system(size: 17, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity).padding(.vertical, 16)
@@ -534,7 +617,7 @@ struct PushReaskSheet: View {
                 }
                 .padding(.horizontal, 24)
 
-                Button("Vielleicht später") { dismiss() }
+                Button(tr("tab.maybe_later")) { dismiss() }
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.textSecondary)
                     .padding(.bottom, 28)
@@ -548,32 +631,32 @@ struct PushReaskSheet: View {
 
 struct WelcomeSheet: View {
     let onDismiss: () -> Void
+    /// Wird statt `onDismiss` aufgerufen wenn der User direkt seinen ersten
+    /// Drop erstellen will (Primary-CTA „Mach deinen ersten Drop"). Aktivierungs-
+    /// Hack: User landet nicht auf leerer Map sondern direkt im Drop-Erstellungs-
+    /// Sheet — sieht sofort den Wert der App.
+    var onStartFirstDrop: (() -> Void)? = nil
     @AppStorage("appLanguage") private var appLanguage = "de"
 
     // Feature-Farben — erste zwei aus der App-Icon-Palette (Orange-Top
     // + Grün-Bottom), letzte zwei behalten Diversität (Amber für
     // "Menschen", Violet für "Privatsphäre" — semantisch etabliert).
     private var features: [(icon: String, color: Color, titleKey: String, subtitleKey: String)] {[
-        ("dot.radiowaves.left.and.right", Color(hex: "E48C3A"),  "welcome.feature1_title", "welcome.feature1_sub"),
-        ("map.fill",                      Color(hex: "5FA937"),  "welcome.feature2_title", "welcome.feature2_sub"),
-        ("person.2.fill",                 Color(hex: "f59e0b"),  "welcome.feature3_title", "welcome.feature3_sub"),
+        ("dot.radiowaves.left.and.right", Color.auroraOrange,  "welcome.feature1_title", "welcome.feature1_sub"),
+        ("map.fill",                      Color.auroraGreen,  "welcome.feature2_title", "welcome.feature2_sub"),
+        ("person.2.fill",                 Color.auroraAmber,  "welcome.feature3_title", "welcome.feature3_sub"),
         ("lock.shield.fill",              Color(hex: "8b5cf6"),  "welcome.feature4_title", "welcome.feature4_sub"),
     ]}
 
     var body: some View {
         VStack(spacing: 0) {
-            Spacer().frame(height: 48)
+            Spacer().frame(height: 12)
 
-            // App-Icon + Titel
-            VStack(spacing: 14) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(Color.brand.opacity(0.12))
-                        .frame(width: 80, height: 80)
-                    Image(systemName: "dot.radiowaves.left.and.right")
-                        .font(.system(size: 36, weight: .semibold))
-                        .foregroundColor(.brand)
-                }
+            // App-Icon + Titel — Radar-Hero matched die Sprache des
+            // App-Icons (Drop-Center + pulsierende Wellen) statt eines
+            // generischen SF-Symbols auf farbigem Rechteck.
+            VStack(spacing: 8) {
+                DynamicIslandMock()
 
                 VStack(spacing: 6) {
                     Text(tr("welcome.title"))
@@ -625,14 +708,38 @@ struct WelcomeSheet: View {
 
             Spacer()
 
-            // CTA Button
-            Button(action: onDismiss) {
-                Text(tr("welcome.cta"))
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+            // Primary CTA: direkt zum First-Drop, nicht zur leeren Karte.
+            // Activation-Hack: User sieht sofort den Drop-Erstellungs-Sheet
+            // statt einer leeren Map die Verwirrung stiftet.
+            VStack(spacing: 10) {
+                Button(action: { onStartFirstDrop?() ?? onDismiss() }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 17, weight: .semibold))
+                        Text(tr("tab.make_first_drop"))
+                            .font(.system(size: 17, weight: .bold, design: .rounded))
+                    }
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 17)
-                    .background(Capsule().fill(Color.brand))
+                    .background(
+                        Capsule().fill(
+                            LinearGradient(
+                                colors: [Color.auroraOrange, Color.auroraGreen],
+                                startPoint: .leading, endPoint: .trailing
+                            )
+                        )
+                    )
+                    .shadow(color: Color.auroraOrange.opacity(0.35), radius: 10, y: 4)
+                }
+
+                // Secondary: nur zur Karte, kein Drop erstellt.
+                Button(action: onDismiss) {
+                    Text(tr("tab.just_look_around"))
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.textSecondary)
+                }
+                .padding(.top, 4)
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 36)
@@ -657,21 +764,14 @@ struct PermissionGateView: View {
 
             VStack(spacing: 20) {
                 Spacer()
-                ZStack {
-                    Circle()
-                        .fill(Color.brand.opacity(0.12))
-                        .frame(width: 96, height: 96)
-                    Image(systemName: "location.slash.fill")
-                        .font(.system(size: 40, weight: .semibold))
-                        .foregroundColor(.brand)
-                }
+                RadarPulseHero(icon: "location.slash.fill")
 
                 VStack(spacing: 10) {
-                    Text("Drops braucht Zugriff")
+                    Text(tr("tab.no_access"))
                         .font(.system(size: 24, weight: .bold, design: .rounded))
                         .foregroundColor(.textPrimary)
 
-                    Text("Damit Drops echte Begegnungen erkennen kann, brauchen wir mindestens eine dieser Berechtigungen:\n\n• Standort — um dich vor Ort zu erkennen\n• Bluetooth — um dich mit Drop-Teilnehmern zu verbinden")
+                    Text(tr("tab.no_access_body"))
                         .font(.system(size: 15))
                         .foregroundColor(.textSecondary)
                         .multilineTextAlignment(.center)
@@ -686,7 +786,7 @@ struct PermissionGateView: View {
                         UIApplication.shared.open(url)
                     }
                 } label: {
-                    Text("Einstellungen öffnen")
+                    Text(tr("tab.open_settings"))
                         .font(.system(size: 17, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity).padding(.vertical, 17)
@@ -699,7 +799,7 @@ struct PermissionGateView: View {
                     // anderen Tab bereits gegeben hat und zurückkommt).
                     store.evaluateCorePermissions()
                 } label: {
-                    Text("Erneut prüfen")
+                    Text(tr("tab.check_again"))
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(.textSecondary)
                 }
@@ -708,3 +808,4 @@ struct PermissionGateView: View {
         }
     }
 }
+

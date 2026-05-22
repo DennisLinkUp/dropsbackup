@@ -110,25 +110,25 @@ class FirebaseAuthManager: ObservableObject {
         let nsError = error as NSError
         let code = nsError.code
         if code == AuthErrorCode.invalidPhoneNumber.rawValue {
-            return "Ungültige Telefonnummer. Bitte mit Ländervorwahl eingeben."
+            return tr("auth.invalid_phone")
         } else if code == AuthErrorCode.quotaExceeded.rawValue {
-            return "Zu viele Versuche. Bitte etwas später nochmal probieren."
+            return tr("auth.too_many_attempts")
         } else if code == AuthErrorCode.sessionExpired.rawValue {
-            return "Code abgelaufen. Bitte neuen Code anfordern."
+            return tr("auth.code_expired")
         } else if code == AuthErrorCode.invalidVerificationCode.rawValue {
-            return "Falscher Code. Bitte nochmal prüfen."
+            return tr("auth.wrong_code")
         } else if code == AuthErrorCode.missingPhoneNumber.rawValue {
-            return "Bitte Telefonnummer eingeben."
+            return tr("auth.missing_phone")
         } else if code == AuthErrorCode.tooManyRequests.rawValue {
-            return "Zu viele Versuche mit dieser Nummer. Bitte einige Stunden warten."
+            return tr("auth.too_many_for_number")
         } else if code == AuthErrorCode.networkError.rawValue {
-            return "Netzwerkfehler. Bitte Internetverbindung prüfen."
+            return tr("auth.network_error")
         } else if code == AuthErrorCode.appNotAuthorized.rawValue {
-            return "App nicht autorisiert. Firebase-Konfiguration prüfen."
+            return tr("auth.app_not_authorized")
         } else if code == AuthErrorCode.userNotFound.rawValue {
-            return "Konto nicht gefunden. Bitte neu registrieren."
+            return tr("auth.account_not_found")
         } else if code == AuthErrorCode.userDisabled.rawValue {
-            return "Dieses Konto wurde deaktiviert. Bitte Support kontaktieren."
+            return tr("auth.account_disabled")
         } else if code == AuthErrorCode.userTokenExpired.rawValue || code == AuthErrorCode.invalidUserToken.rawValue {
             return "Sitzung abgelaufen. Bitte nochmal anmelden."
         }

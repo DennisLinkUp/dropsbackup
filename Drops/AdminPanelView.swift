@@ -18,7 +18,10 @@ struct AdminPanelView: View {
     @State private var auroraAnimate = false
     @State private var showReports = false
     @State private var showDropsMonitor = false
+    @State private var showCommunityRequests = false
+    @State private var pendingCommunityCount = 0
     @State private var debugResetToast: String? = nil
+    @State private var nameChangeRequests: [RealtimeDBManager.NameChangeRequest] = []
 
     enum UserFilter { case all, banned, active, plus }
     enum SortMode: String, CaseIterable, Identifiable {
@@ -184,13 +187,93 @@ struct AdminPanelView: View {
                         }
                         .padding(.horizontal, 20)
 
+                        // Namensänderungsanfragen
+                        if !nameChangeRequests.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "person.text.rectangle.fill")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(.brand)
+                                    Text("Namensänderungen")
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundColor(.textPrimary)
+                                    Text("\(nameChangeRequests.count)")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 7).padding(.vertical, 2)
+                                        .background(Capsule().fill(Color.brand))
+                                }
+                                .padding(.horizontal, 16).padding(.top, 14)
+
+                                ForEach(nameChangeRequests) { req in
+                                    HStack(spacing: 12) {
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            HStack(spacing: 6) {
+                                                Text(req.oldName)
+                                                    .font(.system(size: 13))
+                                                    .foregroundColor(.textSecondary)
+                                                Image(systemName: "arrow.right")
+                                                    .font(.system(size: 11))
+                                                    .foregroundColor(.textTertiary)
+                                                Text(req.newName)
+                                                    .font(.system(size: 14, weight: .semibold))
+                                                    .foregroundColor(.textPrimary)
+                                            }
+                                            Text(req.uid.prefix(12) + "…")
+                                                .font(.system(size: 11, design: .monospaced))
+                                                .foregroundColor(.textTertiary)
+                                        }
+                                        Spacer()
+                                        // Ablehnen
+                                        Button {
+                                            RealtimeDBManager.shared.denyNameChange(uid: req.uid) {
+                                                DispatchQueue.main.async {
+                                                    nameChangeRequests.removeAll { $0.uid == req.uid }
+                                                }
+                                            }
+                                        } label: {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .font(.system(size: 22))
+                                                .foregroundColor(.accentRed.opacity(0.8))
+                                        }
+                                        // Genehmigen
+                                        Button {
+                                            RealtimeDBManager.shared.approveNameChange(uid: req.uid, newName: req.newName) {
+                                                DispatchQueue.main.async {
+                                                    nameChangeRequests.removeAll { $0.uid == req.uid }
+                                                    // Falls eigener Account → lokal auch updaten
+                                                    if req.uid == FirebaseAuth.Auth.auth().currentUser?.uid {
+                                                        store.currentUser.name = req.newName.capitalizedFirst
+                                                        store.pendingNameChange = nil
+                                                        store.saveAll()
+                                                    }
+                                                }
+                                            }
+                                        } label: {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .font(.system(size: 22))
+                                                .foregroundColor(.onlineGreen)
+                                        }
+                                    }
+                                    .padding(.horizontal, 16).padding(.vertical, 8)
+                                    .background(Color(UIColor.secondarySystemGroupedBackground),
+                                                in: RoundedRectangle(cornerRadius: 12))
+                                    .padding(.horizontal, 16)
+                                }
+                                .padding(.bottom, 8)
+                            }
+                            .background(Color(UIColor.systemGroupedBackground),
+                                        in: RoundedRectangle(cornerRadius: Radius.lg))
+                            .padding(.horizontal, 20)
+                        }
+
                         // Meldungen — öffnet separates Sheet
                         Button {
                             showReports = true
                         } label: {
                             HStack(spacing: 12) {
                                 ZStack {
-                                    RoundedRectangle(cornerRadius: 10)
+                                    RoundedRectangle(cornerRadius: Radius.md)
                                         .fill(Color.accentOrange.opacity(0.15))
                                         .frame(width: 40, height: 40)
                                     Image(systemName: "flag.fill")
@@ -232,7 +315,7 @@ struct AdminPanelView: View {
                         } label: {
                             HStack(spacing: 12) {
                                 ZStack {
-                                    RoundedRectangle(cornerRadius: 10)
+                                    RoundedRectangle(cornerRadius: Radius.md)
                                         .fill(Color.purple.opacity(0.15))
                                         .frame(width: 40, height: 40)
                                     Image(systemName: "arrow.counterclockwise.circle.fill")
@@ -264,7 +347,7 @@ struct AdminPanelView: View {
                         // abwarten zu müssen.
                         HStack(spacing: 12) {
                             ZStack {
-                                RoundedRectangle(cornerRadius: 10)
+                                RoundedRectangle(cornerRadius: Radius.md)
                                     .fill(Color.accentOrange.opacity(0.15))
                                     .frame(width: 40, height: 40)
                                 Image(systemName: "bolt.fill")
@@ -296,7 +379,7 @@ struct AdminPanelView: View {
                         } label: {
                             HStack(spacing: 12) {
                                 ZStack {
-                                    RoundedRectangle(cornerRadius: 10)
+                                    RoundedRectangle(cornerRadius: Radius.md)
                                         .fill(Color.brand.opacity(0.15))
                                         .frame(width: 40, height: 40)
                                     Image(systemName: "dot.radiowaves.left.and.right")
@@ -308,6 +391,49 @@ struct AdminPanelView: View {
                                         .font(.system(size: 15, weight: .semibold))
                                         .foregroundColor(.textPrimary)
                                     Text("Aktuelle Drops anschauen & moderieren")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.textSecondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(.textTertiary)
+                            }
+                            .padding(12)
+                            .liquidGlass(cornerRadius: 14)
+                            .padding(.horizontal, 20)
+                        }
+                        .buttonStyle(.plain)
+
+                        // Community-Anträge — Creator-Bewerbungen genehmigen/ablehnen
+                        Button {
+                            showCommunityRequests = true
+                        } label: {
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: Radius.md)
+                                        .fill(Color.brand.opacity(0.15))
+                                        .frame(width: 40, height: 40)
+                                    Image(systemName: "star.circle.fill")
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundColor(.brand)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 6) {
+                                        Text("Community-Anträge")
+                                            .font(.system(size: 15, weight: .semibold))
+                                            .foregroundColor(.textPrimary)
+                                        if pendingCommunityCount > 0 {
+                                            Text("\(pendingCommunityCount)")
+                                                .font(.system(size: 11, weight: .bold))
+                                                .foregroundColor(.white)
+                                                .padding(.horizontal, 7).padding(.vertical, 2)
+                                                .background(Capsule().fill(Color.brand))
+                                        }
+                                    }
+                                    Text(pendingCommunityCount == 0
+                                         ? "Keine offenen Anträge"
+                                         : "\(pendingCommunityCount) offen")
                                         .font(.system(size: 12))
                                         .foregroundColor(.textSecondary)
                                 }
@@ -591,6 +717,9 @@ struct AdminPanelView: View {
         .sheet(isPresented: $showDropsMonitor, onDismiss: { loadData() }) {
             AdminDropsMonitorSheet()
         }
+        .sheet(isPresented: $showCommunityRequests, onDismiss: { loadCommunityCount() }) {
+            AdminCommunityRequestsSheet()
+        }
     }
 
     // MARK: - Load
@@ -606,8 +735,19 @@ struct AdminPanelView: View {
         RealtimeDBManager.shared.adminFetchStats { result in
             DispatchQueue.main.async { stats = result }
         }
+        RealtimeDBManager.shared.fetchNameChangeRequests { result in
+            DispatchQueue.main.async { nameChangeRequests = result }
+        }
+        loadCommunityCount()
+    }
+
+    private func loadCommunityCount() {
+        CommunityManager.shared.adminFetchRequests { reqs in
+            pendingCommunityCount = reqs.filter { $0.status == "pending" }.count
+        }
     }
 }
+
 
 // MARK: - User Detail Sheet
 
@@ -843,7 +983,7 @@ private struct AdminUserDetailSheet: View {
             Text(drop.emoji.isEmpty ? "📍" : drop.emoji)
                 .font(.system(size: 22))
                 .frame(width: 40, height: 40)
-                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: Radius.md))
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(drop.activityName)
@@ -934,7 +1074,7 @@ private struct DetailActionButton: View {
             .foregroundColor(color)
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
-            .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 14))
+            .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: Radius.card))
         }
         .buttonStyle(.plain)
     }
@@ -954,7 +1094,7 @@ private struct AdminStatCard: View {
         Button(action: onTap) {
             VStack(alignment: .leading, spacing: 10) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: Radius.md)
                         .fill(isActive ? color.opacity(0.25) : color.opacity(0.13))
                         .frame(width: 40, height: 40)
                     Image(systemName: icon)
@@ -1499,7 +1639,7 @@ private struct AdminEndDropReasonSheet: View {
                         Spacer()
                     }
                     .padding(14)
-                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 14))
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: Radius.card))
 
                     Text("Grund auswählen")
                         .font(.system(size: 13, weight: .semibold))
@@ -1539,13 +1679,13 @@ private struct AdminEndDropReasonSheet: View {
                                 }
                                 .padding(.horizontal, 14).padding(.vertical, 12)
                                 .background(
-                                    RoundedRectangle(cornerRadius: 12)
+                                    RoundedRectangle(cornerRadius: Radius.md)
                                         .fill(selectedIndex == idx
                                               ? reason.color.opacity(0.10)
                                               : Color.primary.opacity(0.04))
                                 )
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
+                                    RoundedRectangle(cornerRadius: Radius.md)
                                         .stroke(selectedIndex == idx
                                                 ? reason.color.opacity(0.5)
                                                 : Color.clear, lineWidth: 1.5)
@@ -1565,7 +1705,7 @@ private struct AdminEndDropReasonSheet: View {
                                 .lineLimit(2...4)
                                 .font(.system(size: 14))
                                 .padding(12)
-                                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+                                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: Radius.md))
                         }
                         .transition(.opacity.combined(with: .move(edge: .top)))
                     }
@@ -1622,7 +1762,7 @@ private struct AdminDropCard: View {
         HStack(alignment: .top, spacing: 12) {
             Text(drop.emoji).font(.system(size: 28))
                 .frame(width: 44, height: 44)
-                .background(Color.brand.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                .background(Color.brand.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.md))
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(drop.activityName.isEmpty ? "Drop" : drop.activityName)

@@ -12,11 +12,14 @@ final class PushNotificationManager {
 
     // MARK: - Notification IDs
     private enum ID {
-        static let reEngagement = "drops_reengagement"
-        static let nearbyDrops  = "drops_nearby"
-        static let dropin       = "dropin"
-        static let encounter    = "encounter"
-        static let homeZone     = "drops_homezone"
+        static let reEngagement   = "drops_reengagement"
+        static let nearbyDrops    = "drops_nearby"
+        static let dropin         = "dropin"
+        static let arrived        = "drops_arrived"
+        static let encounter      = "encounter"
+        static let homeZone       = "drops_homezone"
+        static let inactivity     = "drops_inactivity_24h"
+        static let profilePic     = "drops_profile_pic_reminder"
         /// Prefix für die mehreren wiederholenden Power-Hour-Trigger
         /// (pro Wochentag × Window-Startzeit ein eigener Identifier).
         static let powerHourPrefix = "drops_powerhour_"
@@ -24,10 +27,12 @@ final class PushNotificationManager {
 
     // MARK: - UserDefaults Keys
     private enum UDKey {
-        static let lastNearbyNotif   = "pn_last_nearby_notif"
-        static let sessionHadAction  = "pn_session_had_action"
-        static let lastReEngageNotif = "pn_last_reengage_notif"
-        static let lastHomeZoneNotif = "pn_last_homezone_notif"
+        static let lastNearbyNotif          = "pn_last_nearby_notif"
+        static let sessionHadAction         = "pn_session_had_action"
+        static let lastReEngageNotif        = "pn_last_reengage_notif"
+        static let lastHomeZoneNotif        = "pn_last_homezone_notif"
+        static let registeredAt             = "pn_registered_at"
+        static let profilePicScheduled      = "pn_profile_pic_scheduled"
     }
 
     // MARK: - Session State
@@ -85,24 +90,15 @@ final class PushNotificationManager {
         // Hinweis auf konkrete Drops in der Nähe (würde sonst falsche
         // Erwartung wecken — das macht checkNearbyDrops separat).
         let messages: [(title: String, body: String)] = [
-            ("Während du scrollst… 📱",
-             "…läuft 200m weg jemand mit Kaffee an dir vorbei. Drop reicht."),
-            ("Schon wieder \"lass mal\"? 🙄",
-             "Hier antwortet keiner mit \"bald\". Drop's, wer Bock hat kommt."),
-            ("Geht in 60 Sekunden raus 🚪",
-             "Aktivität droppen, jemand kommt, fertig. Echt so einfach."),
-            ("Deine Stadt schläft nicht 🌃",
-             "Bier, Park, Spaziergang. Drop, und es ist sofort sichtbar."),
-            ("Spontan oder nie ⚡️",
-             "Heute Abend? In 10 Min kannst du draußen sein. Probier's."),
-            ("Chat oder Treffen? 💬 → 🤝",
-             "Drops überspringt den Chat. Drop, hin, fertig."),
-            ("Jeder hier hat grad Bock 👀",
-             "Ein Tap und du siehst wer in deiner Stadt jetzt was startet."),
-            ("Spontan ist das neue Geplant 🎯",
-             "Während andere planen, droppst du. Karte auf, hingehen, fertig."),
-            ("Spontan ist das neue Geplant ✨",
-             "Wer wartet bis Donnerstag, verpasst Sonntag. Drop's einfach."),
+            (tr("push.reengage.1_title"), tr("push.reengage.1_body")),
+            (tr("push.reengage.2_title"), tr("push.reengage.2_body")),
+            (tr("push.reengage.3_title"), tr("push.reengage.3_body")),
+            (tr("push.reengage.4_title"), tr("push.reengage.4_body")),
+            (tr("push.reengage.5_title"), tr("push.reengage.5_body")),
+            (tr("push.reengage.6_title"), tr("push.reengage.6_body")),
+            (tr("push.reengage.7_title"), tr("push.reengage.7_body")),
+            (tr("push.reengage.8_title"), tr("push.reengage.8_body")),
+            (tr("push.reengage.9_title"), tr("push.reengage.9_body")),
         ]
         let pick = messages[Int.random(in: 0 ..< messages.count)]
         content.title = pick.title
@@ -131,11 +127,11 @@ final class PushNotificationManager {
     // MARK: - Nearby Drops Notification
     // Prüft ob Drops in der Nähe sind und benachrichtigt ggf. — max. 1x pro 30 Min.
 
-    func checkNearbyDrops(_ drops: [MapAnnotationItem], userLocation: CLLocationCoordinate2D) {
-        // 500m = ~5-7 min Fußweg → "literal nearby", User kann praktisch
-        // sofort hingehen. Ziel: Notification nur für Drops die wirklich
-        // unmittelbar relevant sind, nicht „theoretisch erreichbar".
-        let nearbyRadius: Double = 500
+    func checkNearbyDrops(_ drops: [MapAnnotationItem], userLocation: CLLocationCoordinate2D,
+                          radius: Double = 2000) {
+        // Vom User einstellbar (Standard 2 km). Gibt an wie nah ein Drop
+        // sein muss damit eine Benachrichtigung ausgelöst wird.
+        let nearbyRadius: Double = max(500, radius)
 
         let nearby = drops.filter { $0.isNearby(from: userLocation, maxMeters: nearbyRadius) }
         print("[nearby] checkNearbyDrops: total=\(drops.count) inRadius=\(nearby.count)")
@@ -161,13 +157,19 @@ final class PushNotificationManager {
             let distStr = dist >= 1000
                 ? String(format: "%.1f km", Double(dist) / 1000)
                 : "\(dist) m"
-            content.title = "\(drop.emoji) \(drop.activity) in der Nähe"
-            content.body  = "\(drop.name) ist gerade aktiv — nur \(distStr) entfernt."
+            content.title = tr("push.nearby_single_title")
+                .replacingOccurrences(of: "{emoji}", with: drop.emoji)
+                .replacingOccurrences(of: "{activity}", with: drop.activity)
+            content.body = tr("push.nearby_single_body")
+                .replacingOccurrences(of: "{name}", with: drop.name)
+                .replacingOccurrences(of: "{dist}", with: distStr)
         } else {
             let closest = nearby.sorted { $0.distance(from: userLocation) < $1.distance(from: userLocation) }
             let top = closest.prefix(2).map { "\($0.emoji) \($0.activity)" }.joined(separator: ", ")
-            content.title = "\(nearby.count) Drops in deiner Nähe 📍"
-            content.body  = "\(top) und mehr — schau auf die Karte."
+            content.title = tr("push.nearby_multi_title")
+                .replacingOccurrences(of: "{count}", with: "\(nearby.count)")
+            content.body = tr("push.nearby_multi_body")
+                .replacingOccurrences(of: "{top}", with: top)
         }
 
         // Sofort (nil trigger = wird direkt zugestellt wenn App im Hintergrund)
@@ -214,28 +216,19 @@ final class PushNotificationManager {
             // Texte sind variabel ausgewählt aus einem kleinen Pool, damit der
             // User nicht jede Woche exakt denselben Wortlaut sieht.
             let startMessages: [(title: String, body: String)] = [
-                ("⚡ Power-Hour startet",
-                 "Doppelter Boost-Bonus aktiv — +25 Punkte für jeden Drop, den du jetzt erstellst oder triffst."),
-                ("⚡ Bonus-Zeit läuft",
-                 "Wer jetzt einen Drop startet, bekommt +25 Punkte — sieh wer in der Nähe Lust auf was hat."),
-                ("⚡ Drops Power-Hour",
-                 "Mehr Punkte als sonst (+25 statt +15). Perfekter Moment für nen Spontan-Drop."),
+                (tr("push.ph_start.1_title"), tr("push.ph_start.1_body")),
+                (tr("push.ph_start.2_title"), tr("push.ph_start.2_body")),
+                (tr("push.ph_start.3_title"), tr("push.ph_start.3_body")),
             ]
             let preMessages: [(title: String, body: String)] = [
-                ("⚡ Power-Hour in 1 Stunde",
-                 "Gleich gibt's +25 Punkte für jeden Drop — bereite dich vor."),
-                ("Bald Power-Hour",
-                 "In einer Stunde startet der doppelte Boost-Bonus."),
-                ("⚡ 1 Stunde bis Power-Hour",
-                 "Plan deinen Drop — gleich gibt's +25 statt +15 Punkte."),
+                (tr("push.ph_pre.1_title"), tr("push.ph_pre.1_body")),
+                (tr("push.ph_pre.2_title"), tr("push.ph_pre.2_body")),
+                (tr("push.ph_pre.3_title"), tr("push.ph_pre.3_body")),
             ]
             let endMessages: [(title: String, body: String)] = [
-                ("⚡ Power-Hour endet in 1 Stunde",
-                 "Letzte Chance auf +25 Punkte — wer jetzt noch einen Drop startet, kassiert den Bonus."),
-                ("Letzte Stunde Bonus",
-                 "Power-Hour läuft noch 60 Minuten. Jetzt einen Drop erstellen lohnt sich extra."),
-                ("⚡ Endspurt",
-                 "Eine Stunde übrig für den Power-Hour-Bonus."),
+                (tr("push.ph_end.1_title"), tr("push.ph_end.1_body")),
+                (tr("push.ph_end.2_title"), tr("push.ph_end.2_body")),
+                (tr("push.ph_end.3_title"), tr("push.ph_end.3_body")),
             ]
 
             for window in AppStore.powerHourWindows {
@@ -335,16 +328,11 @@ final class PushNotificationManager {
 
             // Nachrichten-Pool — Marketing-Copy, casual + curiosity
             let messages: [(title: String, body: String)] = [
-                ("Lust auf was heute Abend? 🌅",
-                 "Drop einen Vorschlag — wer in der Nähe Bock hat, kommt vorbei."),
-                ("Feierabend-Plan? 🍻",
-                 "Bier, Park, Spaziergang — 30 Sekunden, dann ist dein Drop live."),
-                ("Wer trifft sich gerade? 👀",
-                 "Karte auf, sieh wer in deiner Nähe was startet — oder droppe selbst."),
-                ("Spontan ist heute drin ⚡",
-                 "Kein Plan? Drop reicht. Andere sehen's sofort."),
-                ("Dein Drops-Reminder 📍",
-                 "5 Min mehr und du bist draußen — drop einfach was, der Rest kommt."),
+                (tr("push.evening.1_title"), tr("push.evening.1_body")),
+                (tr("push.evening.2_title"), tr("push.evening.2_body")),
+                (tr("push.evening.3_title"), tr("push.evening.3_body")),
+                (tr("push.evening.4_title"), tr("push.evening.4_body")),
+                (tr("push.evening.5_title"), tr("push.evening.5_body")),
             ]
 
             // Mo (2), Di (3), Do (5) — Wochentage ohne Power-Hour bevorzugt.
@@ -417,14 +405,12 @@ final class PushNotificationManager {
         content.userInfo = ["type": "homezone_warning"]
 
         let messages: [(title: String, body: String)] = [
-            ("🏠 Du bist in deiner Heimzone",
+            (tr("push.homezone.1_title"),
              nearbyDropCount > 1
-             ? "\(nearbyDropCount) Drops sind gerade in deiner Nähe — andere könnten deinen Standort sehen."
-             : "Ein Drop ist gerade in deiner Nähe — andere könnten deinen Standort sehen."),
-            ("🔒 Heimzone betreten",
-             "Drops in der Nähe können deinen ungefähren Wohnort sichtbar machen. Sei vorsichtig."),
-            ("🏠 Privatsphäre-Hinweis",
-             "Du bist nahe deiner Heimzone und es gibt aktive Drops. Möchtest du wirklich beitreten?"),
+             ? tr("push.homezone.1_body_multi").replacingOccurrences(of: "{count}", with: "\(nearbyDropCount)")
+             : tr("push.homezone.1_body_single")),
+            (tr("push.homezone.2_title"), tr("push.homezone.2_body")),
+            (tr("push.homezone.3_title"), tr("push.homezone.3_body")),
         ]
         let pick = messages[Int.random(in: 0 ..< messages.count)]
         content.title = pick.title
@@ -447,8 +433,10 @@ final class PushNotificationManager {
     /// Push wenn Host NICHT in der App ist und jemand beitreten will
     func notifyIncomingJoinRequest(joinerName: String, activityName: String) {
         let content = UNMutableNotificationContent()
-        content.title = "👋 Jemand möchte mitmachen"
-        content.body  = "\(joinerName) möchte deinem \"\(activityName)\" beitreten. Bestätige in der App."
+        content.title = tr("push.join_req_title")
+        content.body  = tr("push.join_req_body")
+            .replacingOccurrences(of: "{joiner}", with: joinerName)
+            .replacingOccurrences(of: "{activity}", with: activityName)
         content.sound = .default
         content.userInfo = ["type": "join_request"]
         schedule(content, id: "join_request_\(Date().timeIntervalSince1970)")
@@ -457,8 +445,10 @@ final class PushNotificationManager {
     /// Push an Host wenn Auto-Accept ausgelöst wurde
     func notifyAutoAccepted(joinerName: String, activityName: String) {
         let content = UNMutableNotificationContent()
-        content.title = "✅ Automatisch bestätigt"
-        content.body  = "\(joinerName) wurde automatisch zu \"\(activityName)\" hinzugefügt, da keine Antwort kam."
+        content.title = tr("push.auto_acc_title")
+        content.body  = tr("push.auto_acc_body")
+            .replacingOccurrences(of: "{joiner}", with: joinerName)
+            .replacingOccurrences(of: "{activity}", with: activityName)
         content.sound = .default
         content.userInfo = ["type": "auto_accept"]
         schedule(content, id: "auto_accept_\(Date().timeIntervalSince1970)")
@@ -470,8 +460,10 @@ final class PushNotificationManager {
     /// wenn die App im Background ist sieht der User nichts.
     func notifyMyJoinAccepted(hostName: String, activityName: String) {
         let content = UNMutableNotificationContent()
-        content.title = "✅ Anfrage bestätigt"
-        content.body  = "\(hostName) hat dich zu \"\(activityName)\" eingeladen. Auf gehts!"
+        content.title = tr("push.my_join_acc_title")
+        content.body  = tr("push.my_join_acc_body")
+            .replacingOccurrences(of: "{host}", with: hostName)
+            .replacingOccurrences(of: "{activity}", with: activityName)
         content.sound = .default
         content.userInfo = ["type": "join_accepted"]
         schedule(content, id: "join_accepted_\(Date().timeIntervalSince1970)")
@@ -482,8 +474,10 @@ final class PushNotificationManager {
     /// den Joiner daran, dass es jetzt los geht (oder er noch verlassen kann).
     func notifyHostDidntRespond(hostName: String, activityName: String) {
         let content = UNMutableNotificationContent()
-        content.title = "⏰ Host hat nicht geantwortet"
-        content.body  = "Du wurdest automatisch zu \(hostName)s \"\(activityName)\" hinzugefügt."
+        content.title = tr("push.host_noresp_title")
+        content.body  = tr("push.host_noresp_body")
+            .replacingOccurrences(of: "{host}", with: hostName)
+            .replacingOccurrences(of: "{activity}", with: activityName)
         content.sound = .default
         content.userInfo = ["type": "join_auto_accepted"]
         schedule(content, id: "host_no_response_\(Date().timeIntervalSince1970)")
@@ -496,8 +490,13 @@ final class PushNotificationManager {
     func notifyIncomingDropInvitation(hostName: String, hostEmoji: String,
                                       activityName: String, dropEmoji: String) {
         let content = UNMutableNotificationContent()
-        content.title = "\(hostEmoji) Einladung von \(hostName)"
-        content.body  = "\(hostName) lädt dich zu \"\(dropEmoji) \(activityName)\" ein. Tippen zum Öffnen."
+        content.title = tr("push.invite_title")
+            .replacingOccurrences(of: "{emoji}", with: hostEmoji)
+            .replacingOccurrences(of: "{host}", with: hostName)
+        content.body  = tr("push.invite_body")
+            .replacingOccurrences(of: "{host}", with: hostName)
+            .replacingOccurrences(of: "{dropEmoji}", with: dropEmoji)
+            .replacingOccurrences(of: "{activity}", with: activityName)
         content.sound = .default
         content.userInfo = ["type": "drop_invitation"]
         schedule(content, id: "drop_invitation_\(Date().timeIntervalSince1970)")
@@ -511,8 +510,10 @@ final class PushNotificationManager {
     /// ohne Cloud Function nicht änderbar).
     func notifyHostCancelledDrop(dropEmoji: String, activityName: String) {
         let content = UNMutableNotificationContent()
-        content.title = "\(dropEmoji) Drop beendet"
-        content.body  = "Der Host hat \"\(activityName)\" beendet. Du bist nicht mehr dabei."
+        content.title = tr("push.host_cancel_title")
+            .replacingOccurrences(of: "{emoji}", with: dropEmoji)
+        content.body  = tr("push.host_cancel_body")
+            .replacingOccurrences(of: "{activity}", with: activityName)
         content.sound = .default
         content.userInfo = ["type": "host_cancelled"]
         schedule(content, id: "host_cancelled_\(Date().timeIntervalSince1970)")
@@ -522,8 +523,10 @@ final class PushNotificationManager {
 
     func notifyDropIn(joinerName: String, activityName: String) {
         let content = UNMutableNotificationContent()
-        content.title = "📍 Jemand ist eingeDroppt!"
-        content.body  = "\(joinerName) ist deinem Drop \"\(activityName)\" beigetreten."
+        content.title = tr("push.dropin_title")
+        content.body  = tr("push.dropin_body")
+            .replacingOccurrences(of: "{joiner}", with: joinerName)
+            .replacingOccurrences(of: "{activity}", with: activityName)
         content.sound = .default
         content.userInfo = ["type": "dropin"]
         // Kein hartkodiertes badge=1 mehr — sonst klebt eine "1" am Icon
@@ -533,12 +536,27 @@ final class PushNotificationManager {
         schedule(content, id: "\(ID.dropin)_\(Date().timeIntervalSince1970)")
     }
 
+    // MARK: - Teilnehmer angekommen (BLE-bestätigt)
+
+    func notifyParticipantArrived(name: String, activityName: String) {
+        let content = UNMutableNotificationContent()
+        content.title = tr("push.arrived_title")
+            .replacingOccurrences(of: "{name}", with: name)
+        content.body  = tr("push.arrived_body")
+            .replacingOccurrences(of: "{activity}", with: activityName)
+        content.sound = .default
+        content.userInfo = ["type": "arrived"]
+        schedule(content, id: "\(ID.arrived)_\(Int(Date().timeIntervalSince1970))")
+    }
+
     // MARK: - Begegnung
 
     func notifyNewEncounter(withName: String, activityName: String) {
         let content = UNMutableNotificationContent()
-        content.title = "👋 Neue Begegnung"
-        content.body  = "Warst du gerade bei \"\(activityName)\" mit \(withName)?"
+        content.title = tr("push.encounter_title")
+        content.body  = tr("push.encounter_body")
+            .replacingOccurrences(of: "{activity}", with: activityName)
+            .replacingOccurrences(of: "{name}", with: withName)
         content.sound = .default
         content.userInfo = ["type": "encounter"]
         schedule(content, id: "\(ID.encounter)_\(Date().timeIntervalSince1970)")
@@ -551,8 +569,11 @@ final class PushNotificationManager {
     func notifyPointsEarned(delta: Int, totalPoints: Int, reason: String) {
         guard delta > 0 else { return }
         let content = UNMutableNotificationContent()
-        content.title = "✨ +\(delta) Punkte"
-        content.body  = "\(reason) · jetzt \(totalPoints) Punkte gesamt"
+        content.title = tr("push.points_title")
+            .replacingOccurrences(of: "{delta}", with: "\(delta)")
+        content.body  = tr("push.points_body")
+            .replacingOccurrences(of: "{reason}", with: reason)
+            .replacingOccurrences(of: "{total}", with: "\(totalPoints)")
         content.sound = .default
         content.userInfo = ["type": "points_earned", "delta": delta, "total": totalPoints]
         schedule(content, id: "points_\(Date().timeIntervalSince1970)")
@@ -572,5 +593,80 @@ final class PushNotificationManager {
                           trigger: UNNotificationTrigger? = nil) {
         let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
         UNUserNotificationCenter.current().add(request)
+    }
+
+    // MARK: - 24h Inactivity Reminder
+
+    /// Plant eine lokale Benachrichtigung 24h nach dem letzten Drop.
+    /// Wird gecancelt sobald der User einen neuen Drop erstellt oder jointet.
+    func scheduleInactivityReminder() {
+        cancelInactivityReminder()
+        let content = UNMutableNotificationContent()
+        content.title = tr("push.inactivity_title")
+        content.body  = tr("push.inactivity_body")
+        content.sound = .default
+        content.userInfo = ["type": "inactivity"]
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 24 * 3_600, repeats: false)
+        schedule(content, id: ID.inactivity, trigger: trigger)
+    }
+
+    /// Entfernt die ausstehende Inactivity-Benachrichtigung.
+    func cancelInactivityReminder() {
+        UNUserNotificationCenter.current()
+            .removePendingNotificationRequests(withIdentifiers: [ID.inactivity])
+    }
+
+    // MARK: - Profilbild-Erinnerung (48 h nach Registrierung)
+
+    /// Einmalig beim Abschluss des Onboardings aufrufen — speichert den
+    /// Registrierungszeitpunkt für die Delay-Berechnung.
+    func recordRegistration() {
+        guard UserDefaults.standard.double(forKey: UDKey.registeredAt) == 0 else { return }
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: UDKey.registeredAt)
+    }
+
+    /// Plant eine lokale Erinnerung falls kein Profilbild gesetzt ist.
+    /// - Neuuser: feuert 48 h nach Registrierung.
+    /// - Bestandsuser: Restzeit bis 48 h ab Registrierung, spätestens 5 Min wenn
+    ///   die 48 h schon vergangen sind (registeredAt unbekannt → 1 h Puffer).
+    /// Sicher mehrfach aufrufbar — plant nur einmal (Guard via UserDefaults).
+    func scheduleProfilePictureReminderIfNeeded(hasProfileImage: Bool) {
+        if hasProfileImage {
+            cancelProfilePictureReminder()
+            return
+        }
+        // Nur einmal planen
+        guard !UserDefaults.standard.bool(forKey: UDKey.profilePicScheduled) else { return }
+
+        let twoDays: TimeInterval = 48 * 3_600
+        let registeredAt = UserDefaults.standard.double(forKey: UDKey.registeredAt)
+
+        let delay: TimeInterval
+        if registeredAt == 0 {
+            // Bestandsuser vor diesem Feature — 1 h Puffer, nicht sofort
+            delay = 3_600
+        } else {
+            let elapsed   = Date().timeIntervalSince1970 - registeredAt
+            let remaining = twoDays - elapsed
+            // Noch Zeit bis 48 h → warten; sonst mind. 5 Min
+            delay = remaining > 60 ? remaining : 300
+        }
+
+        let content = UNMutableNotificationContent()
+        content.title    = tr("push.profile_pic_title")
+        content.body     = tr("push.profile_pic_body")
+        content.sound    = .default
+        content.userInfo = ["type": "profile_pic_reminder"]
+
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: delay, repeats: false)
+        schedule(content, id: ID.profilePic, trigger: trigger)
+        UserDefaults.standard.set(true, forKey: UDKey.profilePicScheduled)
+    }
+
+    /// Abbrechen sobald der User ein Profilbild hinterlegt hat.
+    func cancelProfilePictureReminder() {
+        UNUserNotificationCenter.current()
+            .removePendingNotificationRequests(withIdentifiers: [ID.profilePic])
+        UserDefaults.standard.removeObject(forKey: UDKey.profilePicScheduled)
     }
 }

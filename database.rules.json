@@ -1,15 +1,14 @@
 {
   "rules": {
-    ".read":  "auth != null",
-    ".write": "auth != null",
 
     "users": {
+      ".read":  "auth != null && root.child('users').child(auth.uid).child('isAdmin').val() == true",
       "$uid": {
         ".read":  "auth != null",
-        ".write": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && (auth.uid == $uid || root.child('users').child(auth.uid).child('isAdmin').val() == true)",
 
-        "isAdmin":  { ".write": false },
-        "isBanned": { ".write": false },
+        "isAdmin":    { ".write": false },
+        "isBanned":   { ".write": false },
         "isPlusUser": { ".write": false }
       }
     },
@@ -37,7 +36,12 @@
     "drops": {
       ".read":  "auth != null",
       "$dropID": {
-        ".write": "auth != null && (newData.child('userID').val() == auth.uid || data.child('userID').val() == auth.uid || newData.val() == null)"
+        ".write": "auth != null && (newData.child('userID').val() == auth.uid || data.child('userID').val() == auth.uid || newData.val() == null)",
+        "joinerIDs": {
+          "$joinerUID": {
+            ".write": "auth != null && auth.uid == $joinerUID"
+          }
+        }
       }
     },
 
@@ -106,15 +110,84 @@
     },
 
     "reports": {
+      ".read":  "auth != null && root.child('users').child(auth.uid).child('isAdmin').val() == true",
       "$reportID": {
-        ".write": "auth != null && newData.child('reporterUID').val() == auth.uid",
-        ".read":  "auth != null && root.child('users').child(auth.uid).child('isAdmin').val() == true"
+        ".write": "auth != null && newData.child('reporterUID').val() == auth.uid"
+      }
+    },
+
+    "nameChangeRequests": {
+      ".read":  "auth != null && root.child('users').child(auth.uid).child('isAdmin').val() == true",
+      "$uid": {
+        ".write": "auth != null && (auth.uid == $uid || root.child('users').child(auth.uid).child('isAdmin').val() == true)"
       }
     },
 
     "friendshipPushSent": {
       ".read":  false,
       ".write": false
+    },
+
+    "dropInvitations": {
+      "$recipientUID": {
+        ".read":  "auth != null && auth.uid == $recipientUID",
+        "$inviteID": {
+          ".write": "auth != null && (newData.child('hostUID').val() == auth.uid || (newData.val() == null && auth.uid == $recipientUID))"
+        }
+      }
+    },
+
+    "config": {
+      ".read":  "auth != null",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('isAdmin').val() == true"
+    },
+
+    "communityRequests": {
+      ".read":  "auth != null && root.child('users').child(auth.uid).child('isAdmin').val() == true",
+      "$uid": {
+        ".read":  "auth != null && auth.uid == $uid",
+        ".write": "auth != null && (auth.uid == $uid || root.child('users').child(auth.uid).child('isAdmin').val() == true)"
+      }
+    },
+
+    "communities": {
+      ".read":  "auth != null",
+      "$communityID": {
+        ".write": "auth != null && (data.child('creatorUID').val() == auth.uid || newData.child('creatorUID').val() == auth.uid || (!data.exists() && auth.uid == $communityID) || root.child('users').child(auth.uid).child('isAdmin').val() == true)",
+        "memberCount": {
+          ".write":    "auth != null",
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        }
+      }
+    },
+
+    "communityMembers": {
+      "$communityID": {
+        ".read":  "auth != null && (root.child('communities').child($communityID).child('creatorUID').val() == auth.uid || root.child('users').child(auth.uid).child('isAdmin').val() == true || root.child('communityMembers').child($communityID).child(auth.uid).exists())",
+        "$uid": {
+          ".write": "auth != null && (auth.uid == $uid || root.child('communities').child($communityID).child('creatorUID').val() == auth.uid || root.child('users').child(auth.uid).child('isAdmin').val() == true)"
+        }
+      }
+    },
+
+    "communitiesByMember": {
+      "$uid": {
+        ".read":  "auth != null && auth.uid == $uid",
+        "$communityID": {
+          ".write": "auth != null && (auth.uid == $uid || root.child('communities').child($communityID).child('creatorUID').val() == auth.uid || root.child('users').child(auth.uid).child('isAdmin').val() == true)"
+        }
+      }
+    },
+
+    "communityPushQueue": {
+      "$communityID": {
+        ".read":    "auth != null && root.child('communities').child($communityID).child('creatorUID').val() == auth.uid",
+        ".write":   "auth != null && root.child('communities').child($communityID).child('creatorUID').val() == auth.uid",
+        ".indexOn": ["sentAt"],
+        "$pushID": {
+          ".write": "auth != null && root.child('communities').child($communityID).child('creatorUID').val() == auth.uid"
+        }
+      }
     }
   }
 }

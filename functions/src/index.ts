@@ -21,7 +21,8 @@
  */
 
 import { onSchedule } from "firebase-functions/v2/scheduler";
-import { onValueCreated } from "firebase-functions/v2/database";
+import { onValueCreated, onValueUpdated } from "firebase-functions/v2/database";
+import { onRequest } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions/v2";
 import { initializeApp } from "firebase-admin/app";
 import { getDatabase } from "firebase-admin/database";
@@ -347,8 +348,9 @@ export const onDropCreatedNearbyPush = onValueCreated(
     { ref: "/drops/{dropID}", region: "europe-west1" },
     async (event) => {
         const drop = event.data.val() ?? {};
-        const dropLat = drop.latitude as number | undefined;
-        const dropLng = drop.longitude as number | undefined;
+        // iOS schreibt "lat"/"lng" — NICHT "latitude"/"longitude"
+        const dropLat = (drop.lat ?? drop.latitude) as number | undefined;
+        const dropLng = (drop.lng ?? drop.longitude) as number | undefined;
         const hostUID = drop.userID as string | undefined;
         const emoji = (drop.emoji as string) || "📍";
         const activity = (drop.activityName as string) || "Drop";
@@ -540,6 +542,16 @@ export const dropStartReminder = onSchedule(
             const startAtMs = startAtSec * 1000;
             if (startAtMs < windowStart || startAtMs > windowEnd) continue;
 
+            // Atomarer Check-and-Set via Transaction — verhindert Doppel-Send
+            // bei parallelen Function-Invocations oder Retries: nur die erste
+            // Instanz die `reminderSent: false` vorfindet, bekommt `committed: true`.
+            const reminderRef = db.ref(`drops/${dropID}/reminderSent`);
+            const txResult = await reminderRef.transaction((current: boolean | null) => {
+                if (current === true) return; // abbrechen → kein Commit
+                return true;                  // atomar auf true setzen
+            });
+            if (!txResult.committed) continue; // andere Instanz war schneller
+
             const hostUID  = (drop.userID as string | undefined) ?? "";
             const emoji    = (drop.emoji as string) || "📍";
             const activity = (drop.activityName as string) || "Drop";
@@ -587,14 +599,368 @@ export const dropStartReminder = onSchedule(
             }
 
             await Promise.allSettled(tokenSends);
-            // Markieren — auch wenn keine Tokens da waren, sonst feuert es endlos
-            await db.ref(`drops/${dropID}/reminderSent`).set(true);
             triggeredDrops++;
             totalSends += tokenSends.length;
         }
 
         if (triggeredDrops > 0) {
             logger.info("dropStartReminder done", { triggeredDrops, totalSends });
+        }
+    }
+);
+
+// ═══════════════════════════════════════════════════════════════════
+// PUBLIC DROP SUMMARY — für drop.html Landing-Page (Universal Link)
+// ═══════════════════════════════════════════════════════════════════
+//
+// HTTP-Endpoint der Drop-Daten als JSON liefert, damit drops-app.de/drop/<id>
+// dem geteilten Empfänger schon VOR Install den Drop-Preview zeigen kann
+// (Strava-Pattern). Nutzt Admin-SDK → umgeht die DB-Rules (drops/* erfordert
+// auth != null). Liefert nur einen minimalen Subset, keine Personen-Daten.
+//
+// Beispiel-Request:
+//   GET https://<region>-drops-858d1.cloudfunctions.net/getDropSummary?id=<uuid>
+// Response:
+//   { activityName, activityEmoji, locationTitle, hostName, hostEmoji,
+//     currentParticipants, maxParticipants, expiresAt, createdAt, isLive }
+//
+// CORS: erlaubt drops-app.de + www.drops-app.de für Browser-Fetch.
+
+
+export const getDropSummary = onRequest(
+    { region: "europe-west1", cors: ["https://drops-app.de", "https://www.drops-app.de"] },
+    async (req, res) => {
+        const dropID = (req.query.id as string | undefined)?.trim();
+        if (!dropID || !/^[A-Z0-9-]{8,64}$/i.test(dropID)) {
+            res.status(400).json({ error: "missing or invalid id" });
+            return;
+        }
+
+        try {
+            const snap = await getDatabase().ref(`drops/${dropID}`).get();
+            if (!snap.exists()) {
+                res.status(404).json({ error: "drop not found or expired" });
+                return;
+            }
+            const d = snap.val() as Record<string, unknown>;
+            const now = Date.now();
+            // RTDB speichert Unix-Timestamps in Sekunden (Swift: Date().timeIntervalSince1970).
+            // Für den JS-Client alles in ms-Epoch umrechnen.
+            // Robuste Erkennung: Werte < 1e10 sind Sekunden, >= 1e10 bereits ms.
+            const toMs = (v: unknown): number => {
+                if (typeof v !== "number" || v === 0) return 0;
+                return v < 1e10 ? v * 1000 : v;
+            };
+            const expiresAt = toMs(d.expiresAt);
+            const createdAt = toMs(d.createdAt);
+
+            // Public-Subset — keine Personen-Daten, keine Standort-Koords.
+            res.status(200).json({
+                id: dropID,
+                activityName:        d.activityName        ?? "Drop",
+                activityEmoji:       d.emoji               ?? d.activityEmoji ?? "📍",
+                locationTitle:       d.locationTitle       ?? "",
+                hostName:            d.displayName         ?? d.hostName ?? d.userName ?? "Jemand",
+                hostEmoji:           d.hostEmoji           ?? d.userEmoji ?? "👤",
+                scheduledTime:       d.scheduledTime       ?? "Jetzt",
+                currentParticipants: d.currentParticipants ?? 1,
+                maxParticipants:     d.maxParticipants     ?? 10,
+                createdAt,
+                expiresAt,
+                isLive: expiresAt > now && createdAt <= now,
+            });
+        } catch (err) {
+            logger.error("getDropSummary failed", { dropID, err });
+            res.status(500).json({ error: "internal" });
+        }
+    }
+);
+
+
+// ═══════════════════════════════════════════════════════════════════
+// DROP ENDED — Push an alle Joiner wenn Host den Drop beendet
+// ═══════════════════════════════════════════════════════════════════
+//
+// Trigger: drops/{dropID}/active wird auf false gesetzt (Host hat
+// cancelDrop ausgeführt). Wir lesen die Joiner aus dropins/{dropID}
+// und schicken jedem einen FCM-Push. Lokaler Push auf Joiner-Seite
+// hat den Nachteil dass er nicht greift wenn die App im Background
+// gekillt ist — diese Function läuft serverseitig und ist daher
+// zuverlässig.
+//
+// Idempotenz: läuft nur wenn `before == true && after == false`.
+// Mehrfache `active: false`-Writes triggern nicht doppelt.
+
+export const onDropEndedPush = onValueUpdated(
+    {
+        ref: "/drops/{dropID}/active",
+        region: "europe-west1",
+        timeoutSeconds: 60,
+    },
+    async (event) => {
+        const before = event.data.before.val();
+        const after = event.data.after.val();
+        // Nur bei echtem Übergang true → false feuern.
+        if (before !== true || after !== false) return;
+
+        const dropID = event.params.dropID;
+        const db = getDatabase();
+
+        // Drop-Metadaten lesen für Push-Text (Emoji + Activity-Name).
+        const dropSnap = await db.ref(`drops/${dropID}`).get();
+        if (!dropSnap.exists()) return;
+        const drop = dropSnap.val() as Record<string, unknown>;
+        const emoji = (drop.activityEmoji as string) || "📍";
+        const activity = (drop.activityName as string) || "Drop";
+        const hostName = (drop.hostName as string) || (drop.userName as string) || "Host";
+        const hostUID = (drop.userID as string | undefined);
+
+        // Joiner-UIDs aus drops/{dropID}/joinerIDs lesen statt aus dropins/.
+        // Hintergrund: dropins/ wird vom Joiner-Client aufgeräumt sobald
+        // active=false kommt — oft schneller als diese Function die Daten
+        // liest (Race Condition). joinerIDs wird beim Accept in den Drop-
+        // Node geschrieben und nur beim freiwilligen Leave entfernt, daher
+        // stabil zum Zeitpunkt des Drop-Endes.
+        const joinerIDsSnap = await db.ref(`drops/${dropID}/joinerIDs`).get();
+        if (!joinerIDsSnap.exists()) {
+            logger.info("onDropEndedPush: no joinerIDs for drop", { dropID });
+            return;
+        }
+
+        const joinerUIDs: string[] = [];
+        joinerIDsSnap.forEach((child) => {
+            const uid = child.key;
+            if (uid && uid !== hostUID) joinerUIDs.push(uid);
+            return false;
+        });
+
+        if (joinerUIDs.length === 0) {
+            logger.info("onDropEndedPush: no joiners to notify", { dropID });
+            return;
+        }
+
+        // FCM-Tokens parallel laden, dann pushen.
+        const messaging = getMessaging();
+        let sent = 0;
+        await Promise.all(joinerUIDs.map(async (uid) => {
+            try {
+                const tokenSnap = await db.ref(`users/${uid}/fcmToken`).once("value");
+                const token = tokenSnap.val() as string | undefined;
+                if (!token) return;
+
+                await messaging.send({
+                    token,
+                    notification: {
+                        title: `${emoji} Drop beendet`,
+                        body: `${hostName} hat „${activity}" beendet. Du bist nicht mehr dabei.`,
+                    },
+                    apns: {
+                        payload: {
+                            aps: {
+                                sound: "default",
+                                badge: 1,
+                                "thread-id": `drop-${dropID}`,
+                                category: "DROP_ENDED",
+                            },
+                        },
+                    },
+                    data: {
+                        type: "drop_ended",
+                        dropID,
+                        activityName: activity,
+                        activityEmoji: emoji,
+                    },
+                });
+                sent++;
+            } catch (err) {
+                logger.warn(`onDropEndedPush: send failed for ${uid}`, { err });
+            }
+        }));
+
+        logger.info("onDropEndedPush done", { dropID, joinerCount: joinerUIDs.length, sent });
+    }
+);
+
+// ── Community Push Fan-Out ─────────────────────────────────────────────────
+//
+// Wenn ein Creator einen Push in `communityPushQueue/{communityID}/{pushID}`
+// schreibt, läuft diese Function: holt alle Member-UIDs aus
+// `communityMembers/{communityID}/`, lädt deren FCM-Tokens aus
+// `users/{uid}/fcmToken` und schickt jedem die Notification.
+//
+// Der Creator selbst bekommt keinen eigenen Push.
+//
+// Rate-Limit (3/Tag) wird clientseitig geprüft — hier kein Re-Check,
+// aber die Function loggt die Anzahl, sodass Missbrauch auffällt.
+
+export const onCommunityPushQueued = onValueCreated(
+    {
+        ref: "/communityPushQueue/{communityID}/{pushID}",
+        region: "europe-west1",
+        timeoutSeconds: 60,
+    },
+    async (event) => {
+        const { communityID, pushID } = event.params;
+        const payload = event.data.val() as Record<string, unknown> | null;
+        if (!payload) return;
+
+        const title = (payload.title as string | undefined)?.trim() || "Community Update";
+        const body  = (payload.body  as string | undefined)?.trim() || "";
+        if (!body) {
+            logger.info("onCommunityPushQueued: empty body — skipping", { communityID, pushID });
+            return;
+        }
+
+        const db = getDatabase();
+
+        // Community-Metadaten für Push-Kontext (Activity-Name, Creator).
+        const commSnap = await db.ref(`communities/${communityID}`).get();
+        if (!commSnap.exists()) {
+            logger.warn("onCommunityPushQueued: community missing", { communityID });
+            return;
+        }
+        const comm = commSnap.val() as Record<string, unknown>;
+        const activitySlug = (comm.activitySlug as string | undefined) ?? "";
+        const creatorUID   = (comm.creatorUID   as string | undefined) ?? communityID;
+
+        // Member-UIDs holen (alle außer dem Creator).
+        const membersSnap = await db.ref(`communityMembers/${communityID}`).get();
+        if (!membersSnap.exists()) {
+            logger.info("onCommunityPushQueued: no members yet", { communityID });
+            return;
+        }
+
+        const memberUIDs: string[] = [];
+        membersSnap.forEach((child) => {
+            const uid = child.key;
+            if (uid && uid !== creatorUID) memberUIDs.push(uid);
+            return false;
+        });
+
+        if (memberUIDs.length === 0) {
+            logger.info("onCommunityPushQueued: no recipients (only creator)", { communityID });
+            return;
+        }
+
+        // Tokens parallel laden + pushen.
+        const messaging = getMessaging();
+        let sent = 0;
+        let skipped = 0;
+        await Promise.all(memberUIDs.map(async (uid) => {
+            try {
+                const tokenSnap = await db.ref(`users/${uid}/fcmToken`).once("value");
+                const token = tokenSnap.val() as string | undefined;
+                if (!token) { skipped++; return; }
+
+                await messaging.send({
+                    token,
+                    notification: { title, body },
+                    apns: {
+                        payload: {
+                            aps: {
+                                sound: "default",
+                                "thread-id": `community-${communityID}`,
+                                category: "COMMUNITY_PUSH",
+                            },
+                        },
+                    },
+                    data: {
+                        type: "community_push",
+                        communityID,
+                        pushID,
+                        activitySlug,
+                    },
+                });
+                sent++;
+            } catch (err) {
+                logger.warn(`onCommunityPushQueued: send failed for ${uid}`, { err });
+            }
+        }));
+
+        logger.info("onCommunityPushQueued done", {
+            communityID, pushID, memberCount: memberUIDs.length, sent, skipped,
+        });
+    }
+);
+
+// ── Welcome-Push an den Creator wenn ein Mitglied beitritt ──────────────────
+//
+// Triggert auf jeden neuen Eintrag in `communityMembers/{communityID}/{joinerUID}`.
+// Lädt Community-Daten + Joiner-Name + Creator-Token und sendet eine kurze
+// Benachrichtigung an den Creator: "Max ist deiner Tennis-Community beigetreten."
+//
+// Skip: wenn der Creator selbst joint (Initial bei Approve) → kein Push an sich.
+
+export const onCommunityMemberJoined = onValueCreated(
+    {
+        ref: "/communityMembers/{communityID}/{joinerUID}",
+        region: "europe-west1",
+        timeoutSeconds: 30,
+    },
+    async (event) => {
+        const { communityID, joinerUID } = event.params;
+        const db = getDatabase();
+
+        // Community-Metadaten laden für Creator-UID + Activity.
+        const commSnap = await db.ref(`communities/${communityID}`).get();
+        if (!commSnap.exists()) {
+            logger.info("onCommunityMemberJoined: community missing", { communityID });
+            return;
+        }
+        const comm = commSnap.val() as Record<string, unknown>;
+        const creatorUID   = (comm.creatorUID   as string | undefined) ?? communityID;
+        const activitySlug = (comm.activitySlug as string | undefined) ?? "";
+        const district     = (comm.district     as string | undefined) ?? "";
+
+        // Skip: Creator joint sich selbst beim Approve.
+        if (joinerUID === creatorUID) {
+            logger.info("onCommunityMemberJoined: creator self-join — skipping", { communityID });
+            return;
+        }
+
+        // Joiner-Name aus users-Knoten.
+        const joinerSnap = await db.ref(`users/${joinerUID}/name`).get();
+        const joinerName = (joinerSnap.val() as string | undefined) ?? "Jemand";
+
+        // Creator-Token holen.
+        const tokenSnap = await db.ref(`users/${creatorUID}/fcmToken`).get();
+        const token = tokenSnap.val() as string | undefined;
+        if (!token) {
+            logger.info("onCommunityMemberJoined: no token for creator", { creatorUID });
+            return;
+        }
+
+        // Activity-Display-Name (Slug capitalize falls kein Mapping).
+        const activityDisplay = activitySlug
+            ? activitySlug.charAt(0).toUpperCase() + activitySlug.slice(1)
+            : "Community";
+
+        try {
+            await getMessaging().send({
+                token,
+                notification: {
+                    title: "Neues Community-Mitglied",
+                    body: `${joinerName} ist deiner ${activityDisplay}-Community in ${district} beigetreten.`,
+                },
+                apns: {
+                    payload: {
+                        aps: {
+                            sound: "default",
+                            "thread-id": `community-${communityID}`,
+                            category: "COMMUNITY_JOIN",
+                        },
+                    },
+                },
+                data: {
+                    type: "community_join",
+                    communityID,
+                    joinerUID,
+                    joinerName,
+                },
+            });
+            logger.info("onCommunityMemberJoined sent", { communityID, joinerUID, creatorUID });
+        } catch (e: any) {
+            logger.warn("onCommunityMemberJoined: FCM send failed", { creatorUID, error: e?.message });
         }
     }
 );

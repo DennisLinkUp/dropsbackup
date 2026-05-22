@@ -171,7 +171,7 @@ final class BluetoothMeetupManager: NSObject, ObservableObject {
         let timeInDrop = Date().timeIntervalSince(joinedAt)
         if timeInDrop < Self.minDropDuration {
             let remaining = Int((Self.minDropDuration - timeInDrop) / 60) + 1
-            return "Noch \(remaining) Min. im Drop bleiben, bevor ein Treffen zählt."
+            return tr("ble.stay_longer").replacingOccurrences(of: "{mins}", with: "\(remaining)")
         }
 
         // 2. Partner-Cooldown
@@ -179,13 +179,13 @@ final class BluetoothMeetupManager: NSObject, ObservableObject {
             let elapsed = Date().timeIntervalSince(lastConfirm)
             if elapsed < Self.partnerCooldown {
                 let hoursLeft = Int((Self.partnerCooldown - elapsed) / 3600) + 1
-                return "Diese Person hast du kürzlich schon bestätigt. Cooldown: \(hoursLeft)h."
+                return tr("ble.recently_confirmed").replacingOccurrences(of: "{hours}", with: "\(hoursLeft)")
             }
         }
 
         // 3. Tages-Cap
         if todayConfirmations.count >= Self.dailyCap {
-            return "Tageslimit erreicht (\(Self.dailyCap) BLE-Bestätigungen/Tag)."
+            return tr("ble.daily_limit").replacingOccurrences(of: "{cap}", with: "\(Self.dailyCap)")
         }
 
         return nil  // Alles okay

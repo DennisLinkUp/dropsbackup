@@ -2,12 +2,24 @@ import SwiftUI
 import CoreLocation
 import UserNotifications
 import StoreKit
+import TipKit
+import GoogleSignIn
 
 @main
 struct LinkUpApp: App {
 
     // AppDelegate übernimmt Firebase.configure() + APNs-Setup
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
+
+    init() {
+        // TipKit konfigurieren — .immediate damit Coach-Marks beim ersten
+        // Start des CreateDropView sofort erscheinen (kein täglicher
+        // Frequency-Filter). MaxDisplayCount(1) je Tip verhindert Wiederholung.
+        try? Tips.configure([
+            .displayFrequency(.immediate),
+            .datastoreLocation(.applicationDefault)
+        ])
+    }
 
     @StateObject private var store: AppStore = {
         let s = AppStore()
@@ -48,16 +60,27 @@ struct LinkUpApp: App {
     // MARK: - Universal Link Handler
     // Erwartet: https://(www.)drops-app.de/drop/{UUID}
     //           https://(www.)drops-app.de/invite/{inviterUID}
+    //           drops://drop/{UUID}          ← custom scheme (Web-Fallback)
+    //           drops://invite/{inviterUID}
     private func handleUniversalLink(_ url: URL) {
-        // Beide Hosts akzeptieren — Apex und www-Subdomain sind beide
-        // als applinks in den Entitlements registriert. Geteilte Links
-        // sollten www nutzen, ältere Links könnten noch Apex sein.
-        let allowedHosts: Set<String> = ["drops-app.de", "www.drops-app.de"]
-        guard let host = url.host, allowedHosts.contains(host),
-              url.pathComponents.count >= 3 else { return }
+        let section: String
+        let param: String
 
-        let section = url.pathComponents[1]
-        let param   = url.pathComponents[2]
+        if url.scheme == "drops" {
+            // Custom URL scheme: drops://drop/<UUID> oder drops://invite/<UID>
+            // host = "drop"/"invite", pathComponents = ["/", "<param>"]
+            guard let host = url.host,
+                  url.pathComponents.count >= 2 else { return }
+            section = host
+            param   = url.pathComponents[1]
+        } else {
+            // Universal Link: https://www.drops-app.de/drop/<UUID>
+            let allowedHosts: Set<String> = ["drops-app.de", "www.drops-app.de"]
+            guard let host = url.host, allowedHosts.contains(host),
+                  url.pathComponents.count >= 3 else { return }
+            section = url.pathComponents[1]
+            param   = url.pathComponents[2]
+        }
 
         if section == "drop", let dropID = UUID(uuidString: param) {
             store.selectedTab = .map
@@ -65,7 +88,6 @@ struct LinkUpApp: App {
                 store.pendingDropID = dropID
             }
         } else if section == "invite" {
-            // Einladungslink: Freund-Profil suchen / Freund hinzufügen
             store.selectedTab = .map
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 store.pendingInviteUsername = param
@@ -93,7 +115,13 @@ struct LinkUpApp: App {
                     .reviewPromptHandler(store: store)
                     .onOpenURL { url in handleUniversalLink(url) }
                     .onAppear {
-                        requestPermissionsIfNeeded()
+                        // Nur für Bestandsuser (hasSeenWelcome = true) hier anfragen.
+                        // Neuuser bekommen die Permission-Dialoge erst nach dem
+                        // WelcomeSheet / First-Drop-Walkthrough — dann ist der
+                        // Kontext klar und die Akzeptanzrate höher.
+                        if UserDefaults.standard.bool(forKey: "hasSeenWelcome") {
+                            requestPermissionsIfNeeded()
+                        }
                         // Cold-Start: scenePhase = .active feuert kein onChange.
                         // Hier nochmal pollen falls AppDelegate ein Pending hat.
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
@@ -108,6 +136,7 @@ struct LinkUpApp: App {
                     .environmentObject(store)
                     .preferredColorScheme(preferredScheme)
                     .onOpenURL { url in
+                        if GIDSignIn.sharedInstance.handle(url) { return }
                         handleUniversalLink(url)
                     }
             }
@@ -138,7 +167,11 @@ struct LinkUpApp: App {
                 Task { @MainActor in
                     PushNotificationManager.shared.cancelReEngagementNotification()
                     PushNotificationManager.shared.resetSession()
-                    PushNotificationManager.shared.requestPermissionIfNeeded()
+                    // Nur für User die bereits den WelcomeSheet gesehen haben —
+                    // Neuuser bekommen Permissions erst nach WelcomeSheet/Walkthrough.
+                    if UserDefaults.standard.bool(forKey: "hasSeenWelcome") {
+                        PushNotificationManager.shared.requestPermissionIfNeeded()
+                    }
                     // Power-Hour-Pushs als wiederkehrende lokale Notifications
                     // anlegen / refreshen — iOS feuert sie dann jede Woche zur
                     // konfigurierten Uhrzeit auch wenn die App nicht läuft.

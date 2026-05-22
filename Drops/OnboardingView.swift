@@ -4,6 +4,7 @@ import AuthenticationServices
 import FirebaseAuth
 import UserNotifications
 import CoreLocation
+import GoogleSignIn
 
 // MARK: - Fake Map Background (fiktive Stadtkarte, Apple-Maps-Stil)
 
@@ -311,7 +312,7 @@ class KeyboardObserver: ObservableObject {
 }
 
 enum OnboardingStep {
-    case welcome, profile, birthday, interests, intro, done, underage
+    case welcome, profile, birthday, done, underage
 }
 
 
@@ -539,7 +540,7 @@ struct UnderAgeBlockView: View {
                     .multilineTextAlignment(.center)
                     .padding(.bottom, 14)
 
-                Text("Drops ist ausschließlich für Personen ab 18 Jahren.\n\nDein angegebenes Alter liegt unter dieser Grenze. Eine Nutzung ist leider nicht möglich.")
+                Text(tr("onboard.under_18"))
                     .font(.system(size: 15))
                     .foregroundColor(Color.white.opacity(0.65))
                     .multilineTextAlignment(.center)
@@ -686,38 +687,32 @@ struct OnboardingView: View {
                 .onEnded { drag in
                     guard drag.translation.width > 80,
                           abs(drag.translation.height) < abs(drag.translation.width) else { return }
-                    withAnimation(.spring(response: 0.4)) {
-                        switch step {
-                        case .interests: step = .profile
-                        case .intro:     step = .interests
-                        default: break
-                        }
-                    }
+                    // kein Swipe-Back auf diesem Step
                 }
         )
-        .alert("Konto bereits vorhanden", isPresented: $showDuplicateAccountAlert) {
-            Button("Einloggen") {
+        .alert(tr("onboard.account_exists_title"), isPresented: $showDuplicateAccountAlert) {
+            Button(tr("onboard.sign_in")) {
                 withAnimation(.spring(response: 0.4)) {
                     isLoginMode = true
                     step = .welcome
                 }
             }
-            Button("Abbrechen", role: .cancel) {
+            Button(tr("onboard.cancel"), role: .cancel) {
                 withAnimation(.spring(response: 0.4)) { step = .welcome }
             }
         } message: {
             Text(tr("onboard.account_exists"))
         }
-        .alert("Kein Konto gefunden", isPresented: $showNotFoundAlert) {
-            Button("Registrieren") {
+        .alert(tr("onboard.no_account_found"), isPresented: $showNotFoundAlert) {
+            Button(tr("onboard.register")) {
                 withAnimation(.spring(response: 0.4)) {
                     isLoginMode = false
                     step = .welcome
                 }
             }
-            Button("Abbrechen", role: .cancel) { }
+            Button(tr("onboard.cancel"), role: .cancel) { }
         } message: {
-            Text("Diese Nummer ist noch nicht registriert. Möchtest du ein neues Konto erstellen?")
+            Text(tr("onboard.number_not_registered"))
         }
         .onAppear { }
     }
@@ -729,8 +724,6 @@ struct OnboardingView: View {
         case .welcome:   welcomeStepView
         case .profile:   profileStepView
         case .birthday:  profileStepView   // Zurück zum Profil-Schritt (Geburtsdatum korrigieren)
-        case .interests: interestsStepView
-        case .intro:     introStepView
         case .done:      doneStepView
         case .underage:  underageStepView
         }
@@ -798,6 +791,29 @@ struct OnboardingView: View {
                     }
                 }
             },
+            onGoogle: { isNewUser, _ in
+                Task { @MainActor in
+                    var wasDeleted = false
+                    if let uid = Auth.auth().currentUser?.uid {
+                        wasDeleted = await RealtimeDBManager.shared.consumeDeletionTombstone(uid: uid)
+                    }
+                    if wasDeleted {
+                        isLoginMode = false
+                        withAnimation(.spring(response: 0.4)) { step = .profile }
+                        return
+                    }
+                    let profileExists: Bool = await withCheckedContinuation { cont in
+                        RealtimeDBManager.shared.hasExistingProfile { exists in cont.resume(returning: exists) }
+                    }
+                    if !isNewUser && !profileExists {
+                        // Resurrection: Firebase kennt User, Profil fehlt → neu registrieren
+                        isLoginMode = false
+                        withAnimation(.spring(response: 0.4)) { step = .profile }
+                        return
+                    }
+                    handleAppleSignInResult(exists: profileExists)
+                }
+            },
             isLoginMode: $isLoginMode,
             onBetaLogin: nil
         )
@@ -822,13 +838,13 @@ struct OnboardingView: View {
                 // Beleidigungen oder Sexual-Solicitation als Anzeigename.
                 if let match = ContentFilter.firstMatch(profileName: name) {
                     store.showInfoToast(
-                        "Dieser Name enthält ein blockiertes Wort (\"\(match.word)\"). Bitte einen anderen wählen.",
+                        tr("onboard.blocked_word").replacingOccurrences(of: "{word}", with: match.word),
                         icon: "exclamationmark.shield.fill"
                     )
                     UINotificationFeedbackGenerator().notificationOccurred(.warning)
                     return
                 }
-                store.currentUser.name = name.isEmpty ? "Du" : name
+                store.currentUser.name = name.isEmpty ? "Du" : name.capitalizedFirst
                 store.userBirthdate    = birthdate
                 store.userGender       = gender.lowercased()   // immer lowercase speichern
                 if !phone.isEmpty {
@@ -836,7 +852,11 @@ struct OnboardingView: View {
                     store.saveUserPhone(phone)
                 }
                 store.saveAll()
-                withAnimation(.spring(response: 0.4)) { step = .interests }
+                // Permissions werden NICHT mehr hier angefragt — sie kommen
+                // erst nach dem WelcomeSheet / First-Drop-Walkthrough in
+                // MainTabView. So entscheidet der User erst nachdem er die
+                // App verstanden hat, ob er Standort/Push/BT erlaubt.
+                withAnimation(.spring(response: 0.4)) { step = .done }
             },
             onBack: { withAnimation(.spring(response: 0.4)) { step = .welcome } }
         )
@@ -861,31 +881,6 @@ struct OnboardingView: View {
         }
     }
 
-    @ViewBuilder private var interestsStepView: some View {
-        InterestsStep(
-            selected: $store.userInterests,
-            onNext: {
-                store.saveAll()
-                // Permissions (Push + Location) direkt hier anfragen — der
-                // AppIntroStep ist entfernt, weil das MainTabView-WelcomeSheet
-                // bereits die Features zeigt.
-                requestOnboardingPermissions()
-                withAnimation(.spring(response: 0.4)) { step = .done }
-            },
-            onBack: { withAnimation(.spring(response: 0.4)) { step = .profile } }
-        )
-        .environment(\.colorScheme, adaptiveScheme)
-    }
-
-    @ViewBuilder private var introStepView: some View {
-        AppIntroStep {
-            requestOnboardingPermissions()
-            withAnimation(.spring(response: 0.4)) { step = .done }
-        }
-        .environment(\.colorScheme, adaptiveScheme)
-    }
-
-
     @ViewBuilder private var doneStepView: some View {
         Color.clear.onAppear {
             // Firebase UID persistent speichern für stabilen Drop-Filter
@@ -901,6 +896,8 @@ struct OnboardingView: View {
             store.genderFilterEnabled = false
             // Profil in Firebase speichern → Nutzer erscheint im Admin-Panel
             saveProfileToFirebase()
+            // Registrierungszeitpunkt für Profilbild-Erinnerung (48 h) merken
+            PushNotificationManager.shared.recordRegistration()
             // FCM-Token in RTDB schreiben — der Token kam ggf. schon vor Auth (OnApp-Start),
             // konnte aber mangels User-UID nicht persistiert werden. Jetzt nachholen.
             if let token = UserDefaults.standard.string(forKey: "fcmToken"), !token.isEmpty {
@@ -990,7 +987,9 @@ struct OnboardingView: View {
             // beim Layout-Wechsel nicht sauber invalidiert).
             isLoading = true
             hasOnboarded = true
-            // Welcome-Sheet nur bei echter Neuregistrierung — Re-Login skipt ihn.
+            // Bestehender User → WelcomeSheet NICHT zeigen.
+            // hasSeenWelcome wird beim Logout geleert, muss daher beim Re-Login
+            // explizit gesetzt werden (sonst sieht jeder Re-Login den Walkthrough).
             UserDefaults.standard.set(true, forKey: "hasSeenWelcome")
             // FCM-Token nachziehen (Token kam ggf. vor Login → noch nicht persistiert)
             if let token = UserDefaults.standard.string(forKey: "fcmToken"), !token.isEmpty {
@@ -1095,7 +1094,7 @@ struct OnboardingView: View {
             }
             guard let p = profile else { return }
             if let name = p.name, !name.isEmpty {
-                self.store.currentUser.name = name
+                self.store.currentUser.name = name.capitalizedFirst
                 // Persistiert den Namen für den Quick-Login-Button auf
                 // dem Welcome-Screen — überlebt Logout (anders als UDKey.userName).
                 UserDefaults.standard.set(name, forKey: "ud_lastLoginName")
@@ -1192,9 +1191,9 @@ struct DropsLogo: View {
                 .foregroundColor(textColor)
         }
         // Orange-Glow oben-links — wie der Icon-Top
-        .shadow(color: Color(hex: "E48C3A").opacity(0.65), radius: 24, x: -2, y: -3)
+        .shadow(color: Color.auroraOrange.opacity(0.65), radius: 24, x: -2, y: -3)
         // Grün-Glow unten-rechts — wie der Icon-Bottom
-        .shadow(color: Color(hex: "5FA937").opacity(0.55), radius: 22, x: 3, y: 4)
+        .shadow(color: Color.auroraGreen.opacity(0.55), radius: 22, x: 3, y: 4)
         // Subtle dunkler Drop-Shadow für Boden-Definition
         .shadow(color: Color.black.opacity(0.22), radius: 10, y: 7)
     }
@@ -1313,11 +1312,11 @@ struct DropsIconHero: View {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(
                     LinearGradient(
-                        colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                        colors: [Color.auroraOrange, Color.auroraGreen],
                         startPoint: .top, endPoint: .bottom
                     )
                 )
-                .shadow(color: Color(hex: "E48C3A").opacity(0.35), radius: 30, y: 12)
+                .shadow(color: Color.auroraOrange.opacity(0.35), radius: 30, y: 12)
 
             // Innerer Glanz-Stroke für Liquid-Glass-Feel
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -1455,6 +1454,7 @@ struct PulsingRing: View {
 
 // MARK: - Welcome Step (Dark & Light Variante)
 
+
 // MARK: - Custom Apple Button (UIViewRepresentable)
 
 /// Nativer ASAuthorizationAppleIDButton ohne automatisches System-Credential-Sheet.
@@ -1490,6 +1490,7 @@ struct AppleSignInButtonView: UIViewRepresentable {
 struct WelcomeStep: View {
     let onPhone: () -> Void
     let onApple: (Bool, String?) -> Void  // isNewUser, appleEmail
+    let onGoogle: (Bool, String?) -> Void // isNewUser, googleEmail
     @AppStorage("appLanguage") private var appLanguage = "de"
     @Binding var isLoginMode: Bool
     var onBetaLogin: (() -> Void)? = nil   // Beta-Bypass: anonym einloggen
@@ -1500,6 +1501,7 @@ struct WelcomeStep: View {
     @State private var showCursor = false
     @State private var typewriterTask: Task<Void, Never>? = nil
     @StateObject private var appleAuth = AppleSignInManager()
+    @StateObject private var googleAuth = GoogleSignInManager()
 
     // Quick-Login: wenn der letzte User im UserDefaults persistiert ist,
     // zeigen wir oberhalb der Standard-Apple-Buttons einen großen "Weiter
@@ -1575,12 +1577,12 @@ struct WelcomeStep: View {
                             .background {
                                 ZStack {
                                     Circle()
-                                        .fill(Color(hex: "E48C3A").opacity(isLight ? 0.14 : 0.20))
+                                        .fill(Color.auroraOrange.opacity(isLight ? 0.14 : 0.20))
                                         .frame(width: 240, height: 240)
                                         .blur(radius: 48)
                                         .offset(x: -20, y: -30)
                                     Circle()
-                                        .fill(Color(hex: "5FA937").opacity(isLight ? 0.10 : 0.14))
+                                        .fill(Color.auroraGreen.opacity(isLight ? 0.10 : 0.14))
                                         .frame(width: 180, height: 180)
                                         .blur(radius: 38)
                                         .offset(x: 30, y: 30)
@@ -1593,10 +1595,10 @@ struct WelcomeStep: View {
                         // identisch zum Store, zweite Zeile pointiert den
                         // Spontan-Charakter der App.
                         VStack(spacing: 6) {
-                            Text("Triff Leute.")
+                            Text(tr("onboard.meet_people"))
                                 .font(.system(size: screenH < 700 ? 28 : 32, weight: .bold, design: .default))
                                 .foregroundColor(textPrimary)
-                            Text("Spontan.")
+                            Text(tr("onboard.spontaneously"))
                                 .font(.system(size: screenH < 700 ? 28 : 32, weight: .bold, design: .default))
                                 .foregroundColor(textPrimary)
                         }
@@ -1623,7 +1625,7 @@ struct WelcomeStep: View {
                                         showAlternativeLogin = true
                                     }
                                 }) {
-                                    Text("Anderes Konto verwenden")
+                                    Text(tr("onboard.use_different_account"))
                                         .font(.system(size: 13))
                                         .foregroundColor(textSecondary.opacity(0.7))
                                         .underline()
@@ -1634,7 +1636,7 @@ struct WelcomeStep: View {
                                 // Sichtbarer Trenner zwischen Quick-Login und Alternativ-Flow
                                 HStack(spacing: 8) {
                                     Rectangle().fill(textSecondary.opacity(0.15)).frame(height: 1)
-                                    Text("oder")
+                                    Text(tr("onboard.or"))
                                         .font(.system(size: 11))
                                         .foregroundColor(textSecondary.opacity(0.5))
                                     Rectangle().fill(textSecondary.opacity(0.15)).frame(height: 1)
@@ -1650,43 +1652,58 @@ struct WelcomeStep: View {
                             // ── Standard Apple Sign In / Sign Up ──────
                             // Conditional Rendering mit .id() — opacity-Lösung war
                             // unzuverlässig (iOS recycled den native UIView).
-                            ZStack {
-                                if isLoginMode {
-                                    // Login-Button (.signIn → "Mit Apple ID anmelden")
-                                    AppleSignInButtonView(
-                                        type: .signIn,
-                                        style: appleButtonStyle == .black ? .black : .white,
-                                        cornerRadius: screenH < 700 ? 22 : 25
-                                    ) {
-                                        appleAuth.signIn { success, isNewUser in
-                                            if success { onApple(isNewUser, appleAuth.lastAppleEmail) }
-                                        }
-                                    }
-                                    .frame(maxWidth: .infinity, minHeight: screenH < 700 ? 44 : 50, maxHeight: screenH < 700 ? 44 : 50)
-                                    .disabled(appleAuth.isLoading)
-                                    .id("apple-signin")
-                                } else {
-                                    // Registrieren-Button (.signUp → "Mit Apple ID registrieren")
-                                    AppleSignInButtonView(
-                                        type: .signUp,
-                                        style: appleButtonStyle == .black ? .black : .white,
-                                        cornerRadius: screenH < 700 ? 22 : 25
-                                    ) {
-                                        appleAuth.signIn { success, isNewUser in
-                                            if success { onApple(isNewUser, appleAuth.lastAppleEmail) }
-                                        }
-                                    }
-                                    .frame(maxWidth: .infinity, minHeight: screenH < 700 ? 44 : 50, maxHeight: screenH < 700 ? 44 : 50)
-                                    .disabled(appleAuth.isLoading)
-                                    .id("apple-signup")
+                            Button {
+                                appleAuth.signIn { success, isNewUser in
+                                    if success { onApple(isNewUser, appleAuth.lastAppleEmail) }
                                 }
-
-                                if appleAuth.isLoading {
-                                    Capsule().fill(.black.opacity(0.3))
-                                        .frame(maxWidth: .infinity, minHeight: screenH < 700 ? 44 : 50, maxHeight: screenH < 700 ? 44 : 50)
-                                    ProgressView().tint(.white)
+                            } label: {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: screenH < 700 ? 22 : 25)
+                                        .fill(appleButtonStyle == .black ? Color.black : Color.white)
+                                    if appleAuth.isLoading {
+                                        ProgressView()
+                                            .tint(appleButtonStyle == .black ? .white : .black)
+                                    } else {
+                                        HStack(spacing: 10) {
+                                            Image(systemName: "apple.logo")
+                                                .font(.system(size: 20, weight: .medium))
+                                                .foregroundColor(appleButtonStyle == .black ? .white : .black)
+                                            Text(isLoginMode ? "Mit Apple anmelden" : "Mit Apple registrieren")
+                                                .font(.system(size: 16, weight: .semibold))
+                                                .foregroundColor(appleButtonStyle == .black ? .white : .black)
+                                        }
+                                    }
                                 }
                             }
+                            .frame(maxWidth: .infinity, minHeight: screenH < 700 ? 50 : 56, maxHeight: screenH < 700 ? 50 : 56)
+                            .buttonStyle(.plain)
+                            .disabled(appleAuth.isLoading)
+
+                            // ── Google Sign In ──────────────────────────────
+                            Button {
+                                googleAuth.signIn { success, isNewUser in
+                                    if success { onGoogle(isNewUser, googleAuth.lastGoogleEmail) }
+                                }
+                            } label: {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: screenH < 700 ? 22 : 25)
+                                        .fill(Color.white)
+                                        .shadow(color: .black.opacity(isLight ? 0.10 : 0.20), radius: 4, x: 0, y: 2)
+                                    if googleAuth.isLoading {
+                                        ProgressView().tint(Color(hex: "1F1F1F"))
+                                    } else {
+                                        HStack(spacing: 10) {
+                                            GoogleGLogo(size: 22)
+                                            Text("Mit Google fortfahren")
+                                                .font(.system(size: 16, weight: .semibold))
+                                                .foregroundColor(Color(hex: "1F1F1F"))
+                                        }
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, minHeight: screenH < 700 ? 50 : 56, maxHeight: screenH < 700 ? 50 : 56)
+                            .buttonStyle(.plain)
+                            .disabled(googleAuth.isLoading || appleAuth.isLoading)
 
                             // Toggle Login ↔ Registrieren
                             Button(action: {
@@ -1705,9 +1722,16 @@ struct WelcomeStep: View {
                             .padding(.top, 4)
                         }
 
-                        // Apple-Fehler anzeigen (für beide Varianten)
+                        // Fehler anzeigen (Apple + Google)
                         if let appleErr = appleAuth.errorMessage {
                             Text(appleErr)
+                                .font(.system(size: 12))
+                                .foregroundColor(.accentRed)
+                                .multilineTextAlignment(.center)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+                        if let googleErr = googleAuth.errorMessage {
+                            Text(googleErr)
                                 .font(.system(size: 12))
                                 .foregroundColor(.accentRed)
                                 .multilineTextAlignment(.center)
@@ -1753,57 +1777,65 @@ struct WelcomeStep: View {
                 if success { onApple(isNewUser, appleAuth.lastAppleEmail) }
             }
         }) {
-            HStack(spacing: 12) {
-                // Avatar (letztes Profilbild aus UserDefaults, sonst Fallback-Emoji)
+            HStack(spacing: 14) {
+                // Avatar mit Gradient-Ring
                 ZStack {
                     Circle()
-                        .fill(isLight ? Color.white.opacity(0.9) : Color.white.opacity(0.12))
-                        .frame(width: 40, height: 40)
+                        .stroke(
+                            LinearGradient(
+                                colors: [Color.auroraOrange.opacity(0.8), Color.auroraGreen.opacity(0.7)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 2
+                        )
+                        .frame(width: 48, height: 48)
+                    Circle()
+                        .fill(isLight ? Color.white : Color.black.opacity(0.25))
+                        .frame(width: 43, height: 43)
                     if let urlStr = lastLoginImageURL {
                         RemoteProfileImage(
                             url: urlStr,
                             fallbackEmoji: "👋",
-                            size: 40,
+                            size: 43,
                             strokeColor: .clear
                         )
                         .clipShape(Circle())
                     } else {
-                        Text("👋").font(.system(size: 22))
+                        Text("👋").font(.system(size: 24))
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Weiter als")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(tr("onboard.continue_as"))
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(textSecondary.opacity(0.8))
+                        .foregroundColor(textSecondary.opacity(0.55))
+                        .tracking(0.3)
                     Text(lastLoginName)
-                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
                         .foregroundColor(textPrimary)
                         .lineLimit(1)
                 }
 
                 Spacer()
 
-                // Apple-Logo rechts — signalisiert "Apple Sign In"
-                Image(systemName: "apple.logo")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(textPrimary.opacity(0.85))
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(textSecondary.opacity(0.5))
+                // Arrow-Circle statt Apple-Logo — provider-agnostisch
+                ZStack {
+                    Circle()
+                        .fill(isLight ? Color.black.opacity(0.07) : Color.white.opacity(0.12))
+                        .frame(width: 32, height: 32)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(textPrimary.opacity(0.55))
+                }
             }
-            .padding(.horizontal, 14)
-            .frame(height: screenH < 700 ? 52 : 58)
+            .padding(.horizontal, 16)
+            .frame(height: screenH < 700 ? 64 : 70)
             .background(
                 Capsule()
-                    .fill(isLight ? Color.white.opacity(0.75) : Color.white.opacity(0.08))
+                    .fill(isLight ? Color.white.opacity(0.82) : Color.white.opacity(0.09))
+                    .shadow(color: .black.opacity(isLight ? 0.08 : 0), radius: 14, x: 0, y: 5)
             )
-            .overlay(
-                Capsule()
-                    .stroke(Color.brand.opacity(0.35), lineWidth: 1.2)
-            )
-            .shadow(color: Color.brand.opacity(0.15), radius: 12, y: 4)
         }
         .buttonStyle(.plain)
         .disabled(appleAuth.isLoading)
@@ -1872,11 +1904,11 @@ struct SimpleNameStep: View {
                     .padding(.bottom, 28)
 
                 VStack(spacing: 10) {
-                    Text("Wie heißt du?")
+                    Text(tr("onboard.whats_your_name"))
                         .font(.system(size: 26, weight: .bold, design: .rounded))
                         .foregroundColor(.textPrimary)
                         .multilineTextAlignment(.center)
-                    Text("Dein Vorname erscheint für andere Nutzer.")
+                    Text(tr("onboard.first_name_visible"))
                         .font(.system(size: 15))
                         .foregroundColor(.textSecondary)
                         .multilineTextAlignment(.center)
@@ -1887,7 +1919,7 @@ struct SimpleNameStep: View {
                 // Name field
                 ZStack(alignment: .leading) {
                     if name.isEmpty {
-                        Text("Vorname")
+                        Text(tr("onboard.first_name"))
                             .foregroundColor(.textTertiary)
                             .font(.system(size: 17))
                             .padding(.leading, 20)
@@ -1907,15 +1939,15 @@ struct SimpleNameStep: View {
                             if filtered != newValue { name = filtered }
                         }
                 }
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-                .overlay(RoundedRectangle(cornerRadius: 16).stroke(stepColor.opacity(0.3), lineWidth: 1))
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Radius.lg))
+                .overlay(RoundedRectangle(cornerRadius: Radius.lg).stroke(stepColor.opacity(0.3), lineWidth: 1))
                 .padding(.horizontal, 28)
 
                 Spacer()
 
                 // Weiter-Button
                 Button(action: onNext) {
-                    Text("Weiter")
+                    Text(tr("onboard.continue"))
                         .font(.system(size: 17, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
@@ -1979,11 +2011,11 @@ struct BirthdayStep: View {
                     .padding(.bottom, 28)
 
                 VStack(spacing: 10) {
-                    Text("Wann wurdest du geboren?")
+                    Text(tr("onboard.when_born"))
                         .font(.system(size: 26, weight: .bold, design: .rounded))
                         .foregroundColor(.textPrimary)
                         .multilineTextAlignment(.center)
-                    Text("Drops ist ab 18 Jahren. Dein Alter bleibt privat.")
+                    Text(tr("onboard.age_private"))
                         .font(.system(size: 15))
                         .foregroundColor(.textSecondary)
                         .multilineTextAlignment(.center)
@@ -2004,7 +2036,7 @@ struct BirthdayStep: View {
                 Spacer()
 
                 Button(action: { onNext(birthdate) }) {
-                    Text("Weiter")
+                    Text(tr("onboard.continue"))
                         .font(.system(size: 17, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
@@ -2033,11 +2065,13 @@ struct GenderStep: View {
     @State private var appeared = false
 
     private let stepColor = Color.brand
-    private let options: [(String, String, Bool)] = [
-        ("Männlich", "♂",    false),
-        ("Weiblich", "♀",    false),
-        ("Divers",   "person.2.fill", true)   // true = SF Symbol statt Text
-    ]
+    private var options: [(String, String, Bool)] {
+        [
+            (tr("onboard.gender_male_cap"), "♂",    false),
+            (tr("onboard.gender_female_cap"), "♀",    false),
+            (tr("onboard.gender_diverse_cap"),   "person.2.fill", true)
+        ]
+    }
 
     var body: some View {
         ZStack {
@@ -2066,11 +2100,11 @@ struct GenderStep: View {
                     .padding(.bottom, 28)
 
                 VStack(spacing: 10) {
-                    Text("Welches Geschlecht hast du?")
+                    Text(tr("onboard.what_gender"))
                         .font(.system(size: 26, weight: .bold, design: .rounded))
                         .foregroundColor(.textPrimary)
                         .multilineTextAlignment(.center)
-                    Text("Einmalig festgelegt — hilft bei der Suche.")
+                    Text(tr("onboard.set_once"))
                         .font(.system(size: 15))
                         .foregroundColor(.textSecondary)
                         .multilineTextAlignment(.center)
@@ -2105,14 +2139,14 @@ struct GenderStep: View {
                             .padding(.horizontal, 20)
                             .padding(.vertical, 16)
                             .background(
-                                RoundedRectangle(cornerRadius: 16)
+                                RoundedRectangle(cornerRadius: Radius.lg)
                                     .fill(isSelected ? Color.brand : Color.clear)
                                     .overlay(
-                                        RoundedRectangle(cornerRadius: 16)
+                                        RoundedRectangle(cornerRadius: Radius.lg)
                                             .stroke(isSelected ? Color.clear : Color.primary.opacity(0.15), lineWidth: 1)
                                     )
                             )
-                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Radius.lg))
                         }
                         .buttonStyle(.plain)
                         .animation(.spring(response: 0.3), value: isSelected)
@@ -2123,7 +2157,7 @@ struct GenderStep: View {
                 Spacer()
 
                 Button(action: onNext) {
-                    Text("Weiter")
+                    Text(tr("onboard.continue"))
                         .font(.system(size: 17, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
@@ -2166,11 +2200,13 @@ struct ProfileSetupStep: View {
     @FocusState private var dateFocused: Bool
 
     private let stepColor = Color.brand
-    private let genderOptions: [(label: String, symbol: String, isSF: Bool)] = [
-        ("Männlich", "♂", false),
-        ("Weiblich", "♀", false),
-        ("Divers",   "person.2.fill", true)
-    ]
+    private var genderOptions: [(label: String, symbol: String, isSF: Bool)] {
+        [
+            (tr("onboard.gender_male_cap"), "♂", false),
+            (tr("onboard.gender_female_cap"), "♀", false),
+            (tr("onboard.gender_diverse_cap"),   "person.2.fill", true)
+        ]
+    }
 
     /// Mindestens 18 Jahre alt
     private var dateIsValid: Bool { parsedBirthdate != nil }
@@ -2270,10 +2306,10 @@ struct ProfileSetupStep: View {
                     .padding(.top, 24).padding(.bottom, 16)
 
                     VStack(spacing: 6) {
-                        Text("Erzähl uns von dir")
+                        Text(tr("onboard.tell_about_you"))
                             .font(.system(size: 26, weight: .bold, design: .rounded))
                             .foregroundColor(.textPrimary).multilineTextAlignment(.center)
-                        Text("Dein Profil — einmalig, in einer Minute.")
+                        Text(tr("onboard.your_profile_minute"))
                             .font(.system(size: 15)).foregroundColor(.textSecondary)
                             .multilineTextAlignment(.center)
                     }
@@ -2283,12 +2319,12 @@ struct ProfileSetupStep: View {
 
                         // ── Name ──────────────────────────────────────
                         VStack(alignment: .leading, spacing: 6) {
-                            Label("Vorname", systemImage: "person.fill")
+                            Label(tr("onboard.first_name"), systemImage: "person.fill")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(.textSecondary)
                             ZStack(alignment: .leading) {
                                 if name.isEmpty {
-                                    Text("Dein Vorname")
+                                    Text(tr("onboard.your_first_name"))
                                         .foregroundColor(.textTertiary).font(.system(size: 16))
                                         .padding(.leading, 16)
                                 }
@@ -2304,11 +2340,11 @@ struct ProfileSetupStep: View {
                                         if f != v { name = f }
                                     }
                             }
-                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
-                            .overlay(RoundedRectangle(cornerRadius: 14).stroke(stepColor.opacity(0.3), lineWidth: 1))
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Radius.card))
+                            .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(stepColor.opacity(0.3), lineWidth: 1))
                             HStack(spacing: 4) {
                                 Image(systemName: "lock.fill").font(.system(size: 10))
-                                Text("Kann nach der Registrierung nicht mehr geändert werden.")
+                                Text(tr("onboard.cant_change_later"))
                                     .font(.system(size: 11))
                             }
                             .foregroundColor(.textTertiary)
@@ -2316,12 +2352,12 @@ struct ProfileSetupStep: View {
 
                         // ── Geburtstag (Zahleneingabe) ────────────────
                         VStack(alignment: .leading, spacing: 6) {
-                            Label("Geburtstag", systemImage: "calendar")
+                            Label(tr("onboard.birthday"), systemImage: "calendar")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(.textSecondary)
                             ZStack(alignment: .leading) {
                                 if birthdateText.isEmpty {
-                                    Text("TT.MM.JJJJ")
+                                    Text(tr("onboard.date_format"))
                                         .foregroundColor(.textTertiary).font(.system(size: 16))
                                         .padding(.leading, 16)
                                 }
@@ -2337,13 +2373,13 @@ struct ProfileSetupStep: View {
                                         parsedBirthdate = parseBirthdate(birthdateText)
                                     }
                             }
-                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
-                            .overlay(RoundedRectangle(cornerRadius: 14)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Radius.card))
+                            .overlay(RoundedRectangle(cornerRadius: Radius.card)
                                 .stroke(birthdateText.count == 10 && !dateIsValid
                                         ? Color.red.opacity(0.5) : stepColor.opacity(0.3), lineWidth: 1))
                             HStack(spacing: 4) {
                                 Image(systemName: "lock.fill").font(.system(size: 10))
-                                Text("Kann nach der Registrierung nicht mehr geändert werden.")
+                                Text(tr("onboard.cant_change_later"))
                                     .font(.system(size: 11))
                             }
                             .foregroundColor(.textTertiary)
@@ -2351,7 +2387,7 @@ struct ProfileSetupStep: View {
 
                         // ── Geschlecht ────────────────────────────────
                         VStack(alignment: .leading, spacing: 6) {
-                            Label("Geschlecht", systemImage: "person.2.fill")
+                            Label(tr("onboard.gender_label"), systemImage: "person.2.fill")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(.textSecondary)
                             HStack(spacing: 10) {
@@ -2369,10 +2405,10 @@ struct ProfileSetupStep: View {
                                         }
                                         .frame(maxWidth: .infinity).padding(.vertical, 12)
                                         .foregroundColor(isSelected ? .white : .textPrimary)
-                                        .background(RoundedRectangle(cornerRadius: 14)
+                                        .background(RoundedRectangle(cornerRadius: Radius.card)
                                             .fill(isSelected ? stepColor : Color.clear))
-                                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
-                                        .overlay(RoundedRectangle(cornerRadius: 14)
+                                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Radius.card))
+                                        .overlay(RoundedRectangle(cornerRadius: Radius.card)
                                             .stroke(isSelected ? Color.clear : Color.primary.opacity(0.15), lineWidth: 1))
                                     }
                                     .buttonStyle(.plain)
@@ -2381,7 +2417,7 @@ struct ProfileSetupStep: View {
                             }
                             HStack(spacing: 4) {
                                 Image(systemName: "lock.fill").font(.system(size: 10))
-                                Text("Kann nach der Registrierung nicht mehr geändert werden.")
+                                Text(tr("onboard.cant_change_later"))
                                     .font(.system(size: 11))
                             }
                             .foregroundColor(.textTertiary)
@@ -2390,10 +2426,10 @@ struct ProfileSetupStep: View {
                         // ── Telefonnummer (optional) ─────────────────
                         VStack(alignment: .leading, spacing: 6) {
                             HStack(spacing: 6) {
-                                Label("Handynummer", systemImage: "phone.fill")
+                                Label(tr("onboard.mobile_number"), systemImage: "phone.fill")
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundColor(.textSecondary)
-                                Text("(optional)")
+                                Text(tr("onboard.optional"))
                                     .font(.system(size: 12))
                                     .foregroundColor(.textTertiary)
                             }
@@ -2410,19 +2446,19 @@ struct ProfileSetupStep: View {
                                     .textContentType(.telephoneNumber)
                                     .padding(.horizontal, 16).padding(.vertical, 14)
                             }
-                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
-                            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.1), lineWidth: 1))
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Radius.card))
+                            .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Color.primary.opacity(0.1), lineWidth: 1))
                             if phone.filter({ $0.isNumber }).count == 0 {
                                 HStack(alignment: .top, spacing: 6) {
                                     Image(systemName: "exclamationmark.triangle.fill")
                                         .font(.system(size: 11))
                                         .foregroundColor(.accentOrange)
-                                    Text("Ohne Nummer können dich Kontakte aus deinem Adressbuch nicht finden.")
+                                    Text(tr("onboard.contacts_cant_find"))
                                         .font(.system(size: 11)).foregroundColor(.accentOrange)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                             } else {
-                                Text("Wird nicht öffentlich angezeigt. Nur damit Kontakte dich finden können.")
+                                Text(tr("onboard.not_public"))
                                     .font(.system(size: 11)).foregroundColor(.textTertiary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -2440,7 +2476,7 @@ struct ProfileSetupStep: View {
                                gender,
                                phone.trimmingCharacters(in: .whitespaces))
                     } label: {
-                        Text("Weiter")
+                        Text(tr("onboard.continue"))
                             .font(.system(size: 17, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity).padding(.vertical, 17)
@@ -2460,10 +2496,10 @@ struct ProfileSetupStep: View {
             // Tastatur sofort beim Namen-Feld öffnen
             nameFocused = true
         }
-        .confirmationDialog("Foto hinzufügen", isPresented: $showImageSourceSheet) {
-            Button("Kamera") { imagePickerSource = .camera; showImagePicker = true }
-            Button("Fotomediathek") { imagePickerSource = .photoLibrary; showImagePicker = true }
-            Button("Abbrechen", role: .cancel) {}
+        .confirmationDialog(tr("onboard.add_photo"), isPresented: $showImageSourceSheet) {
+            Button(tr("onboard.camera")) { imagePickerSource = .camera; showImagePicker = true }
+            Button(tr("onboard.photo_library")) { imagePickerSource = .photoLibrary; showImagePicker = true }
+            Button(tr("onboard.cancel"), role: .cancel) {}
         }
         .sheet(isPresented: $showImagePicker) {
             ImagePickerView(image: $selfie, isPresented: $showImagePicker,
@@ -2471,137 +2507,6 @@ struct ProfileSetupStep: View {
         }
     }
 }
-
-// MARK: - Interests Step
-
-struct InterestsStep: View {
-    @Binding var selected: [String]
-    let onNext: () -> Void
-    let onBack: (() -> Void)?
-
-    @State private var appeared = false
-    @State private var shakeLimit = false
-    private let maxSelections = 5
-    private let stepColor = Color.brand
-
-    private let options: [(key: String, icon: String, label: String)] = [
-        ("interest.coffee",   "cup.and.saucer.fill",  "Kaffee"),
-        ("interest.food",     "fork.knife",            "Essen"),
-        ("interest.sport",    "figure.run",            "Sport"),
-        ("interest.music",    "music.note",            "Musik"),
-        ("interest.cinema",   "film.fill",             "Kino"),
-        ("interest.gaming",   "gamecontroller.fill",   "Gaming"),
-        ("interest.shopping", "bag.fill",              "Shopping"),
-        ("interest.outdoor",  "leaf.fill",             "Outdoor"),
-        ("interest.travel",   "airplane",              "Reisen"),
-        ("interest.party",    "wineglass.fill",        "Ausgehen"),
-        ("interest.photo",    "camera.fill",           "Fotos"),
-        ("interest.cooking",  "flame.fill",            "Kochen"),
-    ]
-
-    private let columns = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
-
-    var body: some View {
-        ZStack {
-            OnboardingStepBackground(color: stepColor)
-            VStack(spacing: 0) {
-                // Back
-                if let back = onBack {
-                    HStack {
-                        Button(action: back) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(.textSecondary).padding(12)
-                        }
-                        .buttonStyle(.plain)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12).padding(.top, 8)
-                }
-
-                OnboardingPulseIcon(systemName: "star.fill", color: stepColor)
-                    .padding(.top, 12).padding(.bottom, 16)
-
-                VStack(spacing: 6) {
-                    Text("Was interessiert dich?")
-                        .font(.system(size: 26, weight: .bold, design: .rounded))
-                        .foregroundColor(.textPrimary).multilineTextAlignment(.center)
-                    // Counter hint
-                    HStack(spacing: 4) {
-                        Text(selected.isEmpty
-                             ? "Bis zu 5 auswählen."
-                             : "\(selected.count)/\(maxSelections) gewählt")
-                            .font(.system(size: 15))
-                            .foregroundColor(selected.count == maxSelections ? stepColor : .textSecondary)
-                            .animation(.spring(response: 0.3), value: selected.count)
-                    }
-                    .offset(x: shakeLimit ? -6 : 0)
-                    .animation(shakeLimit
-                        ? .interpolatingSpring(stiffness: 600, damping: 8)
-                        : .default, value: shakeLimit)
-                }
-                .padding(.horizontal, 28).padding(.bottom, 20)
-
-                LazyVGrid(columns: columns, spacing: 12) {
-                    ForEach(options, id: \.key) { opt in
-                        let isSelected = selected.contains(opt.key)
-                        let isDisabled = !isSelected && selected.count >= maxSelections
-                        Button {
-                            if isSelected {
-                                selected.removeAll { $0 == opt.key }
-                            } else if selected.count < maxSelections {
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                selected.append(opt.key)
-                            } else {
-                                // Already at max — shake the counter
-                                UINotificationFeedbackGenerator().notificationOccurred(.warning)
-                                shakeLimit = true
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { shakeLimit = false }
-                            }
-                        } label: {
-                            VStack(spacing: 7) {
-                                Image(systemName: opt.icon)
-                                    .font(.system(size: 20, weight: .semibold))
-                                    .foregroundColor(isSelected ? .white : (isDisabled ? .textTertiary : stepColor))
-                                Text(opt.label)
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundColor(isSelected ? .white : (isDisabled ? .textTertiary : .textPrimary))
-                            }
-                            .frame(maxWidth: .infinity).padding(.vertical, 14)
-                            .background(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .fill(isSelected ? stepColor : Color.clear)
-                            )
-                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-                            .overlay(RoundedRectangle(cornerRadius: 16)
-                                .stroke(isSelected ? Color.clear : Color.primary.opacity(isDisabled ? 0.06 : 0.12), lineWidth: 1))
-                            .opacity(isDisabled ? 0.45 : 1)
-                        }
-                        .buttonStyle(.plain)
-                        .animation(.spring(response: 0.25), value: isSelected)
-                    }
-                }
-                .padding(.horizontal, 20)
-
-                Spacer()
-
-                Button(action: onNext) {
-                    Text(selected.isEmpty ? "Überspringen" : "Weiter")
-                        .font(.system(size: 17, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity).padding(.vertical, 17)
-                        .background(Capsule().fill(stepColor))
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 24).padding(.bottom, 48)
-                .opacity(appeared ? 1 : 0).offset(y: appeared ? 0 : 24)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1), value: appeared)
-            }
-        }
-        .onAppear { appeared = true }
-    }
-}
-
 
 // MARK: - Country Code Picker
 
@@ -2612,33 +2517,35 @@ struct CountryCode: Identifiable, Equatable {
     let dial: String
 }
 
-private let countryCodes: [CountryCode] = [
-    CountryCode(flag: "🇩🇪", name: "Deutschland",    dial: "+49"),
-    CountryCode(flag: "🇦🇹", name: "Österreich",     dial: "+43"),
-    CountryCode(flag: "🇨🇭", name: "Schweiz",        dial: "+41"),
-    CountryCode(flag: "🇺🇸", name: "USA",            dial: "+1"),
-    CountryCode(flag: "🇬🇧", name: "Großbritannien", dial: "+44"),
-    CountryCode(flag: "🇫🇷", name: "Frankreich",     dial: "+33"),
-    CountryCode(flag: "🇮🇹", name: "Italien",        dial: "+39"),
-    CountryCode(flag: "🇪🇸", name: "Spanien",        dial: "+34"),
-    CountryCode(flag: "🇳🇱", name: "Niederlande",    dial: "+31"),
-    CountryCode(flag: "🇧🇪", name: "Belgien",        dial: "+32"),
-    CountryCode(flag: "🇵🇱", name: "Polen",          dial: "+48"),
-    CountryCode(flag: "🇸🇪", name: "Schweden",       dial: "+46"),
-    CountryCode(flag: "🇳🇴", name: "Norwegen",       dial: "+47"),
-    CountryCode(flag: "🇩🇰", name: "Dänemark",       dial: "+45"),
-    CountryCode(flag: "🇹🇷", name: "Türkei",         dial: "+90"),
-    CountryCode(flag: "🇷🇺", name: "Russland",       dial: "+7"),
-    CountryCode(flag: "🇯🇵", name: "Japan",          dial: "+81"),
-    CountryCode(flag: "🇨🇳", name: "China",          dial: "+86"),
-    CountryCode(flag: "🇮🇳", name: "Indien",         dial: "+91"),
-    CountryCode(flag: "🇧🇷", name: "Brasilien",      dial: "+55"),
-    CountryCode(flag: "🇦🇺", name: "Australien",     dial: "+61"),
-    CountryCode(flag: "🇨🇦", name: "Kanada",         dial: "+1"),
-    CountryCode(flag: "🇲🇽", name: "Mexiko",         dial: "+52"),
-    CountryCode(flag: "🇰🇷", name: "Südkorea",       dial: "+82"),
-    CountryCode(flag: "🇿🇦", name: "Südafrika",      dial: "+27"),
-]
+private var countryCodes: [CountryCode] {
+    [
+        CountryCode(flag: "🇩🇪", name: tr("country.germany"),               dial: "+49"),
+        CountryCode(flag: "🇦🇹", name: tr("onboard.country_austria"),       dial: "+43"),
+        CountryCode(flag: "🇨🇭", name: tr("country.switzerland"),           dial: "+41"),
+        CountryCode(flag: "🇺🇸", name: tr("country.usa"),                   dial: "+1"),
+        CountryCode(flag: "🇬🇧", name: tr("onboard.country_uk"),            dial: "+44"),
+        CountryCode(flag: "🇫🇷", name: tr("country.france"),                dial: "+33"),
+        CountryCode(flag: "🇮🇹", name: tr("country.italy"),                 dial: "+39"),
+        CountryCode(flag: "🇪🇸", name: tr("country.spain"),                 dial: "+34"),
+        CountryCode(flag: "🇳🇱", name: tr("country.netherlands"),           dial: "+31"),
+        CountryCode(flag: "🇧🇪", name: tr("country.belgium"),               dial: "+32"),
+        CountryCode(flag: "🇵🇱", name: tr("country.poland"),                dial: "+48"),
+        CountryCode(flag: "🇸🇪", name: tr("country.sweden"),                dial: "+46"),
+        CountryCode(flag: "🇳🇴", name: tr("country.norway"),                dial: "+47"),
+        CountryCode(flag: "🇩🇰", name: tr("onboard.country_denmark"),       dial: "+45"),
+        CountryCode(flag: "🇹🇷", name: tr("onboard.country_turkey"),        dial: "+90"),
+        CountryCode(flag: "🇷🇺", name: tr("country.russia"),                dial: "+7"),
+        CountryCode(flag: "🇯🇵", name: tr("country.japan"),                 dial: "+81"),
+        CountryCode(flag: "🇨🇳", name: tr("country.china"),                 dial: "+86"),
+        CountryCode(flag: "🇮🇳", name: tr("country.india"),                 dial: "+91"),
+        CountryCode(flag: "🇧🇷", name: tr("country.brazil"),                dial: "+55"),
+        CountryCode(flag: "🇦🇺", name: tr("country.australia"),             dial: "+61"),
+        CountryCode(flag: "🇨🇦", name: tr("country.canada"),                dial: "+1"),
+        CountryCode(flag: "🇲🇽", name: tr("country.mexico"),                dial: "+52"),
+        CountryCode(flag: "🇰🇷", name: tr("onboard.country_skorea"),        dial: "+82"),
+        CountryCode(flag: "🇿🇦", name: tr("onboard.country_safrica"),       dial: "+27"),
+    ]
+}
 
 struct CountryPickerSheet: View {
     @Binding var selected: CountryCode
@@ -2679,12 +2586,12 @@ struct CountryPickerSheet: View {
                 .listRowBackground(Color.bgPrimary)
             }
             .listStyle(.plain)
-            .searchable(text: $search, prompt: "Land suchen")
-            .navigationTitle("Ländervorwahl")
+            .searchable(text: $search, prompt: tr("onboard.search_country"))
+            .navigationTitle(tr("onboard.country_dial_title"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Abbrechen") { dismiss() }
+                    Button(tr("onboard.cancel")) { dismiss() }
                         .foregroundColor(.brand)
                 }
             }
@@ -2752,12 +2659,12 @@ struct LoginView: View {
                     VStack(spacing: 0) {
                         ZStack {
                             Circle()
-                                .fill(Color(hex: "E48C3A").opacity(isLight ? 0.10 : 0.14))
+                                .fill(Color.auroraOrange.opacity(isLight ? 0.10 : 0.14))
                                 .frame(width: 200, height: 200)
                                 .blur(radius: 40)
                                 .offset(x: -15, y: -20)
                             Circle()
-                                .fill(Color(hex: "5FA937").opacity(isLight ? 0.08 : 0.10))
+                                .fill(Color.auroraGreen.opacity(isLight ? 0.08 : 0.10))
                                 .frame(width: 160, height: 160)
                                 .blur(radius: 36)
                                 .offset(x: 25, y: 25)
@@ -2795,8 +2702,8 @@ struct LoginView: View {
                                             .foregroundColor(textSecondaryColor)
                                     }
                                     .padding(.horizontal, 12).padding(.vertical, fieldPadV)
-                                    .background(fieldTint, in: RoundedRectangle(cornerRadius: 14))
-                                    .overlay(RoundedRectangle(cornerRadius: 14)
+                                    .background(fieldTint, in: RoundedRectangle(cornerRadius: Radius.card))
+                                    .overlay(RoundedRectangle(cornerRadius: Radius.card)
                                         .stroke(fieldStroke, lineWidth: 1))
                                 }
                                 .buttonStyle(.plain)
@@ -2810,8 +2717,8 @@ struct LoginView: View {
                                     .keyboardType(.phonePad)
                                     .focused($fieldFocused)
                                     .padding(.horizontal, 14).padding(.vertical, fieldPadV)
-                                    .background(fieldTint, in: RoundedRectangle(cornerRadius: 14))
-                                    .overlay(RoundedRectangle(cornerRadius: 14)
+                                    .background(fieldTint, in: RoundedRectangle(cornerRadius: Radius.card))
+                                    .overlay(RoundedRectangle(cornerRadius: Radius.card)
                                         .stroke(fieldFocused ? Color.brand.opacity(0.7) : fieldStroke,
                                                 lineWidth: 1.5))
                             }
@@ -2839,7 +2746,7 @@ struct LoginView: View {
 
                         } else {
                             // Code-Eingabe
-                            Text("Code an \(selectedCountry.dial) \(phoneNumber) gesendet")
+                            Text(tr("onboard.code_sent_to").replacingOccurrences(of: "{dial}", with: selectedCountry.dial).replacingOccurrences(of: "{number}", with: phoneNumber))
                                 .font(.system(size: 13))
                                 .foregroundColor(textSecondaryColor)
                                 .transition(.opacity)
@@ -2859,8 +2766,8 @@ struct LoginView: View {
                                     if v.count > 6 { enteredCode = String(v.prefix(6)) }
                                 }
                                 .padding(.vertical, fieldPadV)
-                                .background(fieldTint, in: RoundedRectangle(cornerRadius: 14))
-                                .overlay(RoundedRectangle(cornerRadius: 14)
+                                .background(fieldTint, in: RoundedRectangle(cornerRadius: Radius.card))
+                                .overlay(RoundedRectangle(cornerRadius: Radius.card)
                                     .stroke(Color.brand.opacity(0.5), lineWidth: 1.5))
                                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
 
@@ -2883,7 +2790,7 @@ struct LoginView: View {
                             .animation(.easeInOut(duration: 0.2), value: enteredCode.count == 6)
                             .transition(.opacity.combined(with: .scale(scale: 0.98)))
 
-                            Button("Andere Nummer") {
+                            Button(tr("onboard.other_number")) {
                                 withAnimation(.easeInOut(duration: 0.22)) {
                                     loginStep = .phone; enteredCode = ""
                                 }
@@ -2920,7 +2827,7 @@ struct LoginView: View {
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
-                Button("Fertig") { fieldFocused = false }
+                Button(tr("onboard.finish")) { fieldFocused = false }
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.brand)
             }
@@ -2936,7 +2843,7 @@ struct LoginView: View {
 
     private func sendLoginSMS() {
         guard phoneNumber.count >= 6 else {
-            errorMessage = "Bitte gib eine gültige Nummer ein."
+            errorMessage = tr("onboard.invalid_number")
             return
         }
         isLoading = true; errorMessage = nil
@@ -2976,8 +2883,8 @@ struct AppIntroStep: View {
     @State private var appeared = false
 
     /// Sunset-Palette aus dem App-Branding (matched zu Logo, Buttons, Aurora-BG).
-    private let orange = Color(hex: "E48C3A")
-    private let green  = Color(hex: "5FA937")
+    private let orange = Color.auroraOrange
+    private let green  = Color.auroraGreen
     private var brandGradient: LinearGradient {
         LinearGradient(colors: [orange, green],
                        startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -2993,20 +2900,22 @@ struct AppIntroStep: View {
     /// Konkretere Features mit Brand-konformer Palette (Sunset-Orange-Akzente,
     /// kein Cyan/Purple mehr — passt nicht zu Drops). Subtitles sind präziser:
     /// statt „Privatsphäre inklusive" jetzt klar „BLE-Bestätigung" — der USP.
-    private let features: [Feature] = [
-        Feature(icon: "plus.circle.fill",
-                tint: Color(hex: "E48C3A"),
-                title: "Drop in 2 Tipps",
-                subtitle: "Aktivität wählen, Standort bestätigen — dein Drop erscheint sofort live auf der Karte."),
-        Feature(icon: "dot.radiowaves.left.and.right",
-                tint: Color(hex: "5FA937"),
-                title: "Bluetooth-Bestätigung",
-                subtitle: "Ankunft wird automatisch bestätigt — kein Check-In, keine GPS-Fakes."),
-        Feature(icon: "lock.shield.fill",
-                tint: Color(hex: "B49BE0"),
-                title: "Privacy by default",
-                subtitle: "Keine Profile, keine Bilderdatenbank. Drops laufen ab — du bist nicht dauer-trackbar."),
-    ]
+    private var features: [Feature] {
+        [
+            Feature(icon: "plus.circle.fill",
+                    tint: Color.auroraOrange,
+                    title: tr("onboard.feature_drop_title"),
+                    subtitle: tr("onboard.feature_create_drop_subtitle")),
+            Feature(icon: "dot.radiowaves.left.and.right",
+                    tint: Color.auroraGreen,
+                    title: tr("onboard.feature_ble_title"),
+                    subtitle: tr("onboard.feature_ble_subtitle")),
+            Feature(icon: "lock.shield.fill",
+                    tint: Color(hex: "B49BE0"),
+                    title: tr("onboard.feature_privacy_title"),
+                    subtitle: tr("onboard.feature_privacy_subtitle")),
+        ]
+    }
 
     var body: some View {
         ZStack {
@@ -3053,11 +2962,11 @@ struct AppIntroStep: View {
                     .animation(.spring(response: 0.5, dampingFraction: 0.65).delay(0.05), value: appeared)
 
                     VStack(spacing: 6) {
-                        Text("Willkommen bei Drops")
+                        Text(tr("onboard.welcome_drops"))
                             .font(.system(size: 28, weight: .bold, design: .rounded))
                             .foregroundColor(.textPrimary)
                             .multilineTextAlignment(.center)
-                        Text("Triff Leute. Spontan.")
+                        Text(tr("onboard.meet_spontaneously"))
                             .font(.system(size: 16))
                             .foregroundColor(.textSecondary)
                             .multilineTextAlignment(.center)
@@ -3076,7 +2985,7 @@ struct AppIntroStep: View {
                         let f = features[idx]
                         HStack(alignment: .top, spacing: 16) {
                             ZStack {
-                                RoundedRectangle(cornerRadius: 12)
+                                RoundedRectangle(cornerRadius: Radius.md)
                                     .fill(f.tint.opacity(0.14))
                                     .frame(width: 48, height: 48)
                                 Image(systemName: f.icon)
@@ -3131,7 +3040,7 @@ struct AppIntroStep: View {
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 17)
-                    .background(brandGradient, in: RoundedRectangle(cornerRadius: 16))
+                    .background(brandGradient, in: RoundedRectangle(cornerRadius: Radius.lg))
                     .shadow(color: orange.opacity(0.35), radius: 14, y: 5)
                 }
                 .buttonStyle(.plain)

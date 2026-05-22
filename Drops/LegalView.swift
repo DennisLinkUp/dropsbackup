@@ -69,8 +69,8 @@ private struct LegalSection: View {
         }
         .padding(16)
         .background(Color.bgPrimary)
-        .cornerRadius(14)
-        .overlay(RoundedRectangle(cornerRadius: 14)
+        .cornerRadius(Radius.card)
+        .overlay(RoundedRectangle(cornerRadius: Radius.card)
             .stroke(Color(UIColor.separator).opacity(0.4), lineWidth: 0.5))
         .padding(.bottom, 10)
     }

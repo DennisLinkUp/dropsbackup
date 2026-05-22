@@ -1003,8 +1003,10 @@ final class CityGateChecker: NSObject, ObservableObject, CLLocationManagerDelega
             manager.requestLocation()
             startTimeout()
         case .notDetermined:
-            manager.requestWhenInUseAuthorization()
-            startTimeout()
+            // Kein Permission-Dialog hier — kommt erst nach WelcomeSheet/
+            // Walkthrough via MainTabView.requestAllPermissions().
+            // Benefit of doubt: App starten, Gate läuft nach Permission-Erteilung.
+            isChecking = false
         default:
             // Keine Berechtigung — App trotzdem starten (Benefit of doubt)
             isChecking = false
@@ -1071,7 +1073,7 @@ struct CityGateView: View {
             // Grün dominant unten, Coral in der Mitte als Übergang.
             // Vorher: 34D36E/A78BFA/2DD4BF/FBBF24 (grün/violet/teal/amber).
             Circle()
-                .fill(Color(hex: "E48C3A").opacity(0.32))      // Orange (icon-top)
+                .fill(Color.auroraOrange.opacity(0.32))      // Orange (icon-top)
                 .frame(width: 500)
                 .offset(x: animateAurora ? -140 : -100, y: animateAurora ? -280 : -240)
                 .blur(radius: 90)
@@ -1083,13 +1085,13 @@ struct CityGateView: View {
                 .blur(radius: 80)
 
             Circle()
-                .fill(Color(hex: "5FA937").opacity(0.22))      // Grün (icon-bottom)
+                .fill(Color.auroraGreen.opacity(0.22))      // Grün (icon-bottom)
                 .frame(width: 360)
                 .offset(x: animateAurora ? -160 : -120, y: animateAurora ? 340 : 300)
                 .blur(radius: 75)
 
             Circle()
-                .fill(Color(hex: "F4956A").opacity(0.18))      // Coral-Akzent
+                .fill(Color.auroraCoral.opacity(0.18))      // Coral-Akzent
                 .frame(width: 300)
                 .offset(x: animateAurora ? 150 : 110, y: animateAurora ? 320 : 280)
                 .blur(radius: 70)
@@ -1125,7 +1127,8 @@ struct CityGateView: View {
                     .padding(.bottom, 14)
 
                 // Beschreibung
-                Text("Drops startet in **Berlin, Hamburg, München, Köln & Frankfurt**.\nWeitere Städte folgen — bleib dran!")
+                Text((try? AttributedString(markdown: tr("city.coming_soon"),
+                    options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(tr("city.coming_soon")))
                     .font(.system(size: 16))
                     .foregroundColor(Color(hex: "111827").opacity(0.55))
                     .multilineTextAlignment(.center)

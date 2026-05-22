@@ -7,9 +7,9 @@ enum FeedStatus {
 
     var label: String {
         switch self {
-        case .justArrived: return "Gerade da"
-        case .active:      return "Aktiv"
-        case .starting:    return "Startet gleich"
+        case .justArrived: return tr("feed.just_arrived")
+        case .active:      return tr("feed.active")
+        case .starting:    return tr("feed.starting_soon")
         }
     }
 
@@ -40,8 +40,9 @@ struct FeedView: View {
     @State private var profileParticipant: DropParticipant? = nil
     @State private var profileCanBlock = false
     @State private var profileSubtitle = "Drops-Nutzer"
-    @State private var profileAccent: Color = Color(UIColor.systemPurple)
+    @State private var profileAccent: Color = Color.auroraViolet
     @State private var auroraAnimate = false
+    @State private var selectedCommunityFromFeed: Community? = nil
     /// Persistiert: hat User die First-Time-Hint-Card schon dismisst?
     /// Nach erstem Tap wird das auf true gesetzt → erscheint nicht wieder.
     @AppStorage("ud_feedFirstTimeHintDismissed") private var feedHintDismissed = false
@@ -67,7 +68,7 @@ struct FeedView: View {
                 Circle()
                     .fill(
                         LinearGradient(
-                            colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                            colors: [Color.auroraOrange, Color.auroraGreen],
                             startPoint: .topLeading, endPoint: .bottomTrailing
                         )
                     )
@@ -78,10 +79,10 @@ struct FeedView: View {
             }
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("Neu hier?")
+                Text(tr("feed.new_here"))
                     .font(.system(size: 14, weight: .bold, design: .rounded))
                     .foregroundColor(.textPrimary)
-                Text("Tippe einen Drop und schick eine kurze Anfrage — keine Likes, kein Smalltalk, einfach hingehen.")
+                Text(tr("feed.new_here_body"))
                     .font(.system(size: 12))
                     .foregroundColor(.textSecondary)
                     .lineSpacing(2)
@@ -105,11 +106,11 @@ struct FeedView: View {
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                 .fill(.ultraThinMaterial)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color(hex: "E48C3A").opacity(0.25), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                        .stroke(Color.auroraOrange.opacity(0.25), lineWidth: 1)
                 )
         )
     }
@@ -119,7 +120,7 @@ struct FeedView: View {
         profileParticipant = creator
         profileCanBlock = true
         profileSubtitle = tr("feed.user")
-        profileAccent = Color(UIColor.systemPurple)
+        profileAccent = Color.auroraViolet
     }
 
     private func showFriendProfile(_ friend: User) {
@@ -132,33 +133,10 @@ struct FeedView: View {
         profileAccent = Color.brand
     }
 
-    /// Aktivitäts-Kategorien für den Chip-Filter. SF Symbol + Drop-Emojis +
-    /// Keywords matchen gegen den activityName/emoji eines Drops.
-    private let activityCategories: [(key: String, icon: String, dropEmojis: [String], keywords: [String])] = [
-        ("Kaffee", "cup.and.saucer.fill",
-            ["☕️", "☕", "🧋"],
-            ["kaffee", "coffee", "café", "cafe", "espresso", "latte"]),
-        ("Drink",  "wineglass",
-            ["🍺", "🍻", "🍷", "🥂", "🍹", "🍸"],
-            ["drink", "drinks", "bier", "beer", "wein", "wine", "cocktail", "bar", "feierabend", "club", "party", "ausgehen"]),
-        ("Sport",  "figure.run",
-            ["🏃", "🏃‍♂️", "🏃‍♀️", "🏋️", "🧘", "⚽️", "🎾", "🏀", "🚴"],
-            ["sport", "fitness", "gym", "laufen", "run", "joggen", "jog", "fußball", "tennis", "basketball", "yoga", "fahrrad", "bike"]),
-        ("Essen",  "fork.knife",
-            ["🍕", "🍔", "🍣", "🍱", "🍜", "🌮", "🥗"],
-            ["essen", "food", "lunch", "dinner", "pizza", "burger", "restaurant", "brunch", "sushi", "dönner"]),
-        ("Zocken", "gamecontroller.fill",
-            ["🎮", "🕹️"],
-            ["zocken", "zock", "gaming", "game", "games", "spielen", "xbox", "playstation"])
-    ]
-
     /// Prüft ob ein Drop in die aktuell gewählte Kategorie passt.
     private func matchesActivityFilter(_ item: MapAnnotationItem) -> Bool {
-        guard !store.activityCategoryFilter.isEmpty else { return true }
-        guard let cat = activityCategories.first(where: { $0.key == store.activityCategoryFilter }) else { return true }
-        if cat.dropEmojis.contains(item.emoji) { return true }
-        let activity = item.activity.lowercased()
-        return cat.keywords.contains(where: { activity.contains($0) })
+        ActivityCategory.matches(filter: store.activityCategoryFilter,
+                                 emoji: item.emoji, activity: item.activity)
     }
 
     /// Match für den „Heute Abend"-Filter. Greift wenn entweder das
@@ -207,9 +185,7 @@ struct FeedView: View {
         }
         base = base.filter { isJoinedDrop($0) || matchesActivityFilter($0) }
         return base.sorted { a, b in
-            // Priority Listing: geboostete Drops immer zuerst
-            if a.isBoosted != b.isBoosted { return a.isBoosted }
-            // Danach nach Interessen-Match (falls Interessen gesetzt sind)
+            // Sortierung nach Interessen-Match (falls Interessen gesetzt sind)
             if !store.userInterests.isEmpty {
                 let scoreA = interestScore(for: a)
                 let scoreB = interestScore(for: b)
@@ -219,59 +195,91 @@ struct FeedView: View {
         }
     }
 
-    /// Horizontale Chip-Leiste für den Aktivitäts-Filter — im App-Stil (Liquid Glass).
+    /// Chip-Leiste → shared ActivityFilterChipsView (auch auf der Map).
     private var activityFilterChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                activityChip(
-                    title: "Alle",
-                    icon: "square.grid.2x2.fill",
-                    selected: store.activityCategoryFilter.isEmpty
-                ) {
-                    store.activityCategoryFilter = ""
-                    store.saveAll()
-                }
-                ForEach(activityCategories, id: \.key) { cat in
-                    activityChip(
-                        title: cat.key,
-                        icon: cat.icon,
-                        selected: store.activityCategoryFilter == cat.key
-                    ) {
-                        store.activityCategoryFilter = (store.activityCategoryFilter == cat.key) ? "" : cat.key
-                        store.saveAll()
-                    }
-                }
+        ActivityFilterChipsView()
+    }
+
+    /// Horizontaler Strip mit allen Communities in der Nähe — fixiert auf
+    /// dem Bezirks-Zentrum. Tap öffnet das Join-Sheet.
+    private var communitiesNearbyStrip: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "person.3.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.cleroGreen)
+                Text(tr("feed.communities_nearby"))
+                    .font(.system(size: 11, weight: .heavy, design: .rounded))
+                    .tracking(0.6)
+                    .foregroundColor(.textSecondary)
+                Spacer()
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 2)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(store.nearbyCommunities) { community in
+                        Button { selectedCommunityFromFeed = community } label: {
+                            communityCard(community)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+        .sheet(item: $selectedCommunityFromFeed) { community in
+            CommunityJoinSheet(community: community)
+                .environmentObject(store)
+                .presentationDetents([.fraction(0.45)])
+                .presentationDragIndicator(.visible)
+                .sheetBackground()
         }
     }
 
-    @ViewBuilder
-    private func activityChip(title: String, icon: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { action() }
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(selected ? .white : .brand)
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(selected ? .white : .textPrimary)
+    private func communityCard(_ c: Community) -> some View {
+        let isMember = c.creatorUID == store.currentUser.firebaseUID
+                    || store.myCommunityMemberships.contains(c.id)
+        return HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(LinearGradient(
+                        colors: [Color.cleroGreen, Color.brand],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    ))
+                    .frame(width: 38, height: 38)
+                Image(systemName: c.icon)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(.white)
             }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 9)
-            .background(
-                Capsule().fill(
-                    selected
-                        ? Color.brand
-                        : Color(UIColor.secondarySystemGroupedBackground)
-                )
-            )
-            .shadow(color: selected ? Color.brand.opacity(0.30) : .clear, radius: 8, y: 3)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 5) {
+                    Text(c.displayName)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.textPrimary)
+                        .lineLimit(1)
+                    if isMember {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(.cleroGreen)
+                    }
+                }
+                Text("\(c.district) · \(c.memberCount)")
+                    .font(.system(size: 11))
+                    .foregroundColor(.textSecondary)
+                    .lineLimit(1)
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(UIColor.systemBackground))
+                .shadow(color: Color.black.opacity(0.05), radius: 6, y: 2)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.cleroGreen.opacity(0.25), lineWidth: 1)
+        )
     }
 
     /// Segmented Control: Drop-Radius (1km / 3km / Stadt) + „Heute Abend"-Toggle.
@@ -282,7 +290,7 @@ struct FeedView: View {
                 Image(systemName: "scope")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(.brand)
-                Text("Drop-Radius")
+                Text(tr("feed.drop_radius"))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.textSecondary)
                     .textCase(.uppercase)
@@ -325,8 +333,8 @@ struct FeedView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(selected ? .white : .textPrimary)
             }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
             .background(
                 Capsule().fill(
                     selected
@@ -334,7 +342,7 @@ struct FeedView: View {
                         : Color(UIColor.secondarySystemGroupedBackground)
                 )
             )
-            .shadow(color: selected ? Color.brand.opacity(0.25) : .clear, radius: 6, y: 2)
+            .shadow(color: selected ? Color.brand.opacity(0.28) : .clear, radius: 8, y: 3)
         }
         .buttonStyle(.plain)
     }
@@ -351,7 +359,7 @@ struct FeedView: View {
                 Image(systemName: "line.3.horizontal.decrease.circle.fill")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(store.genderFilterEnabled ? .white : .brand)
-                Text("Nur weiblich")
+                Text(tr("feed.female_only"))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(store.genderFilterEnabled ? .white : .textPrimary)
                 Spacer(minLength: 0)
@@ -362,16 +370,16 @@ struct FeedView: View {
                 }
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 11)
+            .padding(.vertical, 8)
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                     .fill(
                         store.genderFilterEnabled
                             ? Color.brand
                             : Color(UIColor.secondarySystemGroupedBackground)
                     )
             )
-            .shadow(color: store.genderFilterEnabled ? Color.brand.opacity(0.30) : .clear, radius: 10, y: 4)
+            .shadow(color: store.genderFilterEnabled ? Color.brand.opacity(0.28) : .clear, radius: 8, y: 3)
         }
         .buttonStyle(.plain)
     }
@@ -436,14 +444,13 @@ struct FeedView: View {
                                            activity: String, place: String,
                                            eta: String, dist: String), index: Int) -> String {
         let texts = [
-            "Bin gerade im \(item.place)",
-            "Auf dem Weg – komm dazu!",
-            "Schon da, wartet auf euch",
-            "Gerade dort angekommen",
-            "Startet in wenigen Minuten",
-            "Drop offen – join jetzt!"
+            tr("feed.status_in_place").replacingOccurrences(of: "{place}", with: item.place),
+            tr("feed.status_on_way"),
+            tr("feed.status_already_there"),
+            tr("feed.status_just_arrived"),
+            tr("feed.status_starting_soon"),
+            tr("feed.status_open_join")
         ]
-        // TODO: These statuses need to be localized per language preference
         return texts[index % texts.count]
     }
 
@@ -458,17 +465,17 @@ struct FeedView: View {
                 // AppAuroraBackground und dem App-Icon.
                 ZStack {
                     Circle()
-                        .fill(Color(hex: "E48C3A").opacity(0.32))
+                        .fill(Color.auroraOrange.opacity(0.32))
                         .frame(width: 280, height: 280)
                         .blur(radius: 65)
                         .offset(x: auroraAnimate ? 30 : -40, y: auroraAnimate ? -50 : -15)
                     Circle()
-                        .fill(Color(hex: "F08FA3").opacity(0.22))
+                        .fill(Color.auroraPink.opacity(0.22))
                         .frame(width: 220, height: 220)
                         .blur(radius: 55)
                         .offset(x: auroraAnimate ? -55 : 35, y: auroraAnimate ? -15 : -55)
                     Circle()
-                        .fill(Color(hex: "B49BE0").opacity(0.18))
+                        .fill(Color.auroraViolet.opacity(0.18))
                         .frame(width: 180, height: 180)
                         .blur(radius: 48)
                         .offset(x: auroraAnimate ? 60 : -10, y: auroraAnimate ? 5 : -35)
@@ -498,6 +505,15 @@ struct FeedView: View {
                         activityFilterChips
                             .padding(.top, 2)
                             .padding(.bottom, 8)
+
+                        // ── Communities in der Nähe ──────────────────────
+                        // Horizontale Liste aller genehmigten Communities.
+                        // Tap auf Card öffnet das Join-Sheet. Nur sichtbar
+                        // wenn mind. 1 Community existiert.
+                        if FeatureFlags.communitiesEnabled && !store.nearbyCommunities.isEmpty {
+                            communitiesNearbyStrip
+                                .padding(.bottom, 8)
+                        }
 
                         // ── Power-Hour Countdown-Pille (≤60 Min vor Start
                         //    oder vor Ende eines aktiven Slots) ──
@@ -576,6 +592,10 @@ struct FeedView: View {
                                         withAnimation { store.selectedTab = .map }
                                     })
                                     .opacity(0.95)
+                                    // .id verhindert dass SwiftUI den View für
+                                    // einen anderen Drop recycled → @State joined
+                                    // bleibt nicht fälschlicherweise auf true.
+                                    .id(item.id)
                             }
                         }
 
@@ -616,10 +636,17 @@ struct FeedView: View {
                         totalCommits: p.reliabilityCommits,
                         subtitle: profileSubtitle,
                         accentColor: profileAccent,
-                        isVerified: p.isVerified,
                         userUID: p.firebaseUID,
                         canBlock: profileCanBlock
-                    ) { profileParticipant = nil }
+                    ) {
+                        // Alle abhängigen State-Vars zusammen zurücksetzen —
+                        // sonst blieben subtitle/accent/canBlock vom vorherigen
+                        // Sheet-User stehen wenn der nächste geöffnet wird.
+                        profileParticipant = nil
+                        profileSubtitle    = tr("feed.user_label")
+                        profileAccent      = Color.auroraViolet
+                        profileCanBlock    = false
+                    }
                         .environmentObject(store)
                         .presentationDetents([.medium])
                         .presentationDragIndicator(.hidden)
@@ -801,10 +828,10 @@ struct FriendDropCard: View {
                         .padding(.vertical, 9)
                         .background(
                             joined ? Color.onlineGreen.opacity(0.12) : Color.brand,
-                            in: RoundedRectangle(cornerRadius: 11)
+                            in: RoundedRectangle(cornerRadius: Radius.card)
                         )
                         .overlay(
-                            joined ? RoundedRectangle(cornerRadius: 11)
+                            joined ? RoundedRectangle(cornerRadius: Radius.card)
                                 .stroke(Color.onlineGreen.opacity(0.5), lineWidth: 1) : nil
                         )
                         .shadow(color: joined ? .clear : Color.brand.opacity(0.25), radius: 4, y: 2)
@@ -870,9 +897,9 @@ struct FriendDropCard: View {
         let total = participantCount
         if total == 0 && extraEmojis.isEmpty { return "" }
         let count = max(total, extraEmojis.count)
-        // Note: These strings need localization context to use tr()
-        // For now, kept in German as this is data-driven in code
-        return count == 1 ? "1 wartet" : "\(count) warten"
+        return count == 1
+            ? tr("feed.waiting_one")
+            : tr("feed.waiting_many").replacingOccurrences(of: "{count}", with: "\(count)")
     }
 }
 
@@ -890,20 +917,17 @@ struct StrangerDropFeedCard: View {
     // Aurora-Farbe: deterministisch aus Drop-ID → immer gleiche Farbe pro Drop
     private var accentColor: Color {
         let auroraColors: [Color] = [
-            Color(hex: "06b6d4"), // cyan
-            Color(hex: "22c55e"), // grün
-            Color(hex: "f59e0b"), // amber
-            Color(hex: "ec4899"), // pink
-            Color(hex: "8b5cf6"), // violet
-            Color(hex: "14b8a6"), // teal
+            Color.auroraCyan, // cyan
+            Color.onlineGreen, // grün
+            Color.auroraAmber, // amber
+            Color.auroraPink, // pink
+            Color.auroraViolet, // violet
+            Color.auroraTeal, // teal
         ]
         let index = abs(item.id.hashValue) % auroraColors.count
         return auroraColors[index]
     }
     private var alreadyJoined: Bool { store.hasJoinedDrop(dropID: item.id) }
-    /// Im Feed (Umgebung) ist alles lesbar — Name, Emoji, Aktivität. Nur auf der
-    /// Karte bleibt der genaue Standort bei Fremden-Drops verschwommen (isFuzzy).
-    private var isVerified: Bool { true }
 
     var body: some View {
         ZStack {
@@ -917,31 +941,24 @@ struct StrangerDropFeedCard: View {
                         Circle()
                             .fill(accentColor.opacity(0.15))
                             .frame(width: 50, height: 50)
-                        if isVerified {
-                            Text(item.emoji.isEmpty ? "✨" : item.emoji)
-                                .font(.system(size: 24))
-                        } else {
-                            Image(systemName: "questionmark")
-                                .font(.system(size: 20, weight: .semibold))
-                                .foregroundColor(accentColor)
-                                .blur(radius: 4)
-                        }
+                        Text(item.emoji.isEmpty ? "✨" : item.emoji)
+                            .font(.system(size: 24))
                     }
                 }
                 .buttonStyle(.plain)
 
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
-                        Text(isVerified ? item.activity : "████████")
-                            .font(.system(size: 15, weight: .bold))
+                        Text(item.activity)
+                            .font(.system(size: 16, weight: .bold))
                             .foregroundColor(.textPrimary)
-                            .blur(radius: isVerified ? 0 : 5)
-                        // Zeitfenster-Badge statt "Offen für alle" — das ist die relevante Info
+                        // Zeitfenster-Badge
                         let timeLabel = item.scheduledTime ?? "Jetzt"
+                        let timeLabelDisplay = trScheduledTime(timeLabel)
                         HStack(spacing: 3) {
                             Image(systemName: timeLabel == "Jetzt" ? "circle.fill" : "clock.fill")
                                 .font(.system(size: 7, weight: .bold))
-                            Text(timeLabel)
+                            Text(timeLabelDisplay)
                                 .font(.system(size: 10, weight: .semibold))
                         }
                         .foregroundColor(accentColor)
@@ -949,28 +966,27 @@ struct StrangerDropFeedCard: View {
                         .background(accentColor.opacity(0.12))
                         .cornerRadius(5)
                     }
-                    // Creator-Chip — nur tappbar wenn verifiziert
                     Button {
-                        guard isVerified else { return }
                         onCreatorTap?()
                     } label: {
                         HStack(spacing: 5) {
-                            Circle()
-                                .fill(accentColor.opacity(0.15))
-                                .frame(width: 16, height: 16)
-                                .overlay(Text(isVerified ? item.emoji : "?").font(.system(size: 8)))
-                            Text(isVerified ? item.name : tr("feed.unknown"))
-                                .font(.system(size: 12))
+                            Text(item.name)
+                                .font(.system(size: 13, weight: .medium))
                                 .foregroundColor(.textSecondary)
-                                .blur(radius: isVerified ? 0 : 4)
-                            if isVerified, let age = item.creatorAge {
+                            if let age = item.creatorAge {
                                 Text("\(age)")
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .font(.system(size: 11, weight: .semibold))
                                     .foregroundColor(.textTertiary)
                                     .padding(.horizontal, 5).padding(.vertical, 1)
                                     .background(Color.primary.opacity(0.07), in: Capsule())
                             }
-                            Image(systemName: isVerified ? "chevron.right" : "lock.fill")
+                            // Community-Creator Badge — wenn der Host eine Community hat
+                            if FeatureFlags.communitiesEnabled,
+                               let uid = item.hostUID,
+                               store.communityForCreator(uid: uid) != nil {
+                                CommunityCreatorBadge(community: nil, compact: true)
+                            }
+                            Image(systemName: "chevron.right")
                                 .font(.system(size: 9))
                                 .foregroundColor(.textTertiary)
                         }
@@ -978,24 +994,15 @@ struct StrangerDropFeedCard: View {
                     .buttonStyle(.plain)
                     HStack(spacing: 5) {
                         Image(systemName: "figure.walk")
-                            .font(.system(size: 11)).foregroundColor(.textTertiary)
-                        Text(isVerified
-                             ? "\(store.etaString(to: item.coordinate)) · \(store.distanceString(to: item.coordinate))"
-                             : "~? min · ~? km")
-                            .font(.system(size: 12)).foregroundColor(.textTertiary)
-                            .blur(radius: isVerified ? 0 : 4)
-                        // Teilnehmer-Counter „X / Y" — auch wenn Liste noch
-                        // leer ist (zeigt damit klar wieviel Platz frei ist).
-                        // Vorher: nur sichtbar wenn participants > 0, dann
-                        // ohne Max-Limit. User wusste nie ob Drop voll ist.
-                        if isVerified {
-                            Text("·").foregroundColor(.textTertiary).font(.system(size: 12))
-                            Image(systemName: "person.2.fill")
-                                .font(.system(size: 10)).foregroundColor(.textTertiary)
-                            Text("\(item.participants.count) / \(item.maxParticipants)")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(item.isFull ? .accentRed : .textTertiary)
-                        }
+                            .font(.system(size: 11)).foregroundColor(.textSecondary)
+                        Text("\(store.etaString(to: item.coordinate)) · \(store.distanceString(to: item.coordinate))")
+                            .font(.system(size: 12)).foregroundColor(.textSecondary)
+                        Text("·").foregroundColor(.textTertiary).font(.system(size: 12))
+                        Image(systemName: "person.2.fill")
+                            .font(.system(size: 10)).foregroundColor(.textSecondary)
+                        Text("\(item.participants.count) / \(item.maxParticipants)")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(item.isFull ? .accentRed : .textSecondary)
                     }
                 }
 
@@ -1026,14 +1033,14 @@ struct StrangerDropFeedCard: View {
                         // Feedback warum der Tap nichts macht.
                         if isFull {
                             store.showInfoToast(
-                                "Drop ist voll — \(item.maxParticipants) / \(item.maxParticipants) Teilnehmer",
+                                tr("feed.drop_full_toast").replacingOccurrences(of: "{max}", with: "\(item.maxParticipants)"),
                                 icon: "person.fill.xmark"
                             )
                             return
                         }
                         if blockedByOther {
                             store.showInfoToast(
-                                "Du bist schon in einem anderen Drop — erst verlassen, dann beitreten",
+                                tr("feed.in_other_drop_toast"),
                                 icon: "lock.fill"
                             )
                             return
@@ -1041,7 +1048,7 @@ struct StrangerDropFeedCard: View {
                         if inCooldown {
                             let mins = Int(cooldown / 60) + 1
                             store.showInfoToast(
-                                "Du hast diesen Drop verlassen — in \(mins) Min kannst du wieder beitreten",
+                                tr("feed.cooldown_toast").replacingOccurrences(of: "{mins}", with: "\(mins)"),
                                 icon: "clock.arrow.circlepath"
                             )
                             return
@@ -1049,7 +1056,7 @@ struct StrangerDropFeedCard: View {
                         if isPending {
                             // Pending-Tap: Anfrage zurückziehen
                             store.leaveDropJoin(dropID: item.id)
-                            withAnimation(.spring()) { joined = false }
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { joined = false }
                         } else if isJoined {
                             // Bereits dabei → Verlassen bestätigen
                             showLeaveConfirm = true
@@ -1076,8 +1083,8 @@ struct StrangerDropFeedCard: View {
                         .foregroundColor(colors.fg)
                         .padding(.horizontal, 12).padding(.vertical, 8)
                         .background(colors.bg)
-                        .cornerRadius(10)
-                        .overlay(RoundedRectangle(cornerRadius: 10)
+                        .cornerRadius(Radius.md)
+                        .overlay(RoundedRectangle(cornerRadius: Radius.md)
                             .stroke(colors.stroke, lineWidth: 0.8))
                     }
                     .buttonStyle(.plain)
@@ -1104,7 +1111,7 @@ struct StrangerDropFeedCard: View {
                             elapsedSeconds: elapsed
                         ) {
                             store.leaveDropJoin(dropID: item.id)
-                            withAnimation(.spring()) { joined = false }
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { joined = false }
                             showLeaveConfirm = false
                         } onCancel: {
                             showLeaveConfirm = false
@@ -1119,7 +1126,7 @@ struct StrangerDropFeedCard: View {
                     }
             }
             .padding(.horizontal, 14).padding(.vertical, 14)
-            .liquidGlass(cornerRadius: 16)
+            .liquidGlass(cornerRadius: Radius.lg)
         }
         .padding(.horizontal, 14).padding(.bottom, 10)
         .contentShape(Rectangle())
@@ -1130,7 +1137,7 @@ struct StrangerDropFeedCard: View {
                 // Wird vom Sheet aufgerufen wenn die Anfrage tatsächlich
                 // rausgegangen ist — erst dann den Card-State auf "Bin dabei"
                 // setzen, sonst flackert der Status falls der User abbricht.
-                withAnimation(.spring()) { joined = true }
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { joined = true }
             }
                 .environmentObject(store)
                 .presentationDetents([.fraction(0.55)])
@@ -1177,19 +1184,19 @@ struct StrangerDropFeedCard: View {
         HStack(spacing: 4) {
             if isFull {
                 Image(systemName: "person.fill.xmark").font(.system(size: 10, weight: .medium))
-                Text("Voll")
+                Text(tr("feed.full"))
                     .font(.system(size: 12, weight: .semibold))
             } else if blockedByOther {
                 Image(systemName: "lock.fill").font(.system(size: 10))
-                Text("In Drop drin")
+                Text(tr("feed.in_drop"))
                     .font(.system(size: 12, weight: .semibold))
             } else if inCooldown {
                 Image(systemName: "clock").font(.system(size: 10, weight: .medium))
-                Text("\(cooldownMin) Min")
+                Text("\(cooldownMin) \(tr("map.min_short"))")
                     .font(.system(size: 12, weight: .semibold))
             } else if isPending {
                 Image(systemName: "hourglass").font(.system(size: 10, weight: .medium))
-                Text("Ausstehend")
+                Text(tr("feed.pending"))
                     .font(.system(size: 12, weight: .semibold))
             } else if isJoined {
                 Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
@@ -1242,19 +1249,19 @@ struct JoinConfirmSheet: View {
         // Kaffee / Café / Brunch
         if activity.contains("kaffee") || activity.contains("brunch")
             || activity.contains("café") || activity.contains("cafe") {
-            return ["Bin gleich da ☕️",
-                    "Brauche dringend Koffein 😅",
-                    "Freu mich auf entspannten Talk",
-                    "Bin in 15 Min da"]
+            return [tr("feed.preset.coffee.1"),
+                    tr("feed.preset.coffee.2"),
+                    tr("feed.preset.coffee.3"),
+                    tr("feed.preset.coffee.4")]
         }
         // Essen / Restaurant
         if activity.contains("essen") || activity.contains("food")
             || activity.contains("dinner") || activity.contains("lunch")
             || activity.contains("pizza") || activity.contains("burger") {
-            return ["Hab schon Hunger! 🍴",
-                    "Bin in 15 Min da",
-                    "Freu mich aufs Essen",
-                    "Bin offen für alles"]
+            return [tr("feed.preset.food.1"),
+                    tr("feed.preset.food.2"),
+                    tr("feed.preset.food.3"),
+                    tr("feed.preset.food.4")]
         }
         // Sport / Workout / Laufen
         if activity.contains("sport") || activity.contains("workout")
@@ -1262,57 +1269,57 @@ struct JoinConfirmSheet: View {
             || activity.contains("gym") || activity.contains("fitness")
             || activity.contains("foto-walk") || activity.contains("walk")
             || activity.contains("spazier") {
-            return ["Bin pünktlich da 🏃",
-                    "Bin Anfänger, geht's locker an?",
-                    "Hab eigene Sachen dabei",
-                    "Freu mich aufs Auspowern"]
+            return [tr("feed.preset.sport.1"),
+                    tr("feed.preset.sport.2"),
+                    tr("feed.preset.sport.3"),
+                    tr("feed.preset.sport.4")]
         }
         // Konzert / Musik / Festival
         if activity.contains("konzert") || activity.contains("musik")
             || activity.contains("festival") || activity.contains("club")
             || activity.contains("dj") {
-            return ["Hab Bock auf den Abend! 🎵",
-                    "Bin pünktlich da",
-                    "Bin schon vor Ort",
-                    "Freu mich auf die Musik"]
+            return [tr("feed.preset.music.1"),
+                    tr("feed.preset.music.2"),
+                    tr("feed.preset.music.3"),
+                    tr("feed.preset.music.4")]
         }
         // Kino / Film
         if activity.contains("kino") || activity.contains("film")
             || activity.contains("movie") {
-            return ["Bin pünktlich da 🎬",
-                    "Ich hol Popcorn",
-                    "Freu mich auf den Film",
-                    "Bin in 15 Min da"]
+            return [tr("feed.preset.movie.1"),
+                    tr("feed.preset.movie.2"),
+                    tr("feed.preset.movie.3"),
+                    tr("feed.preset.movie.4")]
         }
         // Gaming / Zocken
         if activity.contains("zock") || activity.contains("gaming")
             || activity.contains("game") {
-            return ["Bin online 🎮",
-                    "Bin in 5 Min da",
-                    "Hab Bock auf eine Runde",
-                    "Bin entspannt drauf"]
+            return [tr("feed.preset.gaming.1"),
+                    tr("feed.preset.gaming.2"),
+                    tr("feed.preset.gaming.3"),
+                    tr("feed.preset.gaming.4")]
         }
         // Park / Outdoor / Hangout
         if activity.contains("park") || activity.contains("outdoor")
             || activity.contains("strand") || activity.contains("see") {
-            return ["Bin schon unterwegs 🌳",
-                    "Bin in 10 Min da",
-                    "Bring was zu trinken mit",
-                    "Freu mich auf draußen sein"]
+            return [tr("feed.preset.outdoor.1"),
+                    tr("feed.preset.outdoor.2"),
+                    tr("feed.preset.outdoor.3"),
+                    tr("feed.preset.outdoor.4")]
         }
         // Shopping / Bummeln
         if activity.contains("shop") || activity.contains("bummel")
             || activity.contains("einkauf") {
-            return ["Bin in 10 Min da 🛍",
-                    "Hab nicht viel Zeit",
-                    "Freu mich auf den Stadtbummel",
-                    "Brauche Inspiration"]
+            return [tr("feed.preset.shopping.1"),
+                    tr("feed.preset.shopping.2"),
+                    tr("feed.preset.shopping.3"),
+                    tr("feed.preset.shopping.4")]
         }
         // Generischer Fallback
-        return ["Bin gleich da! 🏃",
-                "Bin in 10 Min da",
-                "Freu mich!",
-                "Hab Bock!"]
+        return [tr("feed.preset.fallback.1"),
+                tr("feed.preset.fallback.2"),
+                tr("feed.preset.fallback.3"),
+                tr("feed.preset.fallback.4")]
     }
 
     var body: some View {
@@ -1326,19 +1333,19 @@ struct JoinConfirmSheet: View {
             // Icon
             ZStack {
                 Circle()
-                    .fill(Color(UIColor.systemPurple).opacity(0.12))
+                    .fill(Color.auroraViolet.opacity(0.12))
                     .frame(width: 64, height: 64)
                 Text(item.emoji)
                     .font(.system(size: 30))
             }
 
             VStack(spacing: 4) {
-                Text(sent ? "Warte auf Bestätigung" : "Anfrage senden an \(item.name)")
+                Text(sent ? tr("feed.waiting_for_confirm") : tr("feed.send_request_to").replacingOccurrences(of: "{name}", with: item.name))
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(.textPrimary)
                     .multilineTextAlignment(.center)
                 if !sent {
-                    Text("Optional: schreib eine kurze Nachricht.")
+                    Text(tr("feed.optional_message"))
                         .font(.system(size: 13))
                         .foregroundColor(.textSecondary)
                         .multilineTextAlignment(.center)
@@ -1359,12 +1366,12 @@ struct JoinConfirmSheet: View {
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundColor(composedMessage == msg
                                                      ? .white
-                                                     : Color(UIColor.systemPurple))
+                                                     : Color.auroraViolet)
                                     .padding(.horizontal, 12).padding(.vertical, 8)
                                     .background(
                                         composedMessage == msg
-                                        ? Color(UIColor.systemPurple)
-                                        : Color(UIColor.systemPurple).opacity(0.12)
+                                        ? Color.auroraViolet
+                                        : Color.auroraViolet.opacity(0.12)
                                     )
                                     .cornerRadius(20)
                             }
@@ -1374,27 +1381,9 @@ struct JoinConfirmSheet: View {
                     .padding(.horizontal, 20)
                 }
 
-                // Freies TextField — synchron mit Quick-Chips. Max 200 Zeichen.
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "bubble.left.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(.textTertiary)
-                        .padding(.top, 10)
-                    TextField("Nachricht (optional)",
-                              text: $composedMessage, axis: .vertical)
-                        .lineLimit(1...3)
-                        .font(.system(size: 13))
-                        .padding(.vertical, 8)
-                        .onChange(of: composedMessage) { _, new in
-                            if new.count > 200 {
-                                composedMessage = String(new.prefix(200))
-                            }
-                        }
-                }
-                .padding(.horizontal, 12)
-                .background(Color.primary.opacity(0.05),
-                            in: RoundedRectangle(cornerRadius: 12))
-                .padding(.horizontal, 20)
+                // Freie Texteingabe entfernt — nur Quick-Chips (oben).
+                // Custom-Nachrichten führten zu Spam-Risiko + erforderten
+                // mehr Modering. Quick-Chips reichen für „kurzer Kontext"-Use-Case.
             } else {
                 // Wartezustand nach Senden — zeigt klar dass der Host
                 // erst noch bestätigen muss. Pulsierender Indicator gibt
@@ -1402,10 +1391,10 @@ struct JoinConfirmSheet: View {
                 // dead-end ist.
                 VStack(spacing: 12) {
                     HStack(spacing: 10) {
-                        ProgressView()
-                            .tint(Color(UIColor.systemPurple))
+                        ProgressView().tint(.brand).scaleEffect(0.9)
+                            .tint(Color.auroraViolet)
                             .scaleEffect(0.9)
-                        Text("\(item.name) wurde benachrichtigt — Antwort kommt gleich.")
+                        Text(tr("feed.notified").replacingOccurrences(of: "{name}", with: item.name))
                             .font(.system(size: 13))
                             .foregroundColor(.textSecondary)
                             .multilineTextAlignment(.leading)
@@ -1414,10 +1403,10 @@ struct JoinConfirmSheet: View {
                     .padding(.horizontal, 16).padding(.vertical, 12)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                             .fill(.ultraThinMaterial)
                     )
-                    Text("Du kannst dieses Fenster schließen — wir benachrichtigen dich sobald \(item.name) reagiert.")
+                    Text(tr("feed.close_window_msg").replacingOccurrences(of: "{name}", with: item.name))
                         .font(.system(size: 11))
                         .foregroundColor(.textTertiary)
                         .multilineTextAlignment(.center)
@@ -1432,7 +1421,7 @@ struct JoinConfirmSheet: View {
             HStack(spacing: 10) {
                 if !sent {
                     Button { dismiss() } label: {
-                        Text("Abbrechen")
+                        Text(tr("feed.cancel"))
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundColor(.textSecondary)
                             .frame(maxWidth: .infinity)
@@ -1444,20 +1433,20 @@ struct JoinConfirmSheet: View {
                     Button { sendRequest() } label: {
                         HStack(spacing: 6) {
                             if sending {
-                                ProgressView().tint(.white).scaleEffect(0.85)
+                                ProgressView().tint(.white)
                             } else {
                                 Image(systemName: "paperplane.fill")
                                     .font(.system(size: 13, weight: .bold))
                             }
-                            Text(sending ? "Sende…" : "Senden")
+                            Text(sending ? tr("feed.sending") : tr("feed.send"))
                                 .font(.system(size: 15, weight: .semibold))
                         }
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 13)
                         .background(
-                            Capsule().fill(Color(UIColor.systemPurple))
-                                .shadow(color: Color(UIColor.systemPurple).opacity(0.35),
+                            Capsule().fill(Color.auroraViolet)
+                                .shadow(color: Color.auroraViolet.opacity(0.35),
                                         radius: 10, y: 3)
                         )
                     }
@@ -1468,7 +1457,7 @@ struct JoinConfirmSheet: View {
                     // sieht's so aus als wäre die Anfrage angenommen, was
                     // sie noch nicht ist. User entscheidet wann fertig.
                     Button { dismiss() } label: {
-                        Text("Im Hintergrund warten")
+                        Text(tr("feed.wait_in_background"))
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundColor(.textPrimary)
                             .frame(maxWidth: .infinity)
@@ -1489,17 +1478,11 @@ struct JoinConfirmSheet: View {
         let trimmed = composedMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         let payload: String? = trimmed.isEmpty ? nil : trimmed
         store.sendJoinRequest(to: item, message: payload)
-        // Kleines visuelles Delay damit der User die Senden-Animation sieht.
-        // KEIN Auto-Dismiss mehr — vorher schloss das Sheet 1.5s nach Senden,
-        // was den falschen Eindruck erzeugte als wäre die Anfrage akzeptiert.
-        // Jetzt bleibt das Sheet offen mit "Warte auf Bestätigung"-State,
-        // User schließt selber wenn er bereit ist (FeedView-Card zeigt ja
-        // "Ausstehend" parallel weiter, kein Info-Verlust).
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            sending = false
-            withAnimation(.spring(response: 0.35)) { sent = true }
-            onSent()
-        }
+        onSent()
+        // Sheet sofort schließen — der Wartestatus ist global sichtbar
+        // über die Pending-Pill oben in der App (PendingJoinRequestPill).
+        // User muss nicht mehr im Sheet sitzen während er auf Antwort wartet.
+        dismiss()
     }
 }
 
@@ -1531,10 +1514,10 @@ struct BoostBanner: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Boost-Phase aktiv")
+                Text(tr("feed.boost_phase_active"))
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(.textPrimary)
-                Text("+15 Extra-Punkte für jeden Drop, den du jetzt erstellst oder triffst.")
+                Text(tr("feed.boost_phase_explainer"))
                     .font(.system(size: 12))
                     .foregroundColor(.textPrimary.opacity(0.72))
                     .lineLimit(3)
@@ -1545,7 +1528,7 @@ struct BoostBanner: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
         .background(
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: Radius.lg)
                 .fill(
                     LinearGradient(
                         colors: [
@@ -1556,7 +1539,7 @@ struct BoostBanner: View {
                     )
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 16)
+                    RoundedRectangle(cornerRadius: Radius.lg)
                         .stroke(Color.accentOrange.opacity(0.35), lineWidth: 1)
                 )
         )

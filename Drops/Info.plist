@@ -33,9 +33,19 @@
 				<string>com.googleusercontent.apps.455209768458-8iergka0lf4lhnlpbj6buouud93qu2sg</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>de.drops-app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>drops</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<string>2</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
@@ -52,6 +62,49 @@
 	<true/>
 	<key>NSUserNotificationsUsageDescription</key>
 	<string>Drops benachrichtigt dich wenn Freunde in der Nähe einen Drop starten oder jemand deinem Drop beitritt.</string>
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeAdd</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>Spontan was loslegen</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Drop starten</string>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.dennis.drops.shortcut.create</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeLocation</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>Drops in deiner Nähe</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Karte öffnen</string>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.dennis.drops.shortcut.map</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeBookmark</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>Was gerade läuft</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Umgebung</string>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.dennis.drops.shortcut.feed</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeContact</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>Score &amp; Freunde</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Mein Profil</string>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.dennis.drops.shortcut.profile</string>
+		</dict>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
@@ -70,49 +123,6 @@
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-	</array>
-	<key>UIApplicationShortcutItems</key>
-	<array>
-		<dict>
-			<key>UIApplicationShortcutItemType</key>
-			<string>com.dennis.drops.shortcut.create</string>
-			<key>UIApplicationShortcutItemTitle</key>
-			<string>Drop starten</string>
-			<key>UIApplicationShortcutItemSubtitle</key>
-			<string>Spontan was loslegen</string>
-			<key>UIApplicationShortcutItemIconType</key>
-			<string>UIApplicationShortcutIconTypeAdd</string>
-		</dict>
-		<dict>
-			<key>UIApplicationShortcutItemType</key>
-			<string>com.dennis.drops.shortcut.map</string>
-			<key>UIApplicationShortcutItemTitle</key>
-			<string>Karte öffnen</string>
-			<key>UIApplicationShortcutItemSubtitle</key>
-			<string>Drops in deiner Nähe</string>
-			<key>UIApplicationShortcutItemIconType</key>
-			<string>UIApplicationShortcutIconTypeLocation</string>
-		</dict>
-		<dict>
-			<key>UIApplicationShortcutItemType</key>
-			<string>com.dennis.drops.shortcut.feed</string>
-			<key>UIApplicationShortcutItemTitle</key>
-			<string>Umgebung</string>
-			<key>UIApplicationShortcutItemSubtitle</key>
-			<string>Was gerade läuft</string>
-			<key>UIApplicationShortcutItemIconType</key>
-			<string>UIApplicationShortcutIconTypeBookmark</string>
-		</dict>
-		<dict>
-			<key>UIApplicationShortcutItemType</key>
-			<string>com.dennis.drops.shortcut.profile</string>
-			<key>UIApplicationShortcutItemTitle</key>
-			<string>Mein Profil</string>
-			<key>UIApplicationShortcutItemSubtitle</key>
-			<string>Score &amp; Freunde</string>
-			<key>UIApplicationShortcutItemIconType</key>
-			<string>UIApplicationShortcutIconTypeContact</string>
-		</dict>
 	</array>
 </dict>
 </plist>

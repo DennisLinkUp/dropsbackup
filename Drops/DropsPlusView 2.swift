@@ -18,7 +18,7 @@ struct DropsPlusView: View {
             // ── Hintergrund — warmes Cream mit sanftem Gold-Schimmer ─────
             Color(UIColor.systemGroupedBackground).ignoresSafeArea()
             RadialGradient(
-                colors: [Color(hex: "f59e0b").opacity(0.10), .clear],
+                colors: [Color.auroraAmber.opacity(0.10), .clear],
                 center: .topLeading,
                 startRadius: 0, endRadius: 420
             )
@@ -72,7 +72,7 @@ struct DropsPlusView: View {
                 Circle()
                     .fill(
                         RadialGradient(
-                            colors: [Color(hex: "f59e0b").opacity(0.22), .clear],
+                            colors: [Color.auroraAmber.opacity(0.22), .clear],
                             center: .center,
                             startRadius: 0, endRadius: 60
                         )
@@ -82,7 +82,7 @@ struct DropsPlusView: View {
                     .font(.system(size: 42))
                     .foregroundStyle(
                         LinearGradient(
-                            colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                            colors: [Color.auroraGoldLight, Color.auroraGoldDark],
                             startPoint: .top, endPoint: .bottom
                         )
                     )
@@ -94,14 +94,14 @@ struct DropsPlusView: View {
              + Text("+")
                 .foregroundStyle(
                     LinearGradient(
-                        colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                        colors: [Color.auroraGoldLight, Color.auroraGoldDark],
                         startPoint: .top, endPoint: .bottom
                     )
                 )
             )
             .font(.system(size: 40, weight: .bold, design: .rounded))
 
-            Text("Einmalig zahlen — für immer dabei.")
+            Text(tr("plus.pay_once_forever"))
                 .font(.system(size: 15))
                 .foregroundColor(.textSecondary)
                 .multilineTextAlignment(.center)
@@ -114,21 +114,15 @@ struct DropsPlusView: View {
         VStack(spacing: 18) {
             VStack(spacing: 12) {
                 PlusFeatureRow(
-                    icon: "bolt.circle.fill",
-                    title: "Drop boosten",
-                    description: "Hebe deinen Drop mit goldenem Rahmen auf der Karte hervor — mehr Sichtbarkeit, mehr Teilnehmer.",
-                    comingSoon: false
-                )
-                PlusFeatureRow(
                     icon: "scope",
-                    title: "Größerer Suchradius",
-                    description: "Finde Drops bis zu 25 km oder unbegrenzt stadtweit — Free-User sind auf 2 km begrenzt.",
+                    title: tr("plus.feature_radius_title"),
+                    description: tr("plus.feature_radius_desc"),
                     comingSoon: false
                 )
                 PlusFeatureRow(
                     icon: "eye.fill",
-                    title: "Wer hat geschaut",
-                    description: "Sieh welche Personen dein Drop geöffnet haben — mit Name, Alter und Zeitpunkt.",
+                    title: tr("plus.feature_viewers_title"),
+                    description: tr("plus.feature_viewers_desc"),
                     comingSoon: false
                 )
             }
@@ -138,7 +132,7 @@ struct DropsPlusView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 11, weight: .semibold))
-                    Text("Bald verfügbar")
+                    Text(tr("plus.coming_soon"))
                         .font(.system(size: 11, weight: .bold))
                         .kerning(0.8)
                 }
@@ -148,20 +142,20 @@ struct DropsPlusView: View {
                 VStack(spacing: 12) {
                     PlusFeatureRow(
                         icon: "shield.fill",
-                        title: "Kein Zuverlässigkeits-Abzug",
-                        description: "Score-Schutz bei kurzfristigen Absagen.",
+                        title: tr("plus.feature_no_score_loss_title"),
+                        description: tr("plus.feature_no_score_loss_desc"),
                         comingSoon: true
                     )
                     PlusFeatureRow(
                         icon: "clock.arrow.circlepath",
-                        title: "Verlängerung ohne Cooldown",
-                        description: "Drops beliebig oft verlängern, ohne Wartezeit.",
+                        title: tr("plus.feature_extend_title"),
+                        description: tr("plus.feature_extend_desc"),
                         comingSoon: true
                     )
                     PlusFeatureRow(
                         icon: "chart.bar.fill",
-                        title: "Drop-Statistiken",
-                        description: "Joins, Score-Verlauf und erstellte Drops auf einen Blick.",
+                        title: tr("plus.feature_stats_title"),
+                        description: tr("plus.feature_stats_desc"),
                         comingSoon: true
                     )
                 }
@@ -180,14 +174,14 @@ struct DropsPlusView: View {
                         .font(.system(size: 40))
                         .foregroundStyle(
                             LinearGradient(
-                                colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                                colors: [Color.auroraGoldLight, Color.auroraGoldDark],
                                 startPoint: .top, endPoint: .bottom
                             )
                         )
-                    Text("Du bist Drops+ Mitglied")
+                    Text(tr("plus.you_are_plus"))
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundColor(.textPrimary)
-                    Text("Alle Features sind aktiv.")
+                    Text(tr("plus.all_features_active"))
                         .font(.system(size: 14))
                         .foregroundColor(.textSecondary)
                 }
@@ -199,12 +193,12 @@ struct DropsPlusView: View {
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 20)
-                        .stroke(Color(hex: "d4a017").opacity(0.2), lineWidth: 1)
+                        .stroke(Color.auroraGoldLight.opacity(0.2), lineWidth: 1)
                 )
             } else {
                 // Preis
                 if let price = store.product?.displayPrice {
-                    Text("Einmalig \(price)")
+                    Text(tr("plus.one_time_price").replacingOccurrences(of: "{price}", with: price))
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(.textSecondary)
                 }
@@ -221,7 +215,7 @@ struct DropsPlusView: View {
                             HStack(spacing: 8) {
                                 Image(systemName: "bolt.fill")
                                     .font(.system(size: 15, weight: .bold))
-                                Text("Drops+ freischalten")
+                                Text(tr("plus.unlock_plus"))
                                     .font(.system(size: 17, weight: .bold))
                             }
                             .foregroundStyle(.white)
@@ -231,12 +225,12 @@ struct DropsPlusView: View {
                     .frame(height: 54)
                     .background(
                         LinearGradient(
-                            colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                            colors: [Color.auroraGoldLight, Color.auroraGoldDark],
                             startPoint: .topLeading, endPoint: .bottomTrailing
                         )
                     )
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                    .shadow(color: Color(hex: "d4a017").opacity(0.35), radius: 14, y: 5)
+                    .clipShape(RoundedRectangle(cornerRadius: Radius.card))
+                    .shadow(color: Color.auroraGoldLight.opacity(0.35), radius: 14, y: 5)
                 }
                 .disabled(store.isLoading || store.product == nil)
 
@@ -257,14 +251,14 @@ struct DropsPlusView: View {
             Button {
                 Task { await store.restorePurchases() }
             } label: {
-                Text("Kauf wiederherstellen")
+                Text(tr("plus.restore_purchase"))
                     .font(.system(size: 13))
                     .foregroundColor(.textTertiary)
                     .underline()
             }
             .disabled(store.isLoading)
 
-            Text("Einmalige Zahlung · Kein Abo · Keine Werbung")
+            Text(tr("plus.footer"))
                 .font(.system(size: 11))
                 .foregroundColor(.textTertiary)
                 .multilineTextAlignment(.center)
@@ -283,7 +277,7 @@ struct DropsPlusSuccessView: View {
             // ── Premium-Light Hintergrund ─────────────────────────────────
             Color(UIColor.systemGroupedBackground).ignoresSafeArea()
             RadialGradient(
-                colors: [Color(hex: "f59e0b").opacity(0.10), .clear],
+                colors: [Color.auroraAmber.opacity(0.10), .clear],
                 center: .top,
                 startRadius: 0, endRadius: 360
             )
@@ -295,7 +289,7 @@ struct DropsPlusSuccessView: View {
                     Circle()
                         .fill(
                             RadialGradient(
-                                colors: [Color(hex: "f59e0b").opacity(0.22), .clear],
+                                colors: [Color.auroraAmber.opacity(0.22), .clear],
                                 center: .center,
                                 startRadius: 0, endRadius: 60
                             )
@@ -305,7 +299,7 @@ struct DropsPlusSuccessView: View {
                         .font(.system(size: 76, weight: .semibold))
                         .foregroundStyle(
                             LinearGradient(
-                                colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                                colors: [Color.auroraGoldLight, Color.auroraGoldDark],
                                 startPoint: .top, endPoint: .bottom
                             )
                         )
@@ -313,12 +307,12 @@ struct DropsPlusSuccessView: View {
 
                 VStack(spacing: 10) {
                     // Titel dunkel + Plus-Zeichen in Gold
-                    (Text("Willkommen bei Drops")
+                    (Text(tr("plus.welcome"))
                         .foregroundColor(.textPrimary)
                      + Text("+")
                         .foregroundStyle(
                             LinearGradient(
-                                colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                                colors: [Color.auroraGoldLight, Color.auroraGoldDark],
                                 startPoint: .top, endPoint: .bottom
                             )
                         )
@@ -326,7 +320,7 @@ struct DropsPlusSuccessView: View {
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                     .multilineTextAlignment(.center)
 
-                    Text("Alle Premium-Features sind ab jetzt aktiv.\nDanke, dass du Drops unterstützt.")
+                    Text(tr("plus.success_msg"))
                         .font(.system(size: 15))
                         .foregroundColor(.textSecondary)
                         .multilineTextAlignment(.center)
@@ -336,19 +330,18 @@ struct DropsPlusSuccessView: View {
 
                 // Feature-Kurzliste
                 VStack(alignment: .leading, spacing: 10) {
-                    SuccessFeatureLine(icon: "bolt.circle.fill", text: "Drop-Boost freigeschaltet")
-                    SuccessFeatureLine(icon: "scope", text: "Suchradius bis unbegrenzt")
-                    SuccessFeatureLine(icon: "eye.fill", text: "Du siehst, wer deinen Drop geöffnet hat")
+                    SuccessFeatureLine(icon: "scope", text: tr("plus.radius_unlimited_feature"))
+                    SuccessFeatureLine(icon: "eye.fill", text: tr("plus.you_see_viewers"))
                 }
                 .padding(18)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
-                    RoundedRectangle(cornerRadius: 16)
+                    RoundedRectangle(cornerRadius: Radius.lg)
                         .fill(Color(UIColor.secondarySystemGroupedBackground))
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color(hex: "d4a017").opacity(0.15), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: Radius.lg)
+                        .stroke(Color.auroraGoldLight.opacity(0.15), lineWidth: 1)
                 )
                 .padding(.horizontal, 24)
 
@@ -357,19 +350,19 @@ struct DropsPlusSuccessView: View {
                     appStore.showDropsPlusSuccess = false
                     dismiss()
                 } label: {
-                    Text("Los geht's")
+                    Text(tr("plus.lets_go"))
                         .font(.system(size: 17, weight: .bold))
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
                         .frame(height: 54)
                         .background(
                             LinearGradient(
-                                colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                                colors: [Color.auroraGoldLight, Color.auroraGoldDark],
                                 startPoint: .topLeading, endPoint: .bottomTrailing
                             )
                         )
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                        .shadow(color: Color(hex: "d4a017").opacity(0.35), radius: 14, y: 5)
+                        .clipShape(RoundedRectangle(cornerRadius: Radius.card))
+                        .shadow(color: Color.auroraGoldLight.opacity(0.35), radius: 14, y: 5)
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 4)
@@ -399,7 +392,7 @@ private struct PlusFeatureRow: View {
                         comingSoon
                             ? AnyShapeStyle(Color.textTertiary)
                             : AnyShapeStyle(LinearGradient(
-                                colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                                colors: [Color.auroraGoldLight, Color.auroraGoldDark],
                                 startPoint: .topLeading, endPoint: .bottomTrailing
                               ))
                     )
@@ -408,9 +401,9 @@ private struct PlusFeatureRow: View {
             .background(
                 comingSoon
                     ? Color(UIColor.tertiarySystemGroupedBackground)
-                    : Color(hex: "f59e0b").opacity(0.10)
+                    : Color.auroraAmber.opacity(0.10)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .clipShape(RoundedRectangle(cornerRadius: Radius.md))
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -418,7 +411,7 @@ private struct PlusFeatureRow: View {
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(comingSoon ? .textSecondary : .textPrimary)
                     if comingSoon {
-                        Text("BALD")
+                        Text(tr("plus.soon"))
                             .font(.system(size: 9, weight: .bold))
                             .kerning(0.4)
                             .foregroundColor(.textTertiary)
@@ -435,15 +428,15 @@ private struct PlusFeatureRow: View {
         }
         .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: Radius.lg)
                 .fill(Color(UIColor.secondarySystemGroupedBackground))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: Radius.lg)
                 .stroke(
                     comingSoon
                         ? Color.textTertiary.opacity(0.08)
-                        : Color(hex: "d4a017").opacity(0.12),
+                        : Color.auroraGoldLight.opacity(0.12),
                     lineWidth: 1
                 )
         )
@@ -462,7 +455,7 @@ private struct SuccessFeatureLine: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(
                     LinearGradient(
-                        colors: [Color(hex: "d4a017"), Color(hex: "a87408")],
+                        colors: [Color.auroraGoldLight, Color.auroraGoldDark],
                         startPoint: .topLeading, endPoint: .bottomTrailing
                     )
                 )
