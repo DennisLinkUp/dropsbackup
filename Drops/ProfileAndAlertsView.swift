@@ -40,6 +40,8 @@ struct FreundeView: View {
     @State private var showEmojiPicker = false
     @State private var showScoreInfo = false
     @State private var showHeroPicker = false
+    @State private var showNameChangeSheet = false
+    @State private var nameChangeInput = ""
     /// Persistierter Profil-Hero-Hintergrund. Default: aurora.
     @AppStorage("ud_profileHeroTemplate") private var profileHeroTemplateRaw = ProfileHeroTemplate.aurora.rawValue
     /// Beta-Badge-Cutoff: zentralisiert in AppStore.qualifiesForBetaBadge —
@@ -76,17 +78,17 @@ struct FreundeView: View {
                     // Rose-Akzent, Lavender als kühler Counter — gleicher
                     // Look wie FeedView und globaler AppAuroraBackground.
                     Circle()
-                        .fill(Color(hex: "E48C3A").opacity(0.34))
+                        .fill(Color.auroraOrange.opacity(0.34))
                         .frame(width: 280, height: 280)
                         .blur(radius: 65)
                         .offset(x: auroraAnimate ? 25 : -35, y: auroraAnimate ? -40 : -10)
                     Circle()
-                        .fill(Color(hex: "F08FA3").opacity(0.24))
+                        .fill(Color.auroraPink.opacity(0.24))
                         .frame(width: 220, height: 220)
                         .blur(radius: 55)
                         .offset(x: auroraAnimate ? -50 : 30, y: auroraAnimate ? -20 : -50)
                     Circle()
-                        .fill(Color(hex: "B49BE0").opacity(0.20))
+                        .fill(Color.auroraViolet.opacity(0.20))
                         .frame(width: 180, height: 180)
                         .blur(radius: 48)
                         .offset(x: auroraAnimate ? 55 : -15, y: auroraAnimate ? 10 : -30)
@@ -176,8 +178,8 @@ struct FreundeView: View {
                                 isPresented: $showImagePicker,
                                 sourceType: imagePickerSource)
             }
-            .confirmationDialog("Profilbild ändern", isPresented: $showImageSourceSheet, titleVisibility: .visible) {
-                Button("Foto aufnehmen") {
+            .confirmationDialog(tr("profile.change_picture"), isPresented: $showImageSourceSheet, titleVisibility: .visible) {
+                Button(tr("profile.take_photo")) {
                     AVCaptureDevice.requestAccess(for: .video) { granted in
                         DispatchQueue.main.async {
                             if granted {
@@ -187,11 +189,11 @@ struct FreundeView: View {
                         }
                     }
                 }
-                Button("Aus Bibliothek wählen") {
+                Button(tr("profile.pick_from_library")) {
                     imagePickerSource = .photoLibrary
                     showImagePicker = true
                 }
-                Button("Abbrechen", role: .cancel) {}
+                Button(tr("profile.cancel"), role: .cancel) {}
             }
             .sheet(isPresented: $showEmojiPicker) {
                 EmojiPickerSheet(selected: store.currentUser.emoji) { emoji in
@@ -271,7 +273,6 @@ struct FreundeView: View {
                             reliabilityScore: p.reliabilityScore,
                             subtitle: tr("profile.your_friend"),
                             accentColor: .brand,
-                            isVerified: p.isVerified,
                             userUID: p.firebaseUID,
                             canBlock: false,
                             isFriend: isFriend
@@ -289,7 +290,6 @@ struct FreundeView: View {
                             reliabilityScore: p.reliabilityScore,
                             subtitle: tr("profile.your_friend"),
                             accentColor: .brand,
-                            isVerified: p.isVerified,
                             userUID: p.firebaseUID,
                             canBlock: false,
                             isFriend: isFriend
@@ -334,13 +334,26 @@ struct FreundeView: View {
         )
         .shadow(color: profileHeroTemplate.colors.first?.opacity(0.18) ?? .clear, radius: 12, y: 4)
         .padding(.horizontal, 16)
-        .animation(.spring(), value: store.currentUser.isAvailable)
+        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: store.currentUser.isAvailable)
         .sheet(isPresented: $showHeroPicker) {
             ProfileHeroPickerSheet(selection: Binding(
                 get: { profileHeroTemplate },
                 set: { profileHeroTemplateRaw = $0.rawValue }
             ))
             .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showNameChangeSheet) {
+            NameChangeSheet(
+                currentName: store.currentUser.name,
+                pendingName: store.pendingNameChange,
+                cooldownDays: store.daysUntilNextNameChange,
+                input: $nameChangeInput,
+                onSubmit: { store.requestNameChange(to: nameChangeInput) },
+                onCancel: { store.cancelNameChangeRequest() }
+            )
+            .environmentObject(store)
+            .presentationDetents([.height(400)])
             .presentationDragIndicator(.visible)
         }
     }
@@ -358,7 +371,7 @@ struct FreundeView: View {
                             // Bei deaktiviertem Drops+ Feature → nie Plus-Ring zeigen.
                             let isPlusVisible = FeatureFlags.dropsPlusEnabled && store.isDropsPlusActive
                             let plusRing = LinearGradient(
-                                colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
+                                colors: [Color.auroraAmber, Color.auroraAmber],
                                 startPoint: .topLeading, endPoint: .bottomTrailing
                             )
                             let ringWidth: CGFloat = isPlusVisible ? 2.5 : 1.5
@@ -381,7 +394,7 @@ struct FreundeView: View {
                                         lineWidth: ringWidth
                                     )
                             )
-                            .shadow(color: isPlusVisible ? Color(hex: "f59e0b").opacity(0.35) : .clear,
+                            .shadow(color: isPlusVisible ? Color.auroraAmber.opacity(0.35) : .clear,
                                     radius: 8, y: 2)
 
                             // Kamera-Badge
@@ -413,10 +426,29 @@ struct FreundeView: View {
                 // Name + Alter + Drops+ Badge + Score
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 4) {
-                        Text(store.currentUser.name)
-                            .font(.system(size: 17, weight: .bold, design: .rounded))
-                            .foregroundColor(.textPrimary)
-                            .lineLimit(1)
+                        Button {
+                            nameChangeInput = store.currentUser.name
+                            showNameChangeSheet = true
+                        } label: {
+                            HStack(spacing: 5) {
+                                Text(store.pendingNameChange != nil
+                                     ? (store.pendingNameChange ?? store.currentUser.name)
+                                     : store.currentUser.name)
+                                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                                    .foregroundColor(.textPrimary)
+                                    .lineLimit(1)
+                                if store.pendingNameChange != nil {
+                                    Image(systemName: "hourglass")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundColor(.accentOrange)
+                                } else {
+                                    Image(systemName: "pencil")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.textTertiary)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
                         if let age = store.userAge {
                             Text("\(age)")
                                 .font(.system(size: 17, weight: .semibold, design: .rounded))
@@ -435,41 +467,90 @@ struct FreundeView: View {
                             .padding(.horizontal, 6).padding(.vertical, 2)
                             .background(
                                 LinearGradient(
-                                    colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
+                                    colors: [Color.auroraAmber, Color.auroraAmber],
                                     startPoint: .leading, endPoint: .trailing
                                 ),
                                 in: Capsule()
                             )
-                            .shadow(color: Color(hex: "f59e0b").opacity(0.35), radius: 4, y: 1)
+                            .shadow(color: Color.auroraAmber.opacity(0.35), radius: 4, y: 1)
                         }
                         // Beta-Badge nur für Early-Adopter (registriert vor 04.05.2026).
                         if qualifiesForBetaBadge {
                             BetaBadge()
                         }
+                        // Community-Creator-Badge — zeigt nur wenn der User
+                        // eine genehmigte Community hat.
+                        if FeatureFlags.communitiesEnabled && store.isCommunityCreator {
+                            CommunityCreatorBadge(community: store.myCommunity, compact: true)
+                        }
                     }
-                    // Score-Pill — tappbar für Erklärung
+                    // Score-Pill — kompakt: nur Tier + Info-Icon.
+                    // Die alte „displayText (number) + Trenner + Tier"-Form
+                    // hatte zu viel Info auf einmal. Punktzahl + Detail-
+                    // Aufschlüsselung passieren jetzt im ReliabilityInfoSheet
+                    // (ⓘ-Tap). Hier nur das essenzielle Tier + Progress.
                     Button(action: { showScoreInfo = true }) {
                         HStack(spacing: 5) {
-                            Text(store.reliabilityScore.displayText)
-                                .font(.system(size: 12, weight: .bold, design: .rounded))
-                                .foregroundColor(store.reliabilityScore.color)
-                            Text("·")
-                                .font(.system(size: 11)).foregroundColor(.textTertiary)
                             Image(systemName: store.reliabilityScore.badgeIcon)
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(.system(size: 11, weight: .semibold))
                                 .foregroundColor(store.reliabilityScore.color)
                             Text(store.reliabilityScore.badge)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.textSecondary)
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .foregroundColor(store.reliabilityScore.color)
                             Image(systemName: "info.circle")
                                 .font(.system(size: 10))
                                 .foregroundColor(.textTertiary)
                         }
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(store.reliabilityScore.color.opacity(0.07),
+                        .padding(.horizontal, 9).padding(.vertical, 4)
+                        .background(store.reliabilityScore.color.opacity(0.10),
                                     in: Capsule())
                     }
                     .buttonStyle(.plain)
+
+                    // Progress-Bar zur nächsten Tier-Stufe — sofortiges
+                    // Motivations-Signal („noch 176 Pkt bis Drop-Legende").
+                    // Wenn höchstes Tier erreicht: stattdessen nur Punktzahl
+                    // anzeigen.
+                    if let remaining = store.reliabilityScore.pointsToNextTier,
+                       let next = store.reliabilityScore.nextTierName {
+                        VStack(alignment: .leading, spacing: 3) {
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    Capsule()
+                                        .fill(Color.textTertiary.opacity(0.15))
+                                        .frame(height: 4)
+                                    Capsule()
+                                        .fill(store.reliabilityScore.color)
+                                        .frame(width: geo.size.width * CGFloat(store.reliabilityScore.tierProgress),
+                                               height: 4)
+                                }
+                            }
+                            .frame(height: 4)
+                            .frame(maxWidth: 180)
+
+                            HStack(spacing: 4) {
+                                Text("\(store.reliabilityScore.displayText) Pkt")
+                                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.textSecondary)
+                                Text("·")
+                                    .font(.system(size: 10)).foregroundColor(.textTertiary)
+                                Text(tr("profile.until_next").replacingOccurrences(of: "{remaining}", with: "\(remaining)").replacingOccurrences(of: "{next}", with: next))
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.textTertiary)
+                            }
+                        }
+                    } else {
+                        // Höchstes Tier erreicht — nur Punktzahl + Crown.
+                        HStack(spacing: 4) {
+                            Image(systemName: "crown.fill")
+                                .font(.system(size: 9))
+                                .foregroundColor(.brand)
+                            Text(tr("profile.pts_top_tier").replacingOccurrences(of: "{pts}", with: store.reliabilityScore.displayText))
+                                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                .foregroundColor(.brand)
+                        }
+                    }
+
                     // Drops-Zahl
                     Text("\(store.reliabilityScore.showUps) Drops · \(store.friends.count) Freunde")
                         .font(.system(size: 11))
@@ -491,7 +572,7 @@ struct FreundeView: View {
                 Image(systemName: "person.crop.circle.badge.checkmark")
                     .font(.system(size: 11))
                     .foregroundColor(.brand)
-                Text("AUS DEINEN KONTAKTEN")
+                Text(tr("profile.from_contacts"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.textSecondary)
                     .padding(.leading, 2)
@@ -514,7 +595,7 @@ struct FreundeView: View {
                             Text(match.name)
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundColor(.textPrimary)
-                            Text("Auf Drops")
+                            Text(tr("profile.on_drops"))
                                 .font(.system(size: 12))
                                 .foregroundColor(.textSecondary)
                         }
@@ -525,7 +606,7 @@ struct FreundeView: View {
                             store.sendFriendRequest(to: match.uid)
                             addedContactUIDs.insert(match.uid)
                         }) {
-                            Text("Anfragen")
+                            Text(tr("profile.requests"))
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 14).padding(.vertical, 7)
@@ -541,7 +622,7 @@ struct FreundeView: View {
                     }
                 }
             }
-            .liquidGlass(cornerRadius: 20)
+            .liquidGlass(cornerRadius: Radius.xl)
             .padding(.horizontal, 16)
         }
     }
@@ -623,7 +704,7 @@ struct FreundeView: View {
                         .frame(width: 100)
                         .padding(.vertical, 14)
                         .padding(.horizontal, 8)
-                        .liquidGlass(cornerRadius: 18)
+                        .liquidGlass(cornerRadius: Radius.lg)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -641,7 +722,7 @@ struct FreundeView: View {
                 Image(systemName: "person.badge.plus")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.brand)
-                Text("Freundschaftsanfragen")
+                Text(tr("profile.friend_requests"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.textSecondary)
                 Text("\(store.incomingFriendRequests.count)")
@@ -671,7 +752,7 @@ struct FreundeView: View {
                             Text(req.fromName)
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundColor(.textPrimary)
-                            Text("möchte mit dir befreundet sein")
+                            Text(tr("profile.wants_to_be_friends"))
                                 .font(.system(size: 12))
                                 .foregroundColor(.textSecondary)
                                 .lineLimit(1)
@@ -709,7 +790,7 @@ struct FreundeView: View {
                     }
                 }
             }
-            .liquidGlass(cornerRadius: 20)
+            .liquidGlass(cornerRadius: Radius.xl)
             .padding(.horizontal, 16)
         }
     }
@@ -752,7 +833,7 @@ struct FreundeView: View {
                     }
                 }
             }
-            .liquidGlass(cornerRadius: 20)
+            .liquidGlass(cornerRadius: Radius.xl)
             .padding(.horizontal, 16)
         }
     }
@@ -774,7 +855,7 @@ struct FreundeView: View {
                     .foregroundColor(.white)
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Color.brand)
-                    .cornerRadius(10)
+                    .cornerRadius(Radius.md)
             }
             .padding(.horizontal, 16)
 
@@ -787,7 +868,7 @@ struct FreundeView: View {
                     }
                 }
             }
-            .liquidGlass(cornerRadius: 18)
+            .liquidGlass(cornerRadius: Radius.lg)
             .padding(.horizontal, 16)
         }
     }
@@ -826,8 +907,8 @@ struct FreundeView: View {
                             Circle()
                                 .fill(
                                     LinearGradient(
-                                        colors: [Color(hex: "E48C3A").opacity(0.16),
-                                                 Color(hex: "5FA937").opacity(0.14)],
+                                        colors: [Color.auroraOrange.opacity(0.16),
+                                                 Color.auroraGreen.opacity(0.14)],
                                         startPoint: .topLeading, endPoint: .bottomTrailing
                                     )
                                 )
@@ -836,16 +917,16 @@ struct FreundeView: View {
                                 .font(.system(size: 16, weight: .semibold))
                                 .foregroundStyle(
                                     LinearGradient(
-                                        colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                                        colors: [Color.auroraOrange, Color.auroraGreen],
                                         startPoint: .topLeading, endPoint: .bottomTrailing
                                     )
                                 )
                         }
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Noch keine Begegnungen")
+                            Text(tr("profile.no_encounters_yet"))
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundColor(.textPrimary)
-                            Text("Jeder Drop, den du beendest, landet hier.")
+                            Text(tr("profile.no_encounters_sub"))
                                 .font(.system(size: 12))
                                 .foregroundColor(.textSecondary)
                                 .lineLimit(2)
@@ -862,10 +943,10 @@ struct FreundeView: View {
                     }
                 }
             }
-            .liquidGlass(cornerRadius: 18)
+            .liquidGlass(cornerRadius: Radius.lg)
             .padding(.horizontal, 16)
         }
-        .animation(.spring(), value: store.visibleEncounters.map { $0.confirmed || $0.denied })
+        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: store.visibleEncounters.map { $0.confirmed || $0.denied })
     }
 
     // MARK: Drop-Statistiken
@@ -897,17 +978,14 @@ struct FreundeView: View {
     }
 
     @ViewBuilder private var dropStatsSection: some View {
-        // Aktive eigene Drops mitzählen — aber nur wenn tatsächlich jemand
-        // beigetreten ist (>=2 Teilnehmer = Host + mindestens 1 Joiner).
-        // "Leere" Drops (nur der Host, nichts passiert) zählen NICHT in die
-        // Statistik — sonst wäre Drop-Erstellen + Sofort-Beenden eine
-        // Pseudo-Aktivität. Konsistent zur cancelDrop-Logik wo solche
-        // Drops auch nicht im Verlauf landen.
-        let pastTotal    = store.pastDrops.count
-        let pastHosted   = store.pastDrops.filter { $0.wasHost }.count
-        let activeHosted = store.activeDrops.filter { $0.participants.count >= 2 }.count
-        let total   = pastTotal + activeHosted
-        let hosted  = pastHosted + activeHosted
+        // Stats reflektieren nur BEENDETE Drops (pastDrops). Laufende Drops
+        // werden NICHT mitgezählt — sonst springt der Counter hoch sobald
+        // jemand joint, was suggeriert dass der Drop „erfolgreich" war
+        // obwohl er noch läuft und ggf. abgebrochen wird oder No-Shows hat.
+        // Konsistent zur cancelDrop-Logik wo Drops erst nach Beendigung
+        // mit Erfolg im Verlauf landen.
+        let total   = store.pastDrops.count
+        let hosted  = store.pastDrops.filter { $0.wasHost }.count
         let joined  = total - hosted
         let rs      = store.reliabilityScore
         let streak  = weeklyStreak
@@ -920,7 +998,7 @@ struct FreundeView: View {
         // User sieht was er sammeln kann (Demo-Look auch beim Erst-Onboarding).
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Text("Statistiken")
+                Text(tr("profile.stats"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.textSecondary)
                     .textCase(.uppercase)
@@ -951,27 +1029,27 @@ struct FreundeView: View {
                          icon: "bolt.fill",
                          color: Color.brand)
                 StatTile(value: "\(joined)",
-                         label: "Beigetreten",
+                         label: tr("profile.joined"),
                          icon: "person.fill.badge.plus",
                          color: Color(UIColor.systemIndigo))
                 StatTile(value: "\(hosted)",
-                         label: "Erstellt",
+                         label: tr("profile.created"),
                          icon: "star.fill",
                          color: Color.accentOrange)
                 StatTile(value: rs.displayText,
-                         label: "Zuverlässigkeit",
+                         label: tr("profile.reliability"),
                          icon: "checkmark.seal.fill",
                          color: rs.totalCommits == 0 ? .textSecondary : rs.color)
             }
             .padding(10)
-            .liquidGlass(cornerRadius: 20)
+            .liquidGlass(cornerRadius: Radius.xl)
 
             // ── Lieblings-Aktivität (nur wenn schon Drops da) ─────
             if total > 0 {
                 HStack(spacing: 12) {
                     Text(favEmoji).font(.system(size: 24))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Lieblings-Aktivität")
+                        Text(tr("profile.favorite_activity"))
                             .font(.system(size: 11))
                             .foregroundColor(.textSecondary)
                         Text(store.pastDrops
@@ -987,7 +1065,7 @@ struct FreundeView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Radius.card))
             }
         }
         .padding(.horizontal, 16)
@@ -1100,7 +1178,7 @@ struct FreundeView: View {
                         }
                     }
                 }
-                .liquidGlass(cornerRadius: 18)
+                .liquidGlass(cornerRadius: Radius.lg)
                 .padding(.horizontal, 16)
             }
             .sheet(item: $selectedPastDrop) { drop in
@@ -1130,12 +1208,12 @@ struct FreundeView: View {
                 .background(
                     Capsule().fill(
                         LinearGradient(
-                            colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                            colors: [Color.auroraOrange, Color.auroraGreen],
                             startPoint: .leading, endPoint: .trailing
                         )
                     )
                 )
-                .shadow(color: Color(hex: "E48C3A").opacity(0.35), radius: 10, y: 3)
+                .shadow(color: Color.auroraOrange.opacity(0.35), radius: 10, y: 3)
             }
             .buttonStyle(.plain)
 
@@ -1267,16 +1345,16 @@ struct DropSummarySheet: View {
                                                 url: url,
                                                 fallbackEmoji: p.emoji,
                                                 size: 38,
-                                                strokeColor: p.didShowUp ? Color.clear : Color.red.opacity(0.2)
+                                                strokeColor: p.didShowUp ? Color.clear : Color.accentRed.opacity(0.2)
                                             )
                                         } else {
                                             Text(p.emoji)
                                                 .font(.system(size: 22))
                                                 .frame(width: 38, height: 38)
-                                                .background(p.didShowUp ? Color.brand.opacity(0.07) : Color.red.opacity(0.06),
+                                                .background(p.didShowUp ? Color.brand.opacity(0.07) : Color.accentRed.opacity(0.06),
                                                             in: Circle())
                                                 .overlay(
-                                                    Circle().stroke(p.didShowUp ? Color.clear : Color.red.opacity(0.2), lineWidth: 1)
+                                                    Circle().stroke(p.didShowUp ? Color.clear : Color.accentRed.opacity(0.2), lineWidth: 1)
                                                 )
                                         }
                                     }
@@ -1337,7 +1415,7 @@ struct DropSummarySheet: View {
                                 }
                             }
                         }
-                        .liquidGlass(cornerRadius: 18)
+                        .liquidGlass(cornerRadius: Radius.lg)
                         .padding(.horizontal, 16)
                     }
 
@@ -1373,7 +1451,7 @@ struct DropSummarySheet: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 14)
-        .background(color.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
+        .background(color.opacity(0.07), in: RoundedRectangle(cornerRadius: Radius.card))
     }
 }
 
@@ -1436,7 +1514,7 @@ struct EncounterRow: View {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: 14))
                                 .foregroundColor(.onlineGreen)
-                            Text("Befreundet")
+                            Text(tr("profile.friended"))
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundColor(.onlineGreen)
                         }
@@ -1447,7 +1525,7 @@ struct EncounterRow: View {
                         HStack(spacing: 4) {
                             Image(systemName: "hourglass")
                                 .font(.system(size: 11))
-                            Text("Angefragt")
+                            Text(tr("profile.requested"))
                                 .font(.system(size: 12, weight: .semibold))
                         }
                         .foregroundColor(.accentOrange)
@@ -1462,7 +1540,7 @@ struct EncounterRow: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "person.badge.plus")
                                     .font(.system(size: 11, weight: .semibold))
-                                Text("Hinzufügen")
+                                Text(tr("profile.add_friend"))
                                     .font(.system(size: 12, weight: .semibold))
                             }
                             .foregroundColor(.white)
@@ -1470,12 +1548,12 @@ struct EncounterRow: View {
                             .background(
                                 Capsule().fill(
                                     LinearGradient(
-                                        colors: [Color(hex: "E48C3A"), Color(hex: "5FA937")],
+                                        colors: [Color.auroraOrange, Color.auroraGreen],
                                         startPoint: .leading, endPoint: .trailing
                                     )
                                 )
                             )
-                            .shadow(color: Color(hex: "E48C3A").opacity(0.30), radius: 5, y: 1)
+                            .shadow(color: Color.auroraOrange.opacity(0.30), radius: 5, y: 1)
                         }
                         .buttonStyle(.plain)
                     } else {
@@ -1491,7 +1569,7 @@ struct EncounterRow: View {
                         .background(Color.onlineGreen.opacity(0.1), in: Capsule())
                     }
                 } else if encounter.denied || encounter.isExpired {
-                    Text(encounter.isExpired && !encounter.denied ? "Abgelaufen" : "Nicht getroffen")
+                    Text(encounter.isExpired && !encounter.denied ? tr("profile.expired") : tr("profile.not_met"))
                         .font(.system(size: 12))
                         .foregroundColor(.textTertiary)
                         .padding(.horizontal, 8).padding(.vertical, 4)
@@ -1600,7 +1678,7 @@ struct MutualConfirmationSheet: View {
     /// Vorschläge die durch diese Begegnung generiert wurden
     private var suggestions: [FriendSuggestion] {
         store.friendSuggestions.filter {
-            $0.mutualFriend == "Über \(encounter.friendName) kennenlernen"
+            $0.mutualFriend == tr("profile.met_via").replacingOccurrences(of: "{name}", with: encounter.friendName)
         }
     }
 
@@ -1620,11 +1698,11 @@ struct MutualConfirmationSheet: View {
                     HStack(spacing: 5) {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 13)).foregroundColor(.onlineGreen)
-                        Text("\(encounter.friendName) hat auch bestätigt!")
+                        Text(tr("profile.also_confirmed").replacingOccurrences(of: "{name}", with: encounter.friendName))
                             .font(.system(size: 15, weight: .bold))
                             .foregroundColor(.textPrimary)
                     }
-                    Text("Vielleicht kennst du noch jemanden aus \(encounter.friendName)s Umfeld:")
+                    Text(tr("profile.maybe_know_more").replacingOccurrences(of: "{name}", with: encounter.friendName))
                         .font(.system(size: 12))
                         .foregroundColor(.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1656,7 +1734,7 @@ struct MutualConfirmationSheet: View {
                                     Text(s.name)
                                         .font(.system(size: 13, weight: .semibold))
                                         .foregroundColor(.textPrimary)
-                                    Text("Über \(encounter.friendName)")
+                                    Text(tr("profile.about_x").replacingOccurrences(of: "{name}", with: encounter.friendName))
                                         .font(.system(size: 10)).foregroundColor(.textTertiary)
                                         .multilineTextAlignment(.center)
                                 }
@@ -1677,7 +1755,7 @@ struct MutualConfirmationSheet: View {
                             }
                             .frame(width: 100)
                             .padding(.vertical, 14).padding(.horizontal, 8)
-                            .liquidGlass(cornerRadius: 18)
+                            .liquidGlass(cornerRadius: Radius.lg)
                         }
                     }
                     .padding(.horizontal, 20)
@@ -1799,7 +1877,7 @@ struct AddFromContactsSheet: View {
                 // Suchleiste
                 HStack(spacing: 10) {
                     Image(systemName: "magnifyingglass").foregroundColor(.textTertiary)
-                    TextField("Name suchen…", text: $searchText)
+                    TextField(tr("profile.search_name"), text: $searchText)
                         .font(.system(size: 15)).foregroundColor(.textPrimary)
                 }
                 .padding(12)
@@ -1808,9 +1886,9 @@ struct AddFromContactsSheet: View {
 
                 if vm.isLoading {
                     Spacer()
-                    ProgressView()
+                    ProgressView().tint(.brand).scaleEffect(0.9)
                         .tint(.brand)
-                    Text("Kontakte werden durchsucht…")
+                    Text(tr("profile.searching_contacts"))
                         .font(.system(size: 13)).foregroundColor(.textSecondary)
                         .padding(.top, 10)
                     Spacer()
@@ -1819,12 +1897,12 @@ struct AddFromContactsSheet: View {
                     VStack(spacing: 12) {
                         Image(systemName: "person.crop.circle.badge.xmark")
                             .font(.system(size: 40)).foregroundColor(.textTertiary)
-                        Text("Kein Kontaktzugriff")
+                        Text(tr("profile.no_contact_access"))
                             .font(.system(size: 16, weight: .semibold)).foregroundColor(.textPrimary)
-                        Text("Erlaube Drops den Zugriff auf deine Kontakte in den Einstellungen.")
+                        Text(tr("profile.allow_contact_access"))
                             .font(.system(size: 13)).foregroundColor(.textSecondary)
                             .multilineTextAlignment(.center).padding(.horizontal, 32)
-                        Button("Einstellungen öffnen") {
+                        Button(tr("profile.open_settings")) {
                             if let url = URL(string: UIApplication.openSettingsURLString) {
                                 UIApplication.shared.open(url)
                             }
@@ -1837,7 +1915,7 @@ struct AddFromContactsSheet: View {
                     VStack(spacing: 12) {
                         Image(systemName: "person.2.slash")
                             .font(.system(size: 40)).foregroundColor(.textTertiary)
-                        Text("Noch niemand aus deinen Kontakten auf Drops")
+                        Text(tr("profile.no_contacts_on_drops"))
                             .font(.system(size: 14)).foregroundColor(.textSecondary)
                             .multilineTextAlignment(.center).padding(.horizontal, 32)
                     }
@@ -1868,7 +1946,7 @@ struct AddFromContactsSheet: View {
                                 }
                             }
                         }
-                        .liquidGlass(cornerRadius: 20)
+                        .liquidGlass(cornerRadius: Radius.xl)
                         .padding(.horizontal, 16)
                     }
                 }
@@ -1881,7 +1959,7 @@ struct AddFromContactsSheet: View {
                 ShareLink(item: URL(string: "https://apps.apple.com/de/app/drops-triff-leute/id6762097493")!) {
                     HStack(spacing: 8) {
                         Image(systemName: "square.and.arrow.up")
-                        Text("Alle anderen einladen")
+                        Text(tr("profile.invite_others"))
                     }
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.brand)
@@ -1891,11 +1969,11 @@ struct AddFromContactsSheet: View {
                 .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 24)
             }
             .background(Color(UIColor.systemGroupedBackground).ignoresSafeArea())
-            .navigationTitle("Freunde hinzufügen")
+            .navigationTitle(tr("profile.add_friends"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Fertig") { dismiss() }.foregroundColor(.brand)
+                    Button(tr("profile.done")) { dismiss() }.foregroundColor(.brand)
                 }
             }
             .onAppear {
@@ -1930,12 +2008,12 @@ private struct ContactMatchRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(match.name)
                     .font(.system(size: 15, weight: .medium)).foregroundColor(.textPrimary)
-                Text("Nutzt Drops")
+                Text(tr("profile.uses_drops_label"))
                     .font(.system(size: 12)).foregroundColor(.textSecondary)
             }
             Spacer()
             Button(action: onAdd) {
-                Text(isAdded ? "✓ Hinzugefügt" : "Hinzufügen")
+                Text(isAdded ? tr("profile.added_check") : tr("profile.add"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(isAdded ? .onlineGreen : .brandInverse)
                     .padding(.horizontal, 14).padding(.vertical, 7)
@@ -1943,7 +2021,7 @@ private struct ContactMatchRow: View {
             }
             .buttonStyle(.plain)
             .disabled(isAdded)
-            .animation(.spring(), value: isAdded)
+            .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isAdded)
         }
         .padding(.horizontal, 16).padding(.vertical, 12)
     }
@@ -1963,7 +2041,7 @@ struct SuggestionRow: View {
                 Text(tr("profile.uses_drops")).font(.system(size: 12)).foregroundColor(.textSecondary)
             }
             Spacer()
-            Button(action: { withAnimation(.spring()) { added = true } }) {
+            Button(action: { withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { added = true } }) {
                 Text(added ? "✓" : tr("profile.add"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(added ? .onlineGreen : .brandInverse)
@@ -2023,14 +2101,14 @@ struct FreundRow: View {
                             withAnimation { invited = false }
                         }
                     }) {
-                        Text(invited ? "✓" : "Einladen")
+                        Text(invited ? "✓" : tr("profile.invite"))
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(invited ? .onlineGreen : .brandInverse)
                             .padding(.horizontal, 12).padding(.vertical, 6)
                             .background(invited ? Color.onlineGreen.opacity(0.15) : Color.brand, in: Capsule())
                     }
                     .buttonStyle(.plain)
-                    .animation(.spring(), value: invited)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.75), value: invited)
                 } else {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 12))
@@ -2061,20 +2139,28 @@ struct ProfileView: View {
     @State private var isDeletingAccount = false
     @State private var deleteErrorMessage: String? = nil
     @State private var showDeleteError = false
-    @State private var showPrivacy = false
-    @State private var showTerms = false
-
     @State private var auroraAnimate = false
     @State private var showTeensLockedInfo = false
-    @State private var showAdminPanel = false
-    @State private var showDropsPlus = false
-    @State private var showBlockedList = false
+    /// Einziger Sheet-State — verhindert "mehrere .sheet auf selber View"-Bug
+    /// (SwiftUI zeigt nur den letzten Modifier, alle anderen werden ignoriert).
+    @State private var activeSettingsSheet: SettingsSheet? = nil
+    @State private var settingsAtTop = true
+    /// Dashboard-Sheet für die eigene Community (separater State weil
+    /// .sheet(item:) eine Community als Identifier braucht).
+    @State private var dashboardCommunity: Community? = nil
+
+    enum SettingsSheet: String, Identifiable {
+        case admin, blockedList, privacy, terms, dropsPlus, communityCreator
+        var id: String { rawValue }
+    }
 
     // Lokale Buffer für Altersslider — Store-Update nur beim Loslassen
     @State private var localAgeMin: Int = 18
     @State private var localAgeMax: Int = 99
     // Lokaler Buffer für Heimzone-Slider — Store/Karte nur beim Loslassen updaten
     @State private var localHomeZoneIndex: Double = 0
+    // Kamera-Position für Heimzone-Karte — Binding statt .id()-Trick (kein Scroll-Reset)
+    @State private var mapCameraPosition: MapCameraPosition = .automatic
 
     // Mein Profil — editierbare Felder
     @State private var editedName: String = ""   // unused after onboarding, kept for compiler
@@ -2091,18 +2177,23 @@ struct ProfileView: View {
         return AdminConfig.isBootstrapAdmin(storedAppleEmail: storedApple, savedPhone: savedPhone)
     }
 
-    let radiusOptions: [(label: String, subtitle: String, value: Double)] = [
-        ("500m", "~6 Min zu Fuß", 500),
-        ("800m", "~10 Min zu Fuß", 800),
-        ("1.5km", "~18 Min zu Fuß", 1500),
-        ("3km", "~37 Min zu Fuß", 3000),
-        ("Unbegrenzt", "Alle Drops sichtbar", 99999)
-    ]
+    var radiusOptions: [(label: String, subtitle: String, value: Double)] {
+        [
+            ("500m", tr("profile.radius_6min"), 500),
+            ("800m", tr("profile.radius_10min"), 800),
+            ("1.5km", tr("profile.radius_18min"), 1500),
+            ("3km", tr("profile.radius_37min"), 3000),
+            (tr("profile.radius_unlimited"), tr("profile.radius_all_drops"), 99999)
+        ]
+    }
 
     var body: some View {
+        // Wie in FeedView (Umgebung) und FreundeView (Profil): NavigationStack
+        // mit Large-Title. Liefert automatisch den korrekten Sticky-Header-Look
+        // beim Scrollen, identisch zu den anderen Tabs.
         NavigationStack {
-            ZStack(alignment: .top) {
-                Color(UIColor.systemGroupedBackground).ignoresSafeArea()
+        ZStack(alignment: .top) {
+            Color(UIColor.systemGroupedBackground).ignoresSafeArea()
 
                 // Aurora-Hintergrund oben (wie FreundeView)
                 ZStack {
@@ -2110,17 +2201,17 @@ struct ProfileView: View {
                     // Rose-Akzent, Lavender als kühler Counter — gleicher
                     // Look wie FeedView und globaler AppAuroraBackground.
                     Circle()
-                        .fill(Color(hex: "E48C3A").opacity(0.34))
+                        .fill(Color.auroraOrange.opacity(0.34))
                         .frame(width: 280, height: 280)
                         .blur(radius: 65)
                         .offset(x: auroraAnimate ? 25 : -35, y: auroraAnimate ? -40 : -10)
                     Circle()
-                        .fill(Color(hex: "F08FA3").opacity(0.24))
+                        .fill(Color.auroraPink.opacity(0.24))
                         .frame(width: 220, height: 220)
                         .blur(radius: 55)
                         .offset(x: auroraAnimate ? -50 : 30, y: auroraAnimate ? -20 : -50)
                     Circle()
-                        .fill(Color(hex: "B49BE0").opacity(0.20))
+                        .fill(Color.auroraViolet.opacity(0.20))
                         .frame(width: 180, height: 180)
                         .blur(radius: 48)
                         .offset(x: auroraAnimate ? 55 : -15, y: auroraAnimate ? 10 : -30)
@@ -2141,35 +2232,35 @@ struct ProfileView: View {
                         // Aus für den initialen Launch — wieder einschalten
                         // via `FeatureFlags.dropsPlusEnabled = true` in Models.swift.
                         if FeatureFlags.dropsPlusEnabled {
-                            Button { showDropsPlus = true } label: {
+                            Button { activeSettingsSheet = .dropsPlus } label: {
                                 HStack(spacing: 14) {
                                     Image(systemName: "bolt.fill")
                                         .font(.system(size: 22, weight: .bold))
-                                        .foregroundStyle(Color(hex: "f59e0b"))
+                                        .foregroundStyle(Color.auroraAmber)
                                         .frame(width: 44, height: 44)
-                                        .background(Color(hex: "f59e0b").opacity(0.15))
-                                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                                        .background(Color.auroraAmber.opacity(0.15))
+                                        .clipShape(RoundedRectangle(cornerRadius: Radius.md))
                                     VStack(alignment: .leading, spacing: 3) {
                                         HStack(spacing: 6) {
                                             Text("Drops+")
                                                 .font(.system(size: 15, weight: .bold))
                                                 .foregroundStyle(
                                                     LinearGradient(
-                                                        colors: [Color(hex: "fcd34d"), Color(hex: "f59e0b")],
+                                                        colors: [Color.auroraAmber, Color.auroraAmber],
                                                         startPoint: .leading, endPoint: .trailing
                                                     )
                                                 )
                                             if store.isPlusUser {
-                                                Text("AKTIV")
+                                                Text(tr("profile.active_badge"))
                                                     .font(.system(size: 10, weight: .bold))
                                                     .foregroundStyle(.black)
                                                     .padding(.horizontal, 6).padding(.vertical, 2)
-                                                    .background(Color(hex: "f59e0b"), in: Capsule())
+                                                    .background(Color.auroraAmber, in: Capsule())
                                             }
                                         }
                                         Text(store.isPlusUser
-                                             ? "Boost · Großer Radius · Wer hat geschaut"
-                                             : "Boost · Radius bis ∞ · Wer hat geschaut")
+                                             ? tr("profile.plus_features")
+                                             : tr("profile.plus_features_inf"))
                                             .font(.system(size: 12))
                                             .foregroundStyle(.secondary)
                                     }
@@ -2180,13 +2271,13 @@ struct ProfileView: View {
                                 }
                                 .padding(16)
                                 .background(
-                                    RoundedRectangle(cornerRadius: 16)
+                                    RoundedRectangle(cornerRadius: Radius.lg)
                                         .fill(Color(UIColor.secondarySystemGroupedBackground))
                                         .overlay(
-                                            RoundedRectangle(cornerRadius: 16)
+                                            RoundedRectangle(cornerRadius: Radius.lg)
                                                 .stroke(
                                                     LinearGradient(
-                                                        colors: [Color(hex: "f59e0b").opacity(0.5), Color(hex: "f59e0b").opacity(0.15)],
+                                                        colors: [Color.auroraAmber.opacity(0.5), Color.auroraAmber.opacity(0.15)],
                                                         startPoint: .topLeading, endPoint: .bottomTrailing
                                                     ),
                                                     lineWidth: 1
@@ -2196,9 +2287,6 @@ struct ProfileView: View {
                             }
                             .buttonStyle(.plain)
                             .padding(.horizontal, 16)
-                            .sheet(isPresented: $showDropsPlus) {
-                                DropsPlusView()
-                            }
                         }
 
                         // Sichtbarkeit + Mitteilungen
@@ -2214,7 +2302,7 @@ struct ProfileView: View {
                                 .font(.system(size: 13))
                                 .foregroundColor(.textTertiary)
                                 .padding(.top, 1)
-                            Text("Dein Standort wird nur während eines aktiven Drops geteilt und ist ausschließlich für Teilnehmer sichtbar. Drops speichert keine Bewegungsverläufe.")
+                            Text(tr("settings.privacy_note"))
                                 .font(.system(size: 12))
                                 .foregroundColor(.textTertiary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -2226,18 +2314,19 @@ struct ProfileView: View {
                         settingsSection(icon: "scope", color: Color(UIColor.systemBlue), title: tr("settings.drops_radius")) {
                             radiusSection
                         }
-                        settingsSection(icon: "house.fill", color: Color.accentOrange, title: "Heimzone") {
+
+                        settingsSection(icon: "house.fill", color: Color.accentOrange, title: tr("settings.home_zone")) {
                             homeZoneSection
                         }
 
                         // Power-Hour Übersicht — Referenz wann der höhere
                         // Bonus läuft. Dauerhaft sichtbar, aktive Slots
                         // werden farblich hervorgehoben.
-                        settingsSection(icon: "bolt.fill", color: Color.accentOrange, title: "Power-Hour Zeiten") {
+                        settingsSection(icon: "bolt.fill", color: Color.accentOrange, title: tr("settings.power_hour_times")) {
                             powerHourSection
                         }
 
-                        settingsSection(icon: "person.2.fill", color: Color(hex: "FF6B35"), title: tr("settings.age_groups")) {
+                        settingsSection(icon: "person.2.fill", color: Color.auroraOrange, title: tr("settings.age_groups")) {
                             ageGroupSection
                         }
 
@@ -2246,25 +2335,39 @@ struct ProfileView: View {
                             appearanceSection
                         }
 
+                        // Community Creator — Antrag + Dashboard nach Genehmigung
+                        // (Deaktiviert bis zur nächsten Version via FeatureFlags.communitiesEnabled)
+                        if FeatureFlags.communitiesEnabled {
+                            settingsSection(icon: "star.circle.fill", color: Color.brand, title: tr("settings.community_creator")) {
+                                partnershipBadgeRow
+                                Divider().padding(.leading, 16)
+                                communityCreatorRow
+                                if let myCommunity = store.myCommunity {
+                                    Divider().padding(.leading, 66)
+                                    myCommunityRow(myCommunity)
+                                }
+                            }
+                        }
+
                         // Sicherheit — Blockierte Nutzer (Untermenü)
-                        settingsSection(icon: "nosign", color: .red, title: "Sicherheit") {
-                            Button(action: { showBlockedList = true }) {
+                        settingsSection(icon: "nosign", color: .red, title: tr("settings.security")) {
+                            Button(action: { activeSettingsSheet = .blockedList }) {
                                 HStack(spacing: 14) {
                                     ZStack {
                                         RoundedRectangle(cornerRadius: 9)
-                                            .fill(Color.red.opacity(0.12))
+                                            .fill(Color.accentRed.opacity(0.12))
                                             .frame(width: 36, height: 36)
                                         Image(systemName: "nosign")
                                             .font(.system(size: 16, weight: .semibold))
                                             .foregroundColor(.red)
                                     }
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text("Blockierte Nutzer")
+                                        Text(tr("settings.blocked_users"))
                                             .font(.system(size: 15, weight: .semibold))
                                             .foregroundColor(.textPrimary)
                                         Text(store.blockedUserNames.isEmpty
-                                             ? "Keine blockierten Nutzer"
-                                             : "\(store.blockedUserNames.count) blockiert")
+                                             ? tr("settings.no_blocked")
+                                             : tr("settings.x_blocked").replacingOccurrences(of: "{count}", with: "\(store.blockedUserNames.count)"))
                                             .font(.system(size: 12))
                                             .foregroundColor(.textSecondary)
                                     }
@@ -2280,14 +2383,14 @@ struct ProfileView: View {
                         }
 
                         // Hilfe & Feedback
-                        settingsSection(icon: "questionmark.circle.fill", color: Color(UIColor.systemBlue), title: "Hilfe & Feedback") {
+                        settingsSection(icon: "questionmark.circle.fill", color: Color(UIColor.systemBlue), title: tr("settings.help_feedback")) {
                             faqLinkRow
                             Divider().padding(.leading, 60)
                             feedbackRow
                         }
 
                         // Datenschutz + Konto
-                        settingsSection(icon: "hand.raised.fill", color: Color(UIColor.systemPurple), title: tr("settings.privacy_account")) {
+                        settingsSection(icon: "hand.raised.fill", color: Color.auroraViolet, title: tr("settings.privacy_account")) {
                             privacySection
                             Divider().padding(.leading, 60)
                             accountSection
@@ -2295,22 +2398,22 @@ struct ProfileView: View {
 
                         // Admin — nur sichtbar für Admins
                         if store.isAdmin || isAdminByCredentials {
-                            settingsSection(icon: "star.fill", color: .orange, title: "Administration") {
-                                Button(action: { showAdminPanel = true }) {
+                            settingsSection(icon: "star.fill", color: .orange, title: tr("settings.administration")) {
+                                Button(action: { activeSettingsSheet = .admin }) {
                                     HStack(spacing: 14) {
                                         ZStack {
                                             RoundedRectangle(cornerRadius: 9)
-                                                .fill(Color.orange.opacity(0.15))
+                                                .fill(Color.accentOrange.opacity(0.15))
                                                 .frame(width: 36, height: 36)
                                             Image(systemName: "shield.lefthalf.filled")
                                                 .font(.system(size: 16, weight: .semibold))
                                                 .foregroundColor(.orange)
                                         }
                                         VStack(alignment: .leading, spacing: 2) {
-                                            Text("Admin Panel")
+                                            Text(tr("settings.admin_panel"))
                                                 .font(.system(size: 15, weight: .semibold))
                                                 .foregroundColor(.textPrimary)
-                                            Text("Nutzer, Drops, Statistiken")
+                                            Text(tr("settings.admin_panel_sub"))
                                                 .font(.system(size: 12))
                                                 .foregroundColor(.textSecondary)
                                         }
@@ -2331,7 +2434,7 @@ struct ProfileView: View {
                             Text("Drops")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(.textSecondary)
-                            Text("Version \(appBundleVersion)")
+                            Text(tr("profile.version").replacingOccurrences(of: "{ver}", with: appBundleVersion))
                                 .font(.system(size: 11))
                                 .foregroundColor(.textTertiary)
                         }
@@ -2342,23 +2445,40 @@ struct ProfileView: View {
                     }
                     .padding(.top, 8)
                 }
+                .onScrollGeometryChange(for: Bool.self) { geo in
+                    geo.contentOffset.y < 10
+                } action: { _, atTop in
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        settingsAtTop = atTop
+                    }
+                }
             }
             .navigationTitle(tr("settings.title"))
             .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    if settingsAtTop {
+                        languageToggle
+                            .transition(.opacity.combined(with: .scale(scale: 0.85, anchor: .trailing)))
+                    }
+                }
+            }
             .onAppear {
                 editedPhone = store.userPhone
             }
-            .sheet(isPresented: $showAdminPanel) {
-                AdminPanelView().environmentObject(store)
+            .sheet(item: $activeSettingsSheet) { sheet in
+                switch sheet {
+                case .admin:            AdminPanelView().environmentObject(store)
+                case .blockedList:      BlockedUsersSheet().environmentObject(store)
+                case .privacy:          LegalView(type: .privacy)
+                case .terms:            LegalView(type: .terms)
+                case .dropsPlus:        DropsPlusView()
+                case .communityCreator: CommunityCreatorApplicationSheet().environmentObject(store)
+                }
             }
-            .sheet(isPresented: $showBlockedList) {
-                BlockedUsersSheet().environmentObject(store)
-            }
-            .sheet(isPresented: $showPrivacy) {
-                LegalView(type: .privacy)
-            }
-            .sheet(isPresented: $showTerms) {
-                LegalView(type: .terms)
+            .sheet(item: $dashboardCommunity) { community in
+                CommunityCreatorDashboardSheet(community: community)
+                    .environmentObject(store)
             }
             .alert(tr("account.confirm_delete"), isPresented: $showDeleteAlert) {
                 Button(tr("common.cancel"), role: .cancel) {}
@@ -2378,20 +2498,20 @@ struct ProfileView: View {
             .alert(tr("account.delete_failed"), isPresented: $showDeleteError) {
                 Button(tr("common.ok"), role: .cancel) {}
             } message: {
-                Text(deleteErrorMessage ?? "Unbekannter Fehler.")
+                Text(deleteErrorMessage ?? tr("profile.unknown_error"))
             }
             .overlay {
                 if isDeletingAccount {
                     ZStack {
                         Color.black.opacity(0.55).ignoresSafeArea()
                         VStack(spacing: 14) {
-                            ProgressView().scaleEffect(1.4).tint(.white)
-                            Text("Konto wird gelöscht…")
+                            ProgressView().tint(.white)
+                            Text(tr("settings.deleting_account"))
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundColor(.white.opacity(0.85))
                         }
                         .padding(28)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Radius.lg))
                     }
                     .transition(.opacity)
                 }
@@ -2402,10 +2522,154 @@ struct ProfileView: View {
             } message: {
                 Text(tr("account.age_restricted_msg"))
             }
-        }
+        } // NavigationStack
     }
 
 
+
+    // MARK: - Community Creator Rows
+
+    /// Kooperations-Badge: Drops × Clero — nebeneinander, zeigt den Co-Brand
+    /// schon BEVOR der User auf "Bewerben" tippt.
+    private var partnershipBadgeRow: some View {
+        HStack(alignment: .center, spacing: 8) {
+            settingsPartnerPill(logoAsset: "drops_logo",
+                                brand:     "DROPS",
+                                subtitle:  tr("community.partnership_drops"),
+                                accent:    Color.auroraOrange)
+            Text("×")
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .foregroundColor(.textTertiary)
+            settingsPartnerPill(logoAsset: "clero_logo",
+                                brand:     "CLERO",
+                                subtitle:  tr("community.partnership_clero"),
+                                accent:    Color.brand)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    private func settingsPartnerPill(logoAsset: String, brand: String, subtitle: String, accent: Color) -> some View {
+        HStack(spacing: 6) {
+            Image(logoAsset)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(brand)
+                    .font(.system(size: 10, weight: .heavy, design: .rounded))
+                    .tracking(1)
+                    .foregroundColor(accent)
+                Text(subtitle)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(
+            Capsule()
+                .fill(accent.opacity(0.10))
+                .overlay(Capsule().stroke(accent.opacity(0.22), lineWidth: 1))
+        )
+    }
+
+    /// Erste Zeile: Antrag stellen / Status anzeigen. Wird IMMER gezeigt.
+    private var communityCreatorRow: some View {
+        Button(action: { activeSettingsSheet = .communityCreator }) {
+            HStack(spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(LinearGradient.aurora.opacity(0.18))
+                        .frame(width: 36, height: 36)
+                    if store.isCommunityCreator {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.brand)
+                    } else {
+                        Image("clero_logo")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 26, height: 26)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(store.isCommunityCreator ? tr("community.creator_verified") : tr("community.creator_become"))
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.textPrimary)
+                    Text(creatorStatusSubtitle)
+                        .font(.system(size: 12))
+                        .foregroundColor(creatorStatusColor)
+                }
+                Spacer()
+                if store.communityCreatorStatus == nil {
+                    Text(tr("community.apply_button"))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(Capsule().fill(LinearGradient.aurora))
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.textTertiary)
+                }
+            }
+            .padding(.horizontal, 16).padding(.vertical, 13)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var creatorStatusSubtitle: String {
+        switch store.communityCreatorStatus {
+        case "pending":  return tr("community.application_pending")
+        case "denied":   return tr("community.application_denied")
+        case "approved": return tr("community.application_approved")
+        default:         return tr("community.starter_text")
+        }
+    }
+
+    private var creatorStatusColor: Color {
+        switch store.communityCreatorStatus {
+        case "pending":  return .accentOrange
+        case "denied":   return .accentRed
+        case "approved": return .brand
+        default:         return .textSecondary
+        }
+    }
+
+    /// Zweite Zeile: erscheint NUR wenn der User eine genehmigte Community hat.
+    /// Tap öffnet das Dashboard mit Mitgliederliste + Push-Funktion.
+    private func myCommunityRow(_ community: Community) -> some View {
+        Button(action: { dashboardCommunity = community }) {
+            HStack(spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(LinearGradient.aurora.opacity(0.20))
+                        .frame(width: 36, height: 36)
+                    Image(systemName: community.icon)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.brand)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(community.displayName)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.textPrimary)
+                        .lineLimit(1)
+                    Text("\(community.memberCount) \(community.memberCount == 1 ? tr("community.community_member") : tr("community.community_members")) · \(community.district)")
+                        .font(.system(size: 12))
+                        .foregroundColor(.textSecondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.textTertiary)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 13)
+        }
+        .buttonStyle(.plain)
+    }
 
     private func statsItem(value: String, label: String) -> some View {
         VStack(spacing: 2) {
@@ -2440,7 +2704,7 @@ struct ProfileView: View {
 
             VStack(spacing: 0) { content() }
                 .frame(maxWidth: .infinity)
-                .liquidGlass(cornerRadius: 20)
+                .liquidGlass(cornerRadius: Radius.xl)
                 .padding(.horizontal, 16)
         }
     }
@@ -2468,13 +2732,13 @@ struct ProfileView: View {
     }
     private func radiusWalkLabel(_ v: Double) -> String {
         switch v {
-        case 500:   return "~6 Min zu Fuß"
-        case 1000:  return "~12 Min zu Fuß"
-        case 2000:  return "~25 Min zu Fuß"
-        case 5000:  return "~60 Min zu Fuß"
-        case 10000: return "~2 Std zu Fuß"
-        case 25000: return "Stadtweit"
-        case 50000: return "Unbegrenzt"
+        case 500:   return tr("profile.radius_6min")
+        case 1000:  return tr("profile.radius_12min")
+        case 2000:  return tr("profile.radius_25min")
+        case 5000:  return tr("profile.radius_60min")
+        case 10000: return tr("profile.radius_2h")
+        case 25000: return tr("profile.radius_citywide")
+        case 50000: return tr("profile.radius_unlimited")
         default:    return ""
         }
     }
@@ -2518,7 +2782,7 @@ struct ProfileView: View {
                         let newValue = steps[Int(idx.rounded())]
                         if newValue != store.radiusFilter {
                             store.radiusFilter = newValue
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            Haptic.selection()
                         }
                     }
                 ),
@@ -2550,13 +2814,13 @@ struct ProfileView: View {
                     .foregroundColor(.textTertiary)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(clampedFilter >= 50000
-                         ? "Du siehst alle Drops in der Stadt. Freunde sind immer sichtbar."
-                         : "Du siehst Drops innerhalb von \(clampedFilter >= 1000 ? String(format: "%.0f km", clampedFilter / 1000) : "\(Int(clampedFilter)) m"). Freunde siehst du immer.")
+                         ? tr("profile.see_all_city")
+                         : tr("profile.see_within_km").replacingOccurrences(of: "{dist}", with: clampedFilter >= 1000 ? String(format: "%.0f km", clampedFilter / 1000) : "\(Int(clampedFilter)) m"))
                         .font(.system(size: 12))
                         .foregroundColor(.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if FeatureFlags.dropsPlusEnabled && !store.isPlusUser {
-                        Text("Plus: bis zu 25km oder unbegrenzt")
+                        Text(tr("settings.plus_unlimited"))
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(Color(UIColor.systemBlue).opacity(0.8))
                     }
@@ -2595,12 +2859,12 @@ struct ProfileView: View {
                         .foregroundColor(store.homeZoneCoordinate != nil ? Color.accentOrange : .textTertiary)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(store.homeZoneCoordinate != nil ? "Heimzone aktiv" : "Keine Heimzone gesetzt")
+                    Text(store.homeZoneCoordinate != nil ? tr("profile.home_zone_active") : tr("profile.no_home_zone"))
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(store.homeZoneCoordinate != nil ? Color.accentOrange : .textSecondary)
                     Text(store.homeZoneCoordinate != nil
-                         ? "Radius: \(homeZoneLabel(store.homeZoneRadius)) um deinen Heimstandort"
-                         : "Tippe auf \"Setzen\" um deinen aktuellen Standort zu speichern")
+                         ? tr("profile.home_radius").replacingOccurrences(of: "{radius}", with: homeZoneLabel(store.homeZoneRadius))
+                         : tr("profile.tap_set"))
                         .font(.system(size: 12))
                         .foregroundColor(.textTertiary)
                         .lineLimit(2)
@@ -2611,14 +2875,10 @@ struct ProfileView: View {
 
             // Mini-Karte (nur wenn Heimzone gesetzt)
             if let homeCoord = store.homeZoneCoordinate {
-                // Region aus lokalem Slider-Wert — aktualisiert sich smooth beim Ziehen
                 let liveRadius = homeZoneSteps[Int(localHomeZoneIndex.rounded())]
-                let region = MKCoordinateRegion(
-                    center: homeCoord,
-                    latitudinalMeters: liveRadius * 4,
-                    longitudinalMeters: liveRadius * 4
-                )
-                Map(initialPosition: .region(region)) {
+                // position-Binding statt initialPosition+.id() → kein View-Destroy bei
+                // Slider-Bewegung → kein Scroll-Reset mehr in der übergeordneten ScrollView
+                Map(position: $mapCameraPosition) {
                     Annotation("", coordinate: homeCoord) {
                         ZStack {
                             Circle()
@@ -2630,16 +2890,12 @@ struct ProfileView: View {
                         }
                         .shadow(color: Color.accentOrange.opacity(0.5), radius: 4)
                     }
-                    // MapCircle skaliert mit dem Zoom → echter Radius wird sichtbar
                     MapCircle(center: homeCoord, radius: liveRadius)
                         .foregroundStyle(Color.accentOrange.opacity(0.12))
                         .stroke(Color.accentOrange.opacity(0.6), lineWidth: 1.5)
                 }
-                // Force-Refresh wenn sich der Slider-Radius ändert (initialPosition wird
-                // sonst nur einmal ausgewertet → Map blieb statisch).
-                .id(liveRadius)
                 .frame(height: 120)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .clipShape(RoundedRectangle(cornerRadius: Radius.md))
                 .padding(.horizontal, 16)
                 .padding(.bottom, 10)
                 .disabled(true)
@@ -2649,7 +2905,7 @@ struct ProfileView: View {
             if store.homeZoneCoordinate != nil {
                 VStack(spacing: 4) {
                     HStack {
-                        Text("Radius")
+                        Text(tr("settings.radius"))
                             .font(.system(size: 12))
                             .foregroundColor(.textTertiary)
                         Spacer()
@@ -2669,15 +2925,37 @@ struct ProfileView: View {
                             // Store + Save nur beim Loslassen
                             let v = homeZoneSteps[Int(localHomeZoneIndex.rounded())]
                             store.homeZoneRadius = v
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            Haptic.selection()
                             store.saveAll()
                         }
                     }
                     .tint(Color.accentOrange)
                     .padding(.horizontal, 16)
-                    .onAppear { localHomeZoneIndex = homeZoneIndex }
+                    .onAppear {
+                        localHomeZoneIndex = homeZoneIndex
+                        // Initiale Kamera-Position setzen
+                        if let coord = store.homeZoneCoordinate {
+                            let r = homeZoneSteps[Int(localHomeZoneIndex.rounded())]
+                            mapCameraPosition = .region(MKCoordinateRegion(
+                                center: coord,
+                                latitudinalMeters: r * 4,
+                                longitudinalMeters: r * 4
+                            ))
+                        }
+                    }
                     .onChange(of: localHomeZoneIndex) { _, _ in
                         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                        // Kamera smooth updaten — kein .id()-Trick nötig
+                        if let coord = store.homeZoneCoordinate {
+                            let r = homeZoneSteps[Int(localHomeZoneIndex.rounded())]
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                mapCameraPosition = .region(MKCoordinateRegion(
+                                    center: coord,
+                                    latitudinalMeters: r * 4,
+                                    longitudinalMeters: r * 4
+                                ))
+                            }
+                        }
                     }
 
                     HStack {
@@ -2702,7 +2980,7 @@ struct ProfileView: View {
                     store.setHomeZone(coordinate: store.currentUser.coordinate)
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
                 }) {
-                    Label(store.homeZoneCoordinate != nil ? "Aktualisieren" : "Setzen",
+                    Label(store.homeZoneCoordinate != nil ? tr("profile.update") : tr("profile.set"),
                           systemImage: "location.fill")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(Color.accentOrange)
@@ -2715,7 +2993,7 @@ struct ProfileView: View {
                         store.removeHomeZone()
                         UINotificationFeedbackGenerator().notificationOccurred(.warning)
                     }) {
-                        Label("Entfernen", systemImage: "trash")
+                        Label(tr("profile.remove"), systemImage: "trash")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(.accentRed)
                             .frame(maxWidth: .infinity)
@@ -2740,7 +3018,7 @@ struct ProfileView: View {
                     .font(.system(size: 13))
                     .foregroundColor(.textTertiary)
                     .padding(.top, 1)
-                Text("Während dieser Zeitfenster gibt's +\(AppStore.powerHourBonus) Punkte für jeden Drop, den du erstellst oder triffst.")
+                Text(tr("settings.power_hour_intro").replacingOccurrences(of: "{points}", with: "\(AppStore.powerHourBonus)"))
                     .font(.system(size: 12))
                     .foregroundColor(.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2772,7 +3050,7 @@ struct ProfileView: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(.textPrimary)
                     if active {
-                        Text("Jetzt aktiv")
+                        Text(tr("settings.active_now"))
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(.white)
                             .padding(.horizontal, 7).padding(.vertical, 2)
@@ -2840,7 +3118,7 @@ struct ProfileView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 10) {
                         ZStack {
-                            Circle().fill(Color.orange.opacity(0.15)).frame(width: 36, height: 36)
+                            Circle().fill(Color.accentOrange.opacity(0.15)).frame(width: 36, height: 36)
                             Image(systemName: "hand.raised.fill")
                                 .font(.system(size: 16))
                                 .foregroundColor(.orange)
@@ -2871,14 +3149,14 @@ struct ProfileView: View {
                     }
                 }
                 .padding(14)
-                .background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.orange.opacity(0.20), lineWidth: 1))
+                .background(Color.accentOrange.opacity(0.07), in: RoundedRectangle(cornerRadius: Radius.card))
+                .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Color.accentOrange.opacity(0.20), lineWidth: 1))
 
                 // Nur eigene Gruppe als aktive Kachel
                 if let own = store.userAgeGroup {
                     HStack(spacing: 10) {
                         ZStack {
-                            RoundedRectangle(cornerRadius: 12).fill(Color.brand.opacity(0.10)).frame(width: 44, height: 44)
+                            RoundedRectangle(cornerRadius: Radius.md).fill(Color.brand.opacity(0.10)).frame(width: 44, height: 44)
                             Image(systemName: own.systemIcon).font(.system(size: 20)).foregroundColor(.brand)
                         }
                         VStack(alignment: .leading, spacing: 2) {
@@ -2895,8 +3173,8 @@ struct ProfileView: View {
                             .foregroundColor(.brand)
                     }
                     .padding(12)
-                    .background(Color.brand.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
-                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.brand.opacity(0.25), lineWidth: 1.5))
+                    .background(Color.brand.opacity(0.06), in: RoundedRectangle(cornerRadius: Radius.card))
+                    .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Color.brand.opacity(0.25), lineWidth: 1.5))
                 }
             }
             .padding(14)
@@ -2916,14 +3194,14 @@ struct ProfileView: View {
                         .font(.system(size: 22, weight: .bold, design: .rounded))
                         .foregroundColor(.brand)
                         .contentTransition(.numericText())
-                    Text("Jahre")
+                    Text(tr("settings.years"))
                         .font(.system(size: 14))
                         .foregroundColor(.textSecondary)
                     Spacer()
                     if let own = store.userAgeGroup {
                         HStack(spacing: 4) {
                             Image(systemName: own.systemIcon).font(.system(size: 11))
-                            Text("Du: \(own.label)")
+                            Text(tr("settings.you_label").replacingOccurrences(of: "{label}", with: own.label))
                                 .font(.system(size: 11, weight: .medium))
                         }
                         .foregroundColor(.brand)
@@ -2936,7 +3214,7 @@ struct ProfileView: View {
                 // Slider: Mindestalter
                 VStack(spacing: 2) {
                     HStack {
-                        Text("Mindestalter")
+                        Text(tr("settings.min_age"))
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(.textTertiary)
                         Spacer()
@@ -2958,7 +3236,7 @@ struct ProfileView: View {
                         if !editing {
                             store.ageFilterMin = localAgeMin
                             store.saveAll()
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            Haptic.selection()
                         }
                     }
                     .tint(.brand)
@@ -2970,7 +3248,7 @@ struct ProfileView: View {
                 // Slider: Höchstalter
                 VStack(spacing: 2) {
                     HStack {
-                        Text("Höchstalter")
+                        Text(tr("settings.max_age"))
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(.textTertiary)
                         Spacer()
@@ -2992,7 +3270,7 @@ struct ProfileView: View {
                         if !editing {
                             store.ageFilterMax = localAgeMax
                             store.saveAll()
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            Haptic.selection()
                         }
                     }
                     .tint(.brand)
@@ -3042,9 +3320,9 @@ struct ProfileView: View {
     }
     private func appearanceSubtitle(for mode: MapStyleMode) -> String {
         switch mode {
-        case .auto:  return "Wechselt automatisch Tag/Nacht"
-        case .light: return "Karte immer hell"
-        case .dark:  return "Karte immer dunkel"
+        case .auto:  return tr("profile.appearance_auto")
+        case .light: return tr("profile.appearance_light")
+        case .dark:  return tr("profile.appearance_dark")
         }
     }
 
@@ -3053,7 +3331,7 @@ struct ProfileView: View {
             let isSelected = mapStyleModeRaw == mode.rawValue
             HStack(spacing: 14) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: Radius.sm)
                         .fill(Color.brand.opacity(isSelected ? 0.18 : 0.08))
                         .frame(width: 36, height: 36)
                     Image(systemName: appearanceIcon(for: mode))
@@ -3070,7 +3348,7 @@ struct ProfileView: View {
                 }
                 Spacer()
                 CustomSwitch(isOn: isSelected) {
-                    // Kein withAnimation(.spring()) mehr um den AppStorage-
+                    // Kein withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) mehr um den AppStorage-
                     // Write — die Spring-Kurve (0.3 s response) lief gegen die
                     // OS-Color-Scheme-Transition und ließ den Wechsel träge
                     // wirken. Außerdem cacht der iOS-26-`glassEffect` sein
@@ -3087,6 +3365,41 @@ struct ProfileView: View {
                 Divider().padding(.leading, 66)
             }
         }
+    }
+
+    /// Kompaktes DE/EN-Toggle für die Toolbar (oben rechts in den Einstellungen).
+    /// Liquid-Glass-Pille mit zwei Buttons; der aktive Code bekommt einen
+    /// Brand-Akzent-Hintergrund, die Pille selber sitzt auf einem .glassEffect.
+    @ViewBuilder private var languageToggle: some View {
+        HStack(spacing: 0) {
+            ForEach(AppLanguage.allCases, id: \.rawValue) { lang in
+                let isSelected = appLanguage == lang.rawValue
+                Button {
+                    if appLanguage != lang.rawValue {
+                        Haptic.selection()
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            appLanguage = lang.rawValue
+                        }
+                    }
+                } label: {
+                    Text(lang.shortCode)
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundColor(isSelected ? .white : .textSecondary)
+                        .frame(minWidth: 28)
+                        .padding(.vertical, 5)
+                        .padding(.horizontal, 8)
+                        .background(
+                            Capsule()
+                                .fill(isSelected ? Color.brand : Color.clear)
+                                .shadow(color: isSelected ? Color.brand.opacity(0.35) : .clear,
+                                        radius: 6, y: 2)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(2)
+        .liquidGlassCapsule(shadowRadius: 6)
     }
 
     // MARK: - Shared Row Helper
@@ -3140,7 +3453,64 @@ struct ProfileView: View {
                      color: Color(UIColor.systemOrange),
                      isOn: $notificationsOn)
         .onChange(of: notificationsOn) { _, newValue in
+            // hasSeenWelcome guard: Permissions erst nach WelcomeSheet anfragen.
+            // @AppStorage mit Default true triggert onChange beim ersten Render —
+            // ohne diesen Guard würde requestPermission() vor dem Onboarding feuern.
+            guard UserDefaults.standard.bool(forKey: "hasSeenWelcome") else { return }
             if newValue { PushNotificationManager.shared.requestPermission() }
+        }
+
+        if notificationsOn {
+            Divider().padding(.leading, 60)
+            // Benachrichtigungsradius
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 14) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(Color(UIColor.systemOrange).opacity(0.15))
+                            .frame(width: 36, height: 36)
+                        Image(systemName: "bell.badge.waveform.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(Color(UIColor.systemOrange))
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(tr("settings.notification_radius"))
+                            .font(.system(size: 15))
+                            .foregroundColor(.textPrimary)
+                        Text(tr("settings.notif_radius_sub"))
+                            .font(.system(size: 12))
+                            .foregroundColor(.textSecondary)
+                    }
+                }
+                .padding(.horizontal, 16)
+
+                let radiusOptions: [(label: String, value: Double)] = [
+                    ("500m", 500), ("1 km", 1000), ("2 km", 2000), ("5 km", 5000), ("10 km", 10000)
+                ]
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(radiusOptions, id: \.value) { option in
+                            let selected = store.notificationRadius == option.value
+                            Button {
+                                store.notificationRadius = option.value
+                                store.saveAll()
+                                Haptic.selection()
+                            } label: {
+                                Text(option.label)
+                                    .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                                    .foregroundColor(selected ? .white : .textPrimary)
+                                    .padding(.horizontal, 14).padding(.vertical, 7)
+                                    .background(
+                                        Capsule().fill(selected ? Color(UIColor.systemOrange) : Color(UIColor.tertiarySystemFill))
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+            }
+            .padding(.vertical, 12)
         }
     }
 
@@ -3151,14 +3521,14 @@ struct ProfileView: View {
             HStack(spacing: 14) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 9)
-                        .fill(Color(UIColor.systemPurple).opacity(0.15))
+                        .fill(Color.auroraViolet.opacity(0.15))
                         .frame(width: 36, height: 36)
                     Image(systemName: "phone.fill")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(Color(UIColor.systemPurple))
+                        .foregroundColor(Color.auroraViolet)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Handynummer")
+                    Text(tr("settings.phone_number"))
                         .font(.system(size: 11))
                         .foregroundColor(.textTertiary)
                     TextField("+49 151 …", text: $editedPhone)
@@ -3169,7 +3539,7 @@ struct ProfileView: View {
                         .toolbar {
                             ToolbarItemGroup(placement: .keyboard) {
                                 Spacer()
-                                Button("Fertig") {
+                                Button(tr("profile.done")) {
                                     phoneFocused = false
                                     store.saveUserPhone(editedPhone.trimmingCharacters(in: .whitespaces))
                                 }
@@ -3181,7 +3551,7 @@ struct ProfileView: View {
             .padding(.horizontal, 16).padding(.vertical, 12)
             HStack(spacing: 6) {
                 Image(systemName: "person.2.fill").font(.system(size: 10))
-                Text("Optional · Damit können dich Kontakte aus deinem Telefonbuch finden")
+                Text(tr("settings.phone_optional"))
                     .font(.system(size: 11))
             }
             .foregroundColor(.textTertiary)
@@ -3207,17 +3577,17 @@ struct ProfileView: View {
             HStack(spacing: 14) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 9)
-                        .fill(Color(UIColor.systemTeal).opacity(0.15))
+                        .fill(Color.auroraTeal.opacity(0.15))
                         .frame(width: 36, height: 36)
                     Image(systemName: "exclamationmark.bubble.fill")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color(UIColor.systemTeal))
+                        .foregroundColor(Color.auroraTeal)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Bug melden / Feedback")
+                    Text(tr("settings.bug_feedback"))
                         .font(.system(size: 15))
                         .foregroundColor(.textPrimary)
-                    Text("Schreib uns eine kurze Mail")
+                    Text(tr("settings.write_short_mail"))
                         .font(.system(size: 12))
                         .foregroundColor(.textSecondary)
                 }
@@ -3267,17 +3637,17 @@ struct ProfileView: View {
             HStack(spacing: 14) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 9)
-                        .fill(Color.red.opacity(0.10))
+                        .fill(Color.accentRed.opacity(0.10))
                         .frame(width: 36, height: 36)
                     Image(systemName: "checkmark")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(.red)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Keine blockierten Nutzer")
+                    Text(tr("profile.no_blocked"))
                         .font(.system(size: 14))
                         .foregroundColor(.textPrimary)
-                    Text("Blockierte Nutzer siehst und triffst du nicht mehr")
+                    Text(tr("profile.blocked_explainer"))
                         .font(.system(size: 12))
                         .foregroundColor(.textSecondary)
                 }
@@ -3289,7 +3659,7 @@ struct ProfileView: View {
                 HStack(spacing: 14) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 9)
-                            .fill(Color.red.opacity(0.12))
+                            .fill(Color.accentRed.opacity(0.12))
                             .frame(width: 36, height: 36)
                         Image(systemName: "nosign")
                             .font(.system(size: 16, weight: .semibold))
@@ -3299,7 +3669,7 @@ struct ProfileView: View {
                         .font(.system(size: 15))
                         .foregroundColor(.textPrimary)
                     Spacer()
-                    Button("Entsperren") {
+                    Button(tr("profile.unblock")) {
                         store.blockedUserNames.remove(name)
                         store.saveAll()
                     }
@@ -3333,7 +3703,7 @@ struct ProfileView: View {
                     Text("FAQ")
                         .font(.system(size: 15))
                         .foregroundColor(.textPrimary)
-                    Text("Häufige Fragen auf drops-app.de")
+                    Text(tr("settings.faq_sub"))
                         .font(.system(size: 12))
                         .foregroundColor(.textSecondary)
                 }
@@ -3374,17 +3744,17 @@ struct ProfileView: View {
             HStack(spacing: 14) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 9)
-                        .fill(Color(UIColor.systemTeal).opacity(0.15))
+                        .fill(Color.auroraTeal.opacity(0.15))
                         .frame(width: 36, height: 36)
                     Image(systemName: "ladybug.fill")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color(UIColor.systemTeal))
+                        .foregroundColor(Color.auroraTeal)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Feedback / Bug melden")
+                    Text(tr("settings.bug_feedback"))
                         .font(.system(size: 15))
                         .foregroundColor(.textPrimary)
-                    Text("E-Mail an contact@drops-app.de")
+                    Text(tr("profile.email_contact"))
                         .font(.system(size: 12))
                         .foregroundColor(.textSecondary)
                 }
@@ -3399,15 +3769,15 @@ struct ProfileView: View {
     }
 
     @ViewBuilder private var privacySection: some View {
-        Button { showPrivacy = true } label: {
+        Button { activeSettingsSheet = .privacy } label: {
             HStack(spacing: 14) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 9)
-                        .fill(Color(UIColor.systemPurple).opacity(0.15))
+                        .fill(Color.auroraViolet.opacity(0.15))
                         .frame(width: 36, height: 36)
                     Image(systemName: "hand.raised.fill")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color(UIColor.systemPurple))
+                        .foregroundColor(Color.auroraViolet)
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(tr("settings.privacy"))
@@ -3437,11 +3807,11 @@ struct ProfileView: View {
             HStack(spacing: 14) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 9)
-                        .fill(Color(UIColor.systemPurple).opacity(0.15))
+                        .fill(Color.auroraViolet.opacity(0.15))
                         .frame(width: 36, height: 36)
                     Image(systemName: "rectangle.portrait.and.arrow.right")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color(UIColor.systemPurple))
+                        .foregroundColor(Color.auroraViolet)
                 }
                 Text(tr("account.logout"))
                     .font(.system(size: 15))
@@ -3459,7 +3829,7 @@ struct ProfileView: View {
             HStack(spacing: 14) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 9)
-                        .fill(Color.red.opacity(0.12))
+                        .fill(Color.accentRed.opacity(0.12))
                         .frame(width: 36, height: 36)
                     Image(systemName: "person.crop.circle.badge.minus")
                         .font(.system(size: 16, weight: .semibold))
@@ -3492,7 +3862,7 @@ private struct StatTile: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(color)
                 .frame(width: 28, height: 28)
-                .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.sm))
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(value)
@@ -3529,13 +3899,13 @@ struct BlockedUsersSheet: View {
                         Image(systemName: "info.circle.fill")
                             .font(.system(size: 18))
                             .foregroundColor(.brand)
-                        Text("Blockierte Nutzer siehst und triffst du nicht mehr. Sie können dich auch nicht zu ihren Drops einladen.")
+                        Text(tr("profile.blocked_users_msg"))
                             .font(.system(size: 13))
                             .foregroundColor(.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(14)
-                    .background(Color.brand.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                    .background(Color.brand.opacity(0.08), in: RoundedRectangle(cornerRadius: Radius.md))
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
 
@@ -3550,10 +3920,10 @@ struct BlockedUsersSheet: View {
                                     .font(.system(size: 32, weight: .semibold))
                                     .foregroundColor(.green)
                             }
-                            Text("Niemand blockiert")
+                            Text(tr("profile.nobody_blocked"))
                                 .font(.system(size: 17, weight: .semibold))
                                 .foregroundColor(.textPrimary)
-                            Text("Du kannst andere Nutzer aus deren Profil heraus blockieren.")
+                            Text(tr("profile.block_from_profile"))
                                 .font(.system(size: 13))
                                 .foregroundColor(.textSecondary)
                                 .multilineTextAlignment(.center)
@@ -3567,7 +3937,7 @@ struct BlockedUsersSheet: View {
                                 HStack(spacing: 14) {
                                     ZStack {
                                         RoundedRectangle(cornerRadius: 9)
-                                            .fill(Color.red.opacity(0.12))
+                                            .fill(Color.accentRed.opacity(0.12))
                                             .frame(width: 36, height: 36)
                                         Image(systemName: "nosign")
                                             .font(.system(size: 16, weight: .semibold))
@@ -3577,7 +3947,7 @@ struct BlockedUsersSheet: View {
                                         .font(.system(size: 15))
                                         .foregroundColor(.textPrimary)
                                     Spacer()
-                                    Button("Entsperren") {
+                                    Button(tr("profile.unblock")) {
                                         store.blockedUserNames.remove(name)
                                         store.saveAll()
                                     }
@@ -3590,22 +3960,216 @@ struct BlockedUsersSheet: View {
                                 }
                             }
                         }
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Radius.card))
                         .padding(.horizontal, 16)
                     }
 
                     Spacer(minLength: 40)
                 }
             }
-            .navigationTitle("Blockierte Nutzer")
+            .navigationTitle(tr("profile.blocked_users"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Fertig") { dismiss() }
+                    Button(tr("profile.done")) { dismiss() }
                         .font(.system(size: 15, weight: .semibold))
                 }
             }
         }
+    }
+}
+
+// MARK: - Name Change Sheet
+
+struct NameChangeSheet: View {
+    let currentName: String
+    let pendingName: String?
+    let cooldownDays: Int          // 0 = erlaubt, >0 = gesperrt
+    @Binding var input: String
+    let onSubmit: () -> Void
+    let onCancel: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var focused: Bool
+
+    private var isOnCooldown: Bool { cooldownDays > 0 }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Drag Handle
+            Capsule()
+                .fill(Color(UIColor.tertiaryLabel))
+                .frame(width: 36, height: 4)
+                .padding(.top, 12)
+                .padding(.bottom, 20)
+
+            // Header
+            VStack(spacing: 8) {
+                Image(systemName: "person.text.rectangle.fill")
+                    .font(.system(size: 28))
+                    .foregroundStyle(
+                        LinearGradient(colors: [.auroraOrange, .auroraGreen],
+                                       startPoint: .topLeading, endPoint: .bottomTrailing)
+                    )
+                Text(tr("profile.change_display_name"))
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .foregroundColor(.textPrimary)
+                Text(tr("profile.name_change_explainer"))
+                    .font(.system(size: 13))
+                    .foregroundColor(.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 28)
+            }
+            .padding(.bottom, 20)
+
+            // Cooldown-Banner
+            if isOnCooldown {
+                HStack(spacing: 10) {
+                    Image(systemName: "clock.badge.exclamationmark")
+                        .font(.system(size: 14))
+                        .foregroundColor(.accentRed)
+                    Text((cooldownDays == 1 ? tr("profile.next_change_day") : tr("profile.next_change_days")).replacingOccurrences(of: "{days}", with: "\(cooldownDays)"))
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.accentRed)
+                    Spacer()
+                }
+                .padding(.horizontal, 20).padding(.vertical, 12)
+                .background(Color.accentRed.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                .padding(.horizontal, 20)
+                .padding(.bottom, 14)
+            }
+            // Ausstehende Anfrage
+            else if let pending = pendingName {
+                HStack(spacing: 10) {
+                    Image(systemName: "hourglass")
+                        .font(.system(size: 13))
+                        .foregroundColor(.accentOrange)
+                    Text(tr("profile.pending_review").replacingOccurrences(of: "{name}", with: pending))
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.accentOrange)
+                    Spacer()
+                    Button(tr("profile.withdraw")) {
+                        onCancel()
+                        dismiss()
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.accentRed)
+                }
+                .padding(.horizontal, 20).padding(.vertical, 12)
+                .background(Color.accentOrange.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                .padding(.horizontal, 20)
+                .padding(.bottom, 14)
+            }
+
+            // Textfeld
+            HStack(spacing: 12) {
+                Image(systemName: "person.fill")
+                    .font(.system(size: 15))
+                    .foregroundColor(.textTertiary)
+                TextField(tr("profile.new_name"), text: $input)
+                    .font(.system(size: 16, weight: .medium))
+                    .focused($focused)
+                    .submitLabel(.done)
+                    .onSubmit { submitIfValid() }
+                    .disabled(isOnCooldown)
+                if !input.isEmpty && !isOnCooldown {
+                    Button { input = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.textTertiary)
+                    }
+                }
+            }
+            .padding(.horizontal, 16).padding(.vertical, 14)
+            .background(Color(UIColor.secondarySystemGroupedBackground)
+                .opacity(isOnCooldown ? 0.5 : 1),
+                        in: RoundedRectangle(cornerRadius: 14))
+            .padding(.horizontal, 20)
+
+            Spacer(minLength: 20)
+
+            // Buttons
+            VStack(spacing: 10) {
+                Button {
+                    submitIfValid()
+                } label: {
+                    Text(tr("profile.submit_request"))
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 15)
+                        .background(
+                            isValid && !isOnCooldown
+                            ? LinearGradient(colors: [.auroraOrange, .auroraGreen],
+                                             startPoint: .leading, endPoint: .trailing)
+                            : LinearGradient(colors: [Color(UIColor.systemGray3)],
+                                             startPoint: .leading, endPoint: .trailing),
+                            in: RoundedRectangle(cornerRadius: 14)
+                        )
+                }
+                .disabled(!isValid || isOnCooldown)
+
+                Button(tr("profile.cancel_btn")) { dismiss() }
+                    .font(.system(size: 15))
+                    .foregroundColor(.textSecondary)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 28)
+        }
+        .background(Color(UIColor.systemGroupedBackground))
+        .onAppear { if !isOnCooldown { focused = true } }
+    }
+
+    private var isValid: Bool {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && trimmed != currentName && trimmed.count >= 2
+    }
+
+    private func submitIfValid() {
+        guard isValid && !isOnCooldown else { return }
+        onSubmit()
+        dismiss()
+    }
+}
+
+// MARK: - Nav Pop Gesture Disabler
+
+/// Killt ALLE Edge-Pan-Recognizer im Window-Hierarchy + Navigation-Pop-Geste.
+/// iOS 26 reaktiviert die Geste teilweise lazy nach dem initialen Disable —
+/// daher mehrfaches Polling über die ersten 5 Sekunden.
+private struct NavPopGestureDisabler: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let v = UIView()
+        v.backgroundColor = .clear
+        return v
+    }
+    func updateUIView(_ uiView: UIView, context: Context) {
+        for i in 0..<25 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.2) {
+                kill(from: uiView)
+            }
+        }
+    }
+
+    private func kill(from view: UIView) {
+        // Navigation-Controller Pop-Geste abschalten.
+        if let nav = sequence(first: view as UIResponder, next: { $0.next })
+            .compactMap({ $0 as? UINavigationController })
+            .first {
+            nav.interactivePopGestureRecognizer?.isEnabled = false
+            nav.interactivePopGestureRecognizer?.delegate  = nil
+        }
+        // Edge-Pan-Recognizer im Window-Hierarchy killen (iOS-26 "Swipe-from-anywhere").
+        guard let window = view.window else { return }
+        func recurse(_ v: UIView) {
+            for recog in v.gestureRecognizers ?? [] {
+                if recog is UIScreenEdgePanGestureRecognizer {
+                    recog.isEnabled = false
+                    recog.delegate  = nil
+                }
+            }
+            for sub in v.subviews { recurse(sub) }
+        }
+        recurse(window)
     }
 }
 
