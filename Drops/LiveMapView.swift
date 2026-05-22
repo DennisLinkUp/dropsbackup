@@ -628,7 +628,12 @@ struct LiveMapView: View {
             .sheetBackground()
         }
         .onAppear {
-            if !hasSeenPowerHourIntro {
+            // hasSeenWelcome guard: PowerHourIntroSheet nicht zeigen während
+            // WelcomeSheet noch offen ist — Presentation-Konflikt würde
+            // WelcomeSheet vorzeitig dismissen und requestAllPermissions()
+            // vor dem Walkthrough triggern.
+            if !hasSeenPowerHourIntro,
+               UserDefaults.standard.bool(forKey: "hasSeenWelcome") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                     showPowerHourIntro = true
                 }
